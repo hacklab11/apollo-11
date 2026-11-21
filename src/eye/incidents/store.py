@@ -343,6 +343,12 @@ class IncidentStore:
                     "ts": result.entry.ts.isoformat(),
                     "ok": False,
                 }
+            current = self.get(item.id)
+            assert current is not None
+            while current.merged_into is not None:
+                current = self.get(current.merged_into)
+                assert current is not None
+            item = current
             item.notifications.append(notification)
         self._save(item)
         return item

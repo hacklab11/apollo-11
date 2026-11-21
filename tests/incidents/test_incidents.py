@@ -262,6 +262,28 @@ async def test_notification_and_failure(store):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("other_hour", [-1, 1])
+async def test_notification_preserves_updates_during_await(store, other_hour):
+    concurrent = None
+
+    async def notify(alert):
+        nonlocal concurrent
+        concurrent = await store.upsert(result("concurrent", hours=other_hour))
+        return SellerAlertAck(received=True, actions_taken=["review"])
+
+    store.notify = notify
+    value = result()
+    value.affected_sellers = ["S-03"]
+    incident = await store.upsert(value)
+    assert incident.id == concurrent.id
+    assert set(incident.investigation_ids) == {"a", "concurrent"}
+    assert incident.occurrences == 2
+    assert len(incident.notifications) == 1
+    assert incident.notifications[0]["ack"]["received"]
+    assert store.get(incident.id) == incident
+
+
+@pytest.mark.asyncio
 async def test_persistence_and_trail(tmp_path):
     path = tmp_path / "ops.duckdb"
     store = IncidentStore(path)
