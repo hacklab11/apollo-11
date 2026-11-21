@@ -151,7 +151,9 @@ async def test_conversation_and_agent_limits(monkeypatch, kind: str) -> None:
     async def llm(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         requests.append(body)
-        assert json.loads(body["messages"][0]["content"])["messages"] == messages
+        content, notice = body["messages"][0]["content"].split("\n\nRuntime budget:")
+        assert json.loads(content)["messages"] == messages
+        assert "LLM turn(s) remaining" in notice
         result = response("submit", {"answer": "How can I help?", "incident_ids": []})
         if kind in {"budget", "refusal"}:
             result["content"] = []

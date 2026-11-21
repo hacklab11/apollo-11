@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import time
 from pathlib import Path
@@ -7,6 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import duckdb
 import pytest
+from anthropic.types.beta import BetaMessage
 
 from eye.agents.cartographer import (
     Cartographer,
@@ -19,7 +21,7 @@ from eye.config import LlmSettings, Settings
 from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient
+from eye.llm.client import BudgetExceeded, LLMClient
 from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Identity, Registry
@@ -364,6 +366,12 @@ async def test_refinement_is_cached(
     await cartographer.refine_causal_seeds()
     await cartographer.refine_causal_seeds()
     assert run.call_count == 1
+    spec, payload, *_ = run.call_args.args
+    prompt = Path(spec.system_prompt_file).read_text()
+    assert "assess all seeds" in prompt
+    assert "Do not call get_graph once per seed" in prompt
+    assert json.loads(payload)["mode"] == "refine_seeds"
+    assert "numbers" in json.loads(payload)["seeds"][0]
     assert cartographer.graph.edges()[0].status == "ambiguous"
 
 
@@ -387,6 +395,83 @@ async def test_refinement_respects_main_cache_marker(
     monkeypatch.setattr("eye.agents.cartographer.run_agent", run)
     await cartographer.refine_causal_seeds([], run)
     run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair", [True, False])
+async def test_refinement_incomplete_submit_can_be_repaired(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, repair: bool
+) -> None:
+    cartographer.graph.add_edge(
+        Edge(
+            id="seed",
+            src="orders",
+            dst="refunds",
+            type="causal_hypothesis",
+            status="hypothesis",
+            confidence=0.5,
+            evidence={},
+            created_by="seed",
+        )
+    )
+    requests = []
+
+    async def create(request: dict) -> BetaMessage:
+        requests.append(copy.deepcopy(request))
+        decisions = []
+        if repair and len(requests) == 2:
+            decisions = [
+                {
+                    "src": "orders",
+                    "dst": "refunds",
+                    "status": "ambiguous",
+                    "confidence": 0.2,
+                    "rationale": "0 usable correlations",
+                }
+            ]
+        return BetaMessage.model_validate(
+            {
+                "id": f"msg_{len(requests)}",
+                "type": "message",
+                "role": "assistant",
+                "model": request["model"],
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": f"submit_{len(requests)}",
+                        "name": "submit",
+                        "input": {
+                            "seeds": decisions,
+                            "edges": [],
+                            "notes": "uncertain",
+                        },
+                    }
+                ],
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 10},
+            }
+        )
+
+    monkeypatch.setattr(
+        "eye.llm.runtime.get_client", lambda: SimpleNamespace(create=create)
+    )
+    if repair:
+        await cartographer.refine_causal_seeds()
+        assert len(requests) == 2
+        assert cartographer.graph.edges()[0].evidence["refined"] is True
+        assert cartographer.graph.edges()[0].status == "ambiguous"
+    else:
+        with pytest.raises(BudgetExceeded, match="agent turn budget exhausted"):
+            await cartographer.refine_causal_seeds()
+        assert len(requests) == 8
+        assert not cartographer.graph.edges()[0].evidence.get("refined")
+        assert (
+            "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
+        )
+    error = requests[1]["messages"][-1]["content"][0]
+    assert error["is_error"] is True
+    assert "Missing seed decisions: orders -> refunds" in error["content"]
 
 
 @pytest.mark.asyncio

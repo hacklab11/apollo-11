@@ -52,6 +52,10 @@ inferred unit: count, eur, ratio, hours, ms, or index. Each EdgeProposal has typ
 src, dst, optional identity, dimension, lag_hours, and rationale.
 For refine_seeds mode, instead submit one seed decision per input seed with src,
 dst, status (hypothesis, ambiguous, or rejected), confidence in [0,1], and rationale;
-also supply edges (at most 10 extra causal hypotheses) and notes. Use the supplied
-numeric checks and descriptions. Lack of correlation alone need not reject a
+also supply edges (at most 10 extra causal hypotheses) and notes. The supplied
+numeric checks and descriptions are the evidence for this mode: assess all seeds
+together and submit their decisions directly. Do not call get_graph once per seed
+or repeat supplied checks. Only request tools if a specific missing fact prevents
+a decision; batch independent requests in one turn and reserve a turn to submit.
+Lack of correlation alone need not reject a
 plausible lagged mechanism, but explain the uncertainty.
