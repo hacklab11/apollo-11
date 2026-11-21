@@ -22,13 +22,15 @@ class Apps:
             "checkout-web": "checkout-web v5.7",
         }
     )
-    releases: dict[str, tuple[datetime, str, str]] = field(default_factory=dict)
+    releases: dict[str, tuple[datetime, dict[str, float], str]] = field(
+        default_factory=dict
+    )
     error_rates: dict[tuple[str, str, str], float] = field(default_factory=dict)
 
     def release(self, system: str, version: str, ts: datetime) -> None:
         if system not in self.versions:
             raise ValueError(f"unknown app: {system}")
-        self.releases[system] = (ts, self.versions[system], version)
+        self.releases[system] = (ts, self.adoption(system, ts), version)
         self.versions[system] = version
 
     def adoption(self, system: str, ts: datetime) -> dict[str, float]:
@@ -36,13 +38,17 @@ class Apps:
             return {self.versions[system]: 1.0}
         released, old, new = self.releases[system]
         if ts < released:
-            return {old: 1.0}
+            return old.copy()
         share = (
             1.0
             if system in ("web", "checkout-web")
             else min(1.0, 0.2 * (1 + (ts - released).days))
         )
-        return {old: 1 - share, new: share} if share < 1 else {new: 1.0}
+        if share == 1:
+            return {new: 1.0}
+        mix = {version: fraction * (1 - share) for version, fraction in old.items()}
+        mix[new] = mix.get(new, 0.0) + share
+        return mix
 
     def errors(self, ts: datetime, rng: Generator, batches: Batches) -> None:
         rows = batches.setdefault("client_errors_hourly", [])

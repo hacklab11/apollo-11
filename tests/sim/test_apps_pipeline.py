@@ -7,6 +7,7 @@ import pytest
 from eye.sim.apps import Apps
 from eye.sim.changelog import add_change, add_external_status
 from eye.sim.pipeline import Pipeline
+from eye.sim.store import Batches
 
 
 def test_baseline_errors_partitions_and_noise(
@@ -66,3 +67,43 @@ def test_partition_and_event_hooks() -> None:
     pipeline.completeness[("traffic_hourly", "DE")] = 2
     with pytest.raises(ValueError, match="completeness"):
         pipeline.partitions(ts, batches)
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_overlapping_native_releases(platform: str) -> None:
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    apps = Apps()
+    original = apps.versions[platform]
+    apps.release(platform, "v2", ts)
+    second_release = ts + timedelta(days=1)
+    apps.release(platform, "v3", second_release)
+    for days, expected in (
+        (0, {original: 0.48, "v2": 0.32, "v3": 0.2}),
+        (1, {original: 0.36, "v2": 0.24, "v3": 0.4}),
+        (4, {"v3": 1.0}),
+    ):
+        now = second_release + timedelta(days=days)
+        mix = apps.adoption(platform, now)
+        assert mix == pytest.approx(expected)
+        assert sum(mix.values()) == pytest.approx(1.0)
+        batches: Batches = {"traffic_hourly": [(now, "DE", platform, 1_000_000)]}
+        apps.errors(now, np.random.default_rng(42), batches)
+        errors = sum(row[-1] for row in batches["client_errors_hourly"])
+        assert errors == pytest.approx(1_000_000 * 0.002, rel=0.2)
+
+
+@pytest.mark.parametrize("platform", ["android", "ios"])
+def test_rereleasing_current_native_version(platform: str) -> None:
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    apps = Apps()
+    version = apps.versions[platform]
+    apps.release(platform, version, ts)
+    for days in (0, 1, 4):
+        now = ts + timedelta(days=days)
+        mix = apps.adoption(platform, now)
+        assert mix == {version: 1.0}
+        assert sum(mix.values()) == pytest.approx(1.0)
+        batches: Batches = {"traffic_hourly": [(now, "DE", platform, 1_000_000)]}
+        apps.errors(now, np.random.default_rng(42), batches)
+        errors = sum(row[-1] for row in batches["client_errors_hourly"])
+        assert errors == pytest.approx(1_000_000 * 0.002, rel=0.2)
