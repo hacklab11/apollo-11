@@ -232,7 +232,10 @@ const state = {
   eventIndex: 0,
   messages: [],
   selectedRequest: 0,
-  incidentRequest: 0,
+  seriesRequest: 0,
+  incidentListRequest: 0,
+  graphRequest: 0,
+  openingIncident: null,
   chart: null,
   cy: null,
   trail: [],
@@ -275,6 +278,12 @@ function renderStatus() {
     .join("");
 }
 
+function updateStatus(status, reset = false) {
+  if (!reset && state.status && status.tick < state.status.tick) return;
+  state.status = status;
+  renderStatus();
+}
+
 function renderScenarios(scenarios) {
   $("#scenarios").innerHTML = scenarios
     .map(
@@ -282,6 +291,19 @@ function renderScenarios(scenarios) {
         `<button type="button" data-scenario="${escapeHtml(scenario.id)}" aria-pressed="${scenario.active}" aria-label="${scenario.active ? "Clear" : "Inject"} ${escapeHtml(scenario.id)}: ${escapeHtml(scenario.title)}" title="${escapeHtml(scenario.title)}">${escapeHtml(scenario.id)}${scenario.active ? " ·" : ""}</button>`,
     )
     .join("");
+}
+
+function renderScenario(scenario) {
+  const button = [...$("#scenarios").children].find(
+    (item) => item.dataset.scenario === scenario.id,
+  );
+  if (!button) return;
+  button.setAttribute("aria-pressed", String(scenario.active));
+  button.setAttribute(
+    "aria-label",
+    `${scenario.active ? "Clear" : "Inject"} ${scenario.id}: ${scenario.title}`,
+  );
+  button.textContent = `${scenario.id}${scenario.active ? " ·" : ""}`;
 }
 
 function graphElements() {
@@ -474,10 +496,15 @@ function renderGraph() {
 }
 
 async function refreshGraph() {
+  const request = ++state.graphRequest;
   const [graph, metrics] = await Promise.all([api.getGraph(), api.getMetrics()]);
+  if (request !== state.graphRequest) return;
+  const firstGraph = !state.graph;
   Object.assign(state, { graph, metrics });
   renderGraph();
   renderIncidents();
+  if (graph.nodes.length && (firstGraph || !graph.nodes.some((node) => node.id === state.selectedMetric)))
+    await selectMetric($("#metric-select").value || graph.nodes[0].id);
 }
 
 function setRejectedVisibility() {
@@ -488,6 +515,7 @@ function setRejectedVisibility() {
 
 async function selectMetric(name) {
   const request = ++state.selectedRequest;
+  const seriesRequest = ++state.seriesRequest;
   state.selectedMetric = name;
   $("#metric-select").value = name;
   state.cy?.nodes().unselect();
@@ -516,7 +544,15 @@ async function selectMetric(name) {
   $("#fixture-note").textContent = reference
     ? `No ${readable(name)} series fixture exists. Showing the Orders reference, not measurements for this metric.`
     : `Actual vs expected · shaded forecast range${mockMode ? " · release marker at 27 Nov, 03:00 UTC" : ""}`;
-  renderChart(series);
+  if (seriesRequest === state.seriesRequest) renderChart(series);
+}
+
+async function refreshChart() {
+  const name = state.selectedMetric;
+  if (!state.graph?.nodes.some((node) => node.id === name)) return;
+  const request = ++state.seriesRequest;
+  const series = await api.getMetric(name);
+  if (request === state.seriesRequest) renderChart(series);
 }
 
 function renderChart(series) {
@@ -608,8 +644,10 @@ function renderChart(series) {
             maxRotation: 0,
             color: "#536775",
             font: { size: 9 },
-            callback: (value) =>
-              `${new Date(points[value].ts).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short" })} ${time(points[value].ts)}`,
+            callback: (value) => {
+              const ts = points[value]?.ts;
+              return ts && `${new Date(ts).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short" })} ${time(ts)}`;
+            },
           },
         },
         y: {
@@ -680,23 +718,53 @@ function renderIncidents() {
 }
 
 async function openIncident(id, focus = false) {
-  const request = ++state.incidentRequest;
-  const [incident, trail] = await Promise.all([
-    api.getIncident(id),
-    api.getTrail(id),
-  ]);
-  if (request !== state.incidentRequest) return;
-  state.incident = incident;
-  state.trail = trail;
-  renderIncidents();
-  renderIncidentDetail();
-  if (focus) {
-    $("#incident-detail").tabIndex = -1;
-    $("#incident-detail").focus();
+  const opening = { id, incident: null, investigationIds: new Set(), trail: [] };
+  state.openingIncident = opening;
+  try {
+    const [incident, trail] = await Promise.all([
+      api.getIncident(id),
+      api.getTrail(id),
+    ]);
+    if (state.openingIncident !== opening) return;
+    state.incident = opening.incident ?? incident;
+    state.incident.investigation_ids = [...new Set([
+      ...state.incident.investigation_ids,
+      ...opening.investigationIds,
+    ])];
+    state.trail = [...new Map([
+      ...trail,
+      ...opening.trail.filter((step) =>
+        state.incident.investigation_ids.includes(step.investigation_id),
+      ),
+    ].map((step) => [step.id, step])).values()];
+    renderIncidents();
+    renderIncidentDetail();
+    if (focus) {
+      $("#incident-detail").tabIndex = -1;
+      $("#incident-detail").focus();
+    }
+  } finally {
+    if (state.openingIncident === opening) state.openingIncident = null;
   }
 }
 
-function renderIncidentDetail() {
+async function refreshIncidents(reconnect = false) {
+  const request = ++state.incidentListRequest;
+  const incidents = await api.getIncidents();
+  if (request !== state.incidentListRequest) return;
+  state.incidents = incidents;
+  if (reconnect && state.incident && !incidents.some((item) => item.id === state.incident.id)) {
+    state.incident = null;
+    renderIncidentDetail();
+  }
+  renderIncidents();
+  const id = reconnect && state.incident
+    ? state.incident.id
+    : !state.incident && filteredIncidents()[0]?.id;
+  if (id && !state.openingIncident) await openIncident(id);
+}
+
+function renderIncidentDetail(resetScroll = true) {
   const incident = state.incident;
   if (!incident) {
     $("#incident-detail").innerHTML = "";
@@ -711,11 +779,24 @@ function renderIncidentDetail() {
     .join("");
   $("#incident-detail").innerHTML =
     `<div class="detail-meta">${badge(incident.verdict)}<span>${escapeHtml(incident.id)} · ${escapeHtml(incident.status)}</span></div><h4>${escapeHtml(incident.title)}</h4><p class="story">${escapeHtml(incident.summary)}</p><div class="impact">${euro(incident.impact_eur_per_hour)}<small> GMV impact / hour</small></div><div class="detail-meta">Affected: ${incident.affected_actors.map(escapeHtml).join(", ")}</div><h5 class="section-label">What explains the change</h5>${contributions}<h5 class="section-label">Hypotheses & evidence</h5>${incident.hypotheses.map((hypothesis) => `<details class="hypothesis ${escapeHtml(hypothesis.status)}"><summary><span class="badge">${escapeHtml(hypothesis.status)}</span>${escapeHtml(hypothesis.statement)}</summary>${hypothesis.evidence_for.map((evidence) => `<p><strong>For · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}${hypothesis.evidence_against.map((evidence) => `<p><strong>Against · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}</details>`).join("")}<div class="action-box"><strong>Suggested next move</strong>${incident.suggested_actions.map(escapeHtml).join("<br>")}</div>${incident.notifications.map((notification) => `<div class="notification">SellerOS notification · ${notification.ok ? "Delivered" : "Failed"} · ${time(notification.ts)} UTC<br><span class="muted">${escapeHtml(notification.task_id)}</span></div>`).join("")}${incident.open_questions.length ? `<details class="hypothesis"><summary>Open questions (${incident.open_questions.length})</summary>${incident.open_questions.map((question) => `<p>${escapeHtml(question)}</p>`).join("")}</details>` : ""}<h5 class="section-label">Investigation trail · ${state.trail.length} steps</h5><ol class="timeline">${state.trail.map(renderTrailStep).join("")}</ol>`;
-  $("#incident-detail").scrollTop = 0;
+  if (resetScroll) $("#incident-detail").scrollTop = 0;
 }
 
 function renderTrailStep(step) {
   return `<li class="trail-step" data-step="${escapeHtml(step.id)}"><span class="actor-icon" aria-hidden="true">${actorLetters[step.actor] ?? "?"}</span><div><div class="trail-meta"><strong>${step.n}. ${escapeHtml(step.actor)}</strong>${step.actor === "selleros" ? '<span class="external">external</span>' : ""}<span class="tool">${escapeHtml(step.tool ?? step.action)}</span></div><p>${escapeHtml(step.output_summary)}</p><p class="reason">Why: ${escapeHtml(step.reason)}</p><details class="trail-json"><summary>Step details</summary><pre>${escapeHtml(JSON.stringify({ action: step.action, input: step.input, output: step.output, duration_ms: step.duration_ms }, null, 2))}</pre></details></div></li>`;
+}
+
+function appendTrailStep(step) {
+  state.openingIncident?.trail.push(step);
+  if (
+    !state.incident?.investigation_ids.includes(step.investigation_id) ||
+    state.trail.some((item) => item.id === step.id)
+  ) return;
+  state.trail.push(step);
+  const timeline = $("#incident-detail .timeline");
+  timeline.insertAdjacentHTML("beforeend", renderTrailStep(step));
+  timeline.previousElementSibling.textContent =
+    `Investigation trail · ${state.trail.length} steps`;
 }
 
 function appendEvent(event) {
@@ -724,11 +805,15 @@ function appendEvent(event) {
     payload.output_summary ??
     payload.reason ??
     payload.title ??
-    (event.type === "tick"
-      ? `Simulation tick ${payload.tick}`
-      : payload.metric
+    ({
+      tick: () => `Simulation tick ${payload.tick}`,
+      graph_changed: () => "Metric relationships updated",
+      scenario_changed: () => `${payload.id} ${payload.active ? "active" : "inactive"}`,
+      agent_status: () => `${payload.name} ${payload.ok ? "healthy" : "unavailable"}`,
+    }[event.type]?.() ??
+      (payload.metric
         ? `${readable(payload.metric)} · ${payload.kind ?? ""}`
-        : `Investigation ${payload.investigation_id ?? payload.id ?? ""}`);
+        : `Investigation ${payload.investigation_id ?? payload.id ?? ""}`));
   const item = document.createElement("li");
   item.innerHTML = `<time datetime="${escapeHtml(event.sim_ts)}">${time(event.sim_ts)} UTC</time><strong>${escapeHtml(readable(event.type))}</strong><span>${escapeHtml(summary)}</span>`;
   $("#feed").append(item);
@@ -740,6 +825,79 @@ function replayNext() {
   if (!state.events.length) return;
   appendEvent(state.events[state.eventIndex]);
   state.eventIndex = (state.eventIndex + 1) % state.events.length;
+}
+
+async function handleLiveEvent(event) {
+  appendEvent(event);
+  const { payload } = event;
+  switch (event.type) {
+    case "tick":
+      if (state.status)
+        updateStatus({ ...state.status, tick: payload.tick, sim_ts: event.sim_ts });
+      await Promise.all([api.getStatus().then((status) => updateStatus(status)), refreshChart()]);
+      break;
+    case "incident_upserted":
+      if (state.openingIncident?.id === payload.id) state.openingIncident.incident = payload;
+      if (state.incident?.id === payload.id) {
+        state.incident = payload;
+        renderIncidentDetail(false);
+      }
+      await refreshIncidents();
+      break;
+    case "investigation_started":
+      if (state.openingIncident?.id === payload.incident_id)
+        state.openingIncident.investigationIds.add(payload.investigation_id);
+      if (
+        state.incident?.id === payload.incident_id &&
+        !state.incident.investigation_ids.includes(payload.investigation_id)
+      ) state.incident.investigation_ids.push(payload.investigation_id);
+      break;
+    case "trail_step":
+      appendTrailStep(payload);
+      break;
+    case "graph_changed":
+      await refreshGraph();
+      break;
+    case "scenario_changed":
+      renderScenario(payload);
+      break;
+    case "agent_status":
+      if (state.status) {
+        state.status.agents[payload.name] = payload;
+        renderStatus();
+      }
+      break;
+  }
+}
+
+async function refreshLive(reconnect = false) {
+  const graph = refreshGraph();
+  await Promise.all([
+    api.getStatus().then((status) => updateStatus(status, reconnect)),
+    graph,
+    refreshIncidents(reconnect),
+    api.getScenarios().then(renderScenarios),
+    reconnect && graph.then(refreshChart),
+  ]);
+}
+
+function connectEvents(reconnect = false) {
+  const stream = new EventSource("/api/events");
+  const receive = (message) => attempt(() => handleLiveEvent(JSON.parse(message.data)));
+  for (const type of [
+    "tick", "anomaly", "sentinel_decision", "investigation_started",
+    "trail_step", "investigation_finished", "incident_upserted",
+    "graph_changed", "scenario_changed", "agent_status",
+  ]) stream.addEventListener(type, receive);
+  stream.onopen = () => {
+    $("#core-notice").hidden = true;
+    if (reconnect) attempt(() => refreshLive(true));
+  };
+  stream.onerror = () => {
+    stream.close();
+    $("#core-notice").hidden = false;
+    setTimeout(() => connectEvents(true), 2000);
+  };
 }
 
 function renderMessage(role, content) {
@@ -844,16 +1002,15 @@ function bindControls() {
   $("#fit-graph").addEventListener("click", () => state.cy?.fit(undefined, 30));
   $("#clock-toggle").addEventListener("click", () =>
     attempt(async () => {
-      state.status = await (state.status.paused
+      if (!state.status) return;
+      updateStatus(await (state.status.paused
         ? api.resumeClock()
-        : api.pauseClock());
-      renderStatus();
+        : api.pauseClock()));
     }),
   );
   $("#clock-step").addEventListener("click", () =>
     attempt(async () => {
-      state.status = await api.stepClock();
-      renderStatus();
+      updateStatus(await api.stepClock());
       if (mockMode) appendEvent({
         type: "tick",
         sim_ts: state.status.sim_ts,
@@ -869,13 +1026,7 @@ function bindControls() {
       const scenario = await (active
         ? api.clearScenario(button.dataset.scenario)
         : api.injectScenario(button.dataset.scenario));
-      // Keep focus on the same control while its pressed state changes.
-      button.setAttribute("aria-pressed", String(scenario.active));
-      button.setAttribute(
-        "aria-label",
-        `${scenario.active ? "Clear" : "Inject"} ${scenario.id}: ${scenario.title}`,
-      );
-      button.textContent = `${scenario.id}${scenario.active ? " ·" : ""}`;
+      renderScenario(scenario);
       notify(
         `${scenario.id} ${scenario.active ? "injected" : "cleared"}${mockMode ? " locally. Mock incident and chart fixtures remain unchanged." : "."}`,
       );
@@ -885,7 +1036,7 @@ function bindControls() {
     const button = event.target.closest("[data-status]");
     if (!button) return;
     state.filter = button.dataset.status;
-    ++state.incidentRequest;
+    state.openingIncident = null;
     state.incident = null;
     document
       .querySelectorAll("[data-status]")
@@ -933,6 +1084,7 @@ function bindControls() {
 
 async function init() {
   $("#mode-label").textContent = mockMode ? "MOCK DATA · NO LIVE CALLS" : "LIVE API";
+  bindControls();
   if (mockMode) {
     $("#feed-caption").textContent = "Replay · one event every 2 seconds · last 30";
     $("#feed").setAttribute("aria-label", "Replayed events");
@@ -940,6 +1092,9 @@ async function init() {
     $(".mock-callout").hidden = true;
     for (const field of $("#metric-form").querySelectorAll("input, textarea"))
       field.value = "";
+    connectEvents();
+    await refreshLive();
+    return;
   }
   const [status, graph, metrics, incidents, scenarios, events] =
     await Promise.all([
@@ -948,10 +1103,9 @@ async function init() {
       api.getMetrics(),
       api.getIncidents(),
       api.getScenarios(),
-      mockMode ? api.getEvents() : [],
+      api.getEvents(),
     ]);
   Object.assign(state, { status, graph, metrics, incidents, events });
-  bindControls();
   renderStatus();
   renderScenarios(scenarios);
   renderGraph();
@@ -963,7 +1117,6 @@ async function init() {
       : state.graph.nodes[0] && selectMetric(state.graph.nodes[0].id),
     first && openIncident(first.id),
   ]);
-  if (!mockMode) return;
   replayNext();
   setInterval(() => {
     if (!state.status.paused) replayNext();
