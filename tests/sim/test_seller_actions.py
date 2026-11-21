@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from eye.config import Settings
 from eye.sim import engine
-from eye.sim.engine import Simulator
+from eye.sim.engine import Hour, Simulator
 from eye.sim.market import Market
 from eye.sim.seller_actions import JournalSellerActionFeed, SellerAction
 from eye.sim.source import _world
@@ -52,6 +52,10 @@ def test_feed_missing_empty_dedup_and_restart(tmp_path: Path) -> None:
         ("set_price", 99),
         ("pause_repricer", None),
     ]
+    assert feed.pending() == actions
+    feed.ack([actions[0].key])
+    assert feed.pending() == actions[1:]
+    feed.ack([actions[1].key])
     assert feed.pending() == []
     assert JournalSellerActionFeed(path).pending() == actions
     write_records(path, pause, revert)
@@ -68,7 +72,9 @@ def test_feed_ignores_interrupted_tail(tmp_path: Path, tail: bytes) -> None:
     complete = path.read_bytes()
     path.write_bytes(complete + tail)
     feed = JournalSellerActionFeed(path)
-    assert len(feed.pending()) == 1
+    actions = feed.pending()
+    assert len(actions) == 1
+    feed.ack([actions[0].key])
     write_records(path, journal_record(), journal_record("paused"))
     assert [a.kind for a in feed.pending()] == ["pause_repricer"]
 
@@ -309,6 +315,78 @@ def test_unknown_offer_is_consumed_without_crashing(
             assert reader.execute("SELECT count(*) FROM seller_actions").fetchone() == (
                 1,
             )
+
+
+def test_failed_step_retries_unacknowledged_actions(
+    small_sim_settings: Settings,
+) -> None:
+    with closing(Simulator(small_sim_settings, db_path=":memory:")) as sim:
+        path = sim.selleros_export.path.with_name("actions.jsonl")
+        offer = next(o for o in sim.world.offers["E02"] if o.seller_id.startswith("S-"))
+        write_records(path, journal_record(seller_id=offer.seller_id, restore_price=77))
+        feed = JournalSellerActionFeed(path)
+        sim.seller_action_feed = feed
+        pending = feed.pending()
+        ts = sim.now
+
+        def fail_before_commit(sim: Simulator, hour: Hour) -> None:
+            raise OSError("tick failed before commit")
+
+        sim.pre_store_hooks.append(fail_before_commit)
+        with pytest.raises(OSError, match="tick failed before commit"):
+            sim.step()
+        assert sim.now == ts
+        assert offer.price == 77
+        assert feed.pending() == pending
+        with sim.store.cursor() as reader:
+            assert reader.execute("SELECT count(*) FROM seller_actions").fetchone() == (
+                0,
+            )
+        sim.pre_store_hooks.remove(fail_before_commit)
+        offer.price = 1
+        sim.step()
+        assert offer.price == 77
+        assert feed.pending() == []
+        sim.step()
+        with sim.store.cursor() as reader:
+            assert reader.execute(
+                "SELECT action_key, ts FROM seller_actions"
+            ).fetchall() == [(pending[0].key, ts)]
+
+
+def test_committed_actions_are_not_reapplied_after_ack_failure(
+    small_sim_settings: Settings,
+) -> None:
+    class RetryingAckFeed(JournalSellerActionFeed):
+        fail_ack = True
+
+        def ack(self, keys: list[str]) -> None:
+            if self.fail_ack:
+                self.fail_ack = False
+                raise OSError("ack unavailable")
+            super().ack(keys)
+
+    with closing(Simulator(small_sim_settings, db_path=":memory:")) as sim:
+        path = sim.selleros_export.path.with_name("actions.jsonl")
+        offer = next(o for o in sim.world.offers["E02"] if o.seller_id.startswith("S-"))
+        write_records(path, journal_record(seller_id=offer.seller_id, restore_price=77))
+        feed = RetryingAckFeed(path)
+        sim.seller_action_feed = feed
+        ts = sim.now
+        with pytest.raises(OSError, match="ack unavailable"):
+            sim.step()
+        assert sim.now == ts + timedelta(hours=1)
+        assert offer.price == 77
+        assert len(feed.pending()) == 1
+        offer.price = 88
+        sim.step()
+        assert offer.price == 88
+        assert feed.pending() == []
+        with sim.store.cursor() as reader:
+            assert reader.execute("SELECT ts FROM seller_actions").fetchall() == [(ts,)]
+            assert reader.execute(
+                "SELECT count(DISTINCT ts) FROM traffic_hourly"
+            ).fetchone() == (2,)
 
 
 def test_backfill_does_not_consume_live_actions(small_sim_settings: Settings) -> None:

@@ -97,6 +97,7 @@ class Simulator:
         ads_rng = default_rng([self.settings.sim.seed, hour_index, 1])
         for hook in self.pre_demand_hooks:
             hook(self, hour)
+        feed: SellerActionFeed | None = None
         if seller_actions is None:
             self._journal_feed.path = self.selleros_export.path.with_name(
                 "actions.jsonl"
@@ -190,6 +191,8 @@ class Simulator:
         self.store.append(hour.batches)
         self._seller_action_keys.update(action.key for action in actions)
         self.now += _HOUR
+        if feed is not None:
+            feed.ack([action.key for action in seller_actions])
         self.selleros_export.write(hour.ts)
 
     def close(self) -> None:

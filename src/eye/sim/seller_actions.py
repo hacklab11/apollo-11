@@ -29,6 +29,8 @@ class SellerAction(BaseModel):
 class SellerActionFeed(Protocol):
     def pending(self) -> list[SellerAction]: ...
 
+    def ack(self, keys: list[str]) -> None: ...
+
 
 class _JournalRecord(BaseModel):
     seller_id: str
@@ -40,8 +42,12 @@ class _JournalRecord(BaseModel):
 class JournalSellerActionFeed:
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._seen: set[str] = set()
+        self._acked: set[str] = set()
         self._lock = Lock()
+
+    def ack(self, keys: list[str]) -> None:
+        with self._lock:
+            self._acked.update(keys)
 
     def pending(self) -> list[SellerAction]:
         with self._lock:
@@ -69,7 +75,7 @@ class JournalSellerActionFeed:
                 key = hashlib.sha256(
                     json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
-                if key in self._seen:
+                if key in self._acked:
                     continue
                 actions.append(
                     SellerAction(
@@ -84,5 +90,4 @@ class JournalSellerActionFeed:
                         else None,
                     )
                 )
-            self._seen.update(action.key for action in actions)
             return list({action.key: action for action in actions}.values())
