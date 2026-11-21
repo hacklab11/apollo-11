@@ -237,3 +237,25 @@ def test_new_seller_without_offers_in_window(
     assert response.status_code == 200, response.text
     assert response.json()["rows"][0]["seller_id"] == "S-01"
     assert response.json()["rows"][0]["offer_ts"] is None
+
+
+def test_auction_slot_capacity(
+    connection: duckdb.DuckDBPyConnection, client: TestClient
+) -> None:
+    def auction() -> dict[str, Any]:
+        response = client.get("/data/ads/auction", params=WINDOW)
+        assert response.status_code == 200, response.text
+        return response.json()["rows"][0]
+
+    row = auction()
+    assert row["slots"] == 200
+    assert row["filled_slots"] == 100
+    assert row["slot_fill_rate"] == 0.5
+    connection.execute("DELETE FROM ads_hourly")
+    row = auction()
+    assert row["slots"] == 200
+    assert row["filled_slots"] == 0
+    assert row["slot_fill_rate"] == 0
+    assert row["bidders"] == 0
+    connection.execute("UPDATE search_hourly SET searches=0")
+    assert auction()["slot_fill_rate"] is None
