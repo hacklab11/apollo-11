@@ -305,8 +305,8 @@ function updateStatus(status, reset = false) {
 
 function renderScenarios(scenarios) {
   const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
-  const ids = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "I1", "I2", ...byId.keys()]);
-  const titles = { S6: "Black Friday cascade", S8: "The €9 headphones" };
+  const ids = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "I1", "I2", "I3", ...byId.keys()]);
+  const titles = { S6: "Black Friday cascade", S8: "The €9 headphones", I3: "Electronics coupon day" };
   $("#scenarios").innerHTML = [...ids].map((id) => {
     const scenario = byId.get(id);
     const key = escapeHtml(id);
