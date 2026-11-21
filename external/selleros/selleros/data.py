@@ -4,13 +4,14 @@ import json
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from selleros.models import SellerAlert, SellerAlertAck
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+PriceSource = Literal["repricer", "manual"]
 
 
 class Repricer(BaseModel):
@@ -33,6 +34,7 @@ class Price(BaseModel):
     ts: datetime
     sku: str
     price: float
+    source: PriceSource = "repricer"
 
 
 class Seller(BaseModel):
@@ -63,6 +65,45 @@ class Selection(BaseModel):
 class ToolOutput(BaseModel):
     rows: list[dict[str, Any]]
     summary: str = Field(max_length=300)
+
+
+class PriceIntent(BaseModel):
+    seller_id: str
+    sku: str
+    ts: datetime
+    old: float | None
+    new: float
+    source: PriceSource
+    unit_cost: float
+    verdict: Literal["intended", "likely_error"]
+
+
+def price_intent(
+    seller: Seller, sku: SKU, as_of: datetime | None = None
+) -> PriceIntent | None:
+    history = sorted(
+        (
+            p
+            for p in seller.price_history
+            if p.sku == sku.sku and (as_of is None or p.ts <= as_of)
+        ),
+        key=lambda p: p.ts,
+    )
+    if not history:
+        return None
+    latest = history[-1]
+    return PriceIntent(
+        seller_id=seller.seller_id,
+        sku=sku.sku,
+        ts=latest.ts,
+        old=history[-2].price if len(history) > 1 else None,
+        new=latest.price,
+        source=latest.source,
+        unit_cost=sku.unit_cost,
+        verdict="likely_error"
+        if latest.source == "manual" and latest.price < sku.unit_cost
+        else "intended",
+    )
 
 
 class Store:
@@ -176,6 +217,11 @@ class ScopedData:
                     if p.ts >= self.as_of - timedelta(hours=24)
                 ]
                 rows.append(base | {"price_path": recent, "price_changes": len(recent)})
+            elif name == "price_intent_check":
+                for sku in skus:
+                    intent = price_intent(seller, sku, self.as_of)
+                    if intent is not None:
+                        rows.append(intent.model_dump(mode="json"))
             elif name in {"get_costs", "get_supplier_eta"}:
                 for sku in skus:
                     prices = [p for p in history if p.sku == sku.sku]

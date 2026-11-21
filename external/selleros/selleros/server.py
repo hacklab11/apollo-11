@@ -26,6 +26,7 @@ SKILLS = {
     "repricer_status": "Repricer mode, floor and last 24 hour price path",
     "below_cost_check": "Current prices below unit cost and margin per unit",
     "supplier_eta": "Expected seller restock dates",
+    "price_intent_check": "Last price change, source, unit cost and deterministic price intent verdict",
     "receive_alert": "Pause no-floor repricers in response to alerts",
 }
 
