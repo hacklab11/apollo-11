@@ -278,25 +278,21 @@ class Detective:
         self._skeptic = Skeptic(con, registry, freshness=self._freshness, llm=self._llm)
 
     def _first_changes(
-        self, anomaly: Anomaly, window: _Window, nodes: Iterable[str]
+        self, segment: dict[str, str], window: _Window, nodes: Iterable[str]
     ) -> dict[str, datetime | None]:
         scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
         for node in sorted(nodes):
             dims = self._registry.get(node).dimensions
-            segment = tuple(
-                sorted(
-                    (dim, value)
-                    for dim, value in anomaly.segment.items()
-                    if dim in dims
-                )
+            scope = tuple(
+                sorted((dim, value) for dim, value in segment.items() if dim in dims)
             )
-            scoped.setdefault(segment, []).append(node)
+            scoped.setdefault(scope, []).append(node)
         changes: dict[str, datetime | None] = {}
-        for segment, metrics in scoped.items():
+        for scope, metrics in scoped.items():
             result = first_change(
                 FirstChangeInput(
                     metrics=metrics,
-                    segment=dict(segment),
+                    segment=dict(scope),
                     start=window.lookback,
                     end=window.end,
                 ),
@@ -334,7 +330,9 @@ class Detective:
             and self._registry.get(cause.root_node).status == "active"
         ):
             measured.add(cause.root_node)
-        changes = self._first_changes(anomaly, window, measured)
+        changes = self._first_changes(
+            {**anomaly.segment, **cause.segment}, window, measured
+        )
         cause_ts = cause.first_change_ts or changes.get(cause.root_node)
         if cause_ts is None:
             return []
@@ -368,7 +366,7 @@ class Detective:
         }
         changes = {
             node: ts
-            for node, ts in self._first_changes(anomaly, window, active).items()
+            for node, ts in self._first_changes(anomaly.segment, window, active).items()
             if ts is not None
         }
         corroborated = {
