@@ -22,7 +22,7 @@ from eye.api.app import create_app
 from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, ScenarioId, TrailStep
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient, configure_client
+from eye.llm.client import BudgetExceeded, LLMClient, configure_client
 from eye.orchestrator import HOUR, Orchestrator, Scenarios, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
@@ -187,7 +187,10 @@ def _reporter(
         async def write(self, result: InvestigationResult) -> tuple[str, str]:
             if result.stop_reason == "error":
                 return self.template(result)[0], result.summary
-            return await for_result(result).write(result)
+            try:
+                return await for_result(result).write(result)
+            except BudgetExceeded:
+                return self.template(result)
 
     return CoreReporter(settings=settings.llm)
 

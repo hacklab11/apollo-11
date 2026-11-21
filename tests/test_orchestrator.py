@@ -1,10 +1,12 @@
 import asyncio
+import time
 from dataclasses import dataclass
 from datetime import datetime
 
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 
+from eye.agents.reporter import Reporter
 from eye.config import Settings
 from eye.contracts import (
     Anomaly,
@@ -17,7 +19,54 @@ from eye.contracts import (
 )
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient
+from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator, StepSink
+
+
+@pytest.mark.asyncio
+async def test_reporter_budget_exhaustion_still_finishes_incident() -> None:
+    settings = Settings(sim={"autostart": False})
+    llm = LLMClient(settings.llm)
+    result: InvestigationResult | None = None
+
+    async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
+        nonlocal result
+        llm._calls.extend([time.monotonic()] * settings.llm.max_calls_per_hour)
+        result = InvestigationResult(
+            investigation_id="inv_fake",
+            entry=anomaly,
+            verdict="HYPOTHESIS",
+            summary="No confirmed cause",
+            root_cause=None,
+            hypotheses=[],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=0,
+            stop_reason="budget",
+        )
+        return result
+
+    store = IncidentStore(":memory:")
+    orchestrator = Orchestrator(
+        settings,
+        Clock(settings.sim.start_ts),
+        Sentinel(1),
+        store,
+        llm,
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    store.reporter = _reporter(llm, settings, orchestrator).write
+    try:
+        await orchestrator.step_once()
+        assert result is not None and llm.status()["budget_paused"]
+        (incident,) = store.all()
+        assert incident.status == "open"
+        assert (incident.title, incident.summary) == Reporter.template(result)
+    finally:
+        await orchestrator.close()
+        store.close()
 
 
 @dataclass
