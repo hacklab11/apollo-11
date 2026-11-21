@@ -92,7 +92,7 @@ def _chat_response(raw: dict[str, Any], model: str) -> BetaMessage:
         try:
             args = json.loads(call["function"]["arguments"])
             if not isinstance(args, dict):
-                raise ValueError("arguments must be an object")
+                raise TypeError("arguments must be an object")
         except (ValueError, TypeError):
             args = {
                 "__invalid_json_arguments__": "Arguments must be a valid JSON object"
