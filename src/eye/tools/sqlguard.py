@@ -17,8 +17,8 @@ def _nodes(value: Any) -> Iterator[dict]:
             yield from _nodes(child)
 
 
-def check(sql: str, allowed_tables: Collection[str]) -> None:
-    """Raise ValueError unless SQL is one SELECT over explicitly allowed tables."""
+def check(sql: str, allowed_tables: Collection[str]) -> tuple[str, ...]:
+    """Validate one SELECT and return its parsed physical source tables."""
     with duckdb.connect() as parser:
         try:
             statements = parser.extract_statements(sql)
@@ -35,6 +35,7 @@ def check(sql: str, allowed_tables: Collection[str]) -> None:
     if tree.get("error"):
         raise ValueError("SQL could not be parsed")
     allowed = {name.lower() for name in allowed_tables} - {"scenario_log"}
+    sources: dict[str, None] = {}
 
     def tables(value: Any, ctes: frozenset[str] = frozenset()) -> None:
         if isinstance(value, list):
@@ -55,6 +56,8 @@ def check(sql: str, allowed_tables: Collection[str]) -> None:
                 or name not in allowed | ctes
             ):
                 raise ValueError(f"Table is not allowed: {name}")
+            if name not in ctes:
+                sources[name] = None
         for child in node.values():
             tables(child, ctes)
 
@@ -74,6 +77,7 @@ def check(sql: str, allowed_tables: Collection[str]) -> None:
                 "load_extension",
             }:
                 raise ValueError(f"Function is not allowed: {function}")
+    return tuple(sources)
 
 
 def dry_run(

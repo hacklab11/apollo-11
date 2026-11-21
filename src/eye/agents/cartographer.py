@@ -24,7 +24,7 @@ from eye.contracts import (
 from eye.graph.store import GraphStore
 from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.engine import MetricEngine
-from eye.registry.loader import formula_inputs, source_tables
+from eye.registry.loader import formula_inputs
 from eye.tools import sqlguard
 from eye.tools.identity import parse_identity
 from eye.tools.validate import (
@@ -102,6 +102,12 @@ class Cartographer:
         self.graph = graph
         self.llm = llm or LlmSettings()
         self.scenario_hours = scenario_hours
+        self._allowed_tables = frozenset(
+            table
+            for name, tables in engine._registry.source_tables.items()
+            if engine._registry.get(name).added_by == "seed"
+            for table in tables
+        )
 
     def _identity(self, engine: MetricEngine, text: str) -> ValidationResult:
         return validate_identity(engine, text, scenario_hours=self.scenario_hours)
@@ -297,7 +303,8 @@ class Cartographer:
             )
 
         registry = self.engine._registry
-        allowed = {t for tables in registry.source_tables.values() for t in tables}
+        allowed = self._allowed_tables
+        tables: tuple[str, ...] = ()
         try:
             if (
                 not re.fullmatch(r"[a-z][a-z0-9_]{2,40}", req.name)
@@ -305,7 +312,7 @@ class Cartographer:
             ):
                 raise ValueError("invalid or existing metric name")
             if req.sql:
-                sqlguard.check(req.sql, allowed)
+                tables = sqlguard.check(req.sql, allowed)
             else:
                 names = formula_inputs(req.expression)
                 if not names:
@@ -349,7 +356,7 @@ class Cartographer:
             metrics={**registry.metrics, req.name: metric},
             source_tables={
                 **registry.source_tables,
-                req.name: source_tables(req.sql)
+                req.name: tables
                 if req.sql
                 else tuple(
                     sorted({t for name in inputs for t in registry.source_tables[name]})
