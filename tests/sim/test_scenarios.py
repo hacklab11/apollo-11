@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from eye.config import Settings
-from eye.sim.engine import Simulator
+from eye.sim.engine import Hour, Simulator
 from eye.sim.scenarios import ScenarioManager, inject
 
 
@@ -349,3 +349,48 @@ def test_lifecycle_empty_scheduled_and_errors(settings: Settings) -> None:
             assert con.execute(
                 "SELECT action, ts FROM scenario_log ORDER BY ts"
             ).fetchall() == [("inject", due), ("clear", due + timedelta(hours=1))]
+
+
+@pytest.mark.parametrize("empty_stock", [False, True])
+def test_coupled_sampling_preserves_funnel_and_stock(
+    settings: Settings, empty_stock: bool
+) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        if empty_stock:
+            for offers in sim.world.offers.values():
+                for offer in offers:
+                    offer.stock = 0
+
+        def coupled(world: Simulator, hour: Hour) -> None:
+            hour.demand.coupled_volume_mult = 1.4
+            hour.demand.relevance["DE"] = 0.45
+            hour.demand.isolate_relevance = True
+
+        sim.pre_demand_hooks.append(coupled)
+        sim.step()
+        with sim.store.cursor() as con:
+            assert con.execute("""
+                SELECT count(*) FROM (
+                    SELECT ts, country, platform, sum(impressions) AS impressions
+                    FROM feed_hourly GROUP BY ALL
+                ) JOIN traffic_hourly USING (ts, country, platform)
+                WHERE impressions != 12 * feed_sessions
+                   OR sessions != search_sessions + feed_sessions + other_sessions
+            """).fetchone() == (0,)
+            assert con.execute("""
+                WITH orders AS (
+                    SELECT country, platform, sum(units) AS units
+                    FROM orders_hourly GROUP BY ALL
+                ), payments AS (
+                    SELECT country, platform, sum(successes) AS successes,
+                        sum(attempts) AS attempts
+                    FROM payments_hourly GROUP BY ALL
+                )
+                SELECT count(*) FROM checkout_hourly
+                JOIN payments USING (country, platform)
+                LEFT JOIN orders USING (country, platform)
+                WHERE coalesce(units, 0) != successes
+                   OR attempts != payment_attempts OR successes > attempts
+                   OR payment_attempts > checkout_starts OR checkout_starts > carts
+            """).fetchone() == (0,)
+        assert all(o.stock >= 0 for offers in sim.world.offers.values() for o in offers)

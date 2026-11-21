@@ -124,7 +124,14 @@ def generate_demand(
 def _scale_counts(
     values: NDArray[np.int64], factor: float, totals: NDArray[np.int64] | None = None
 ) -> NDArray[np.int64]:
-    flat = values.reshape(len(values), -1) * factor
+    flat = values.reshape(len(values), -1).astype(float)
+    if totals is None:
+        flat *= factor
+    else:
+        sums = flat.sum(axis=1)
+        flat *= np.divide(totals, sums, out=np.zeros_like(sums), where=sums > 0)[
+            :, None
+        ]
     scaled = np.floor(flat).astype(np.int64)
     targets = np.rint(flat.sum(axis=1)).astype(np.int64) if totals is None else totals
     for row, target, fractions in zip(scaled, targets, flat - scaled, strict=True):
