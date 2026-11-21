@@ -694,10 +694,13 @@ function renderChart(series) {
 }
 
 function filteredIncidents() {
+  const statuses = {
+    open: ["investigating", "open", "persisting"],
+    cleared: ["innocent", "deferred"],
+    resolved: ["resolved"],
+  };
   return state.incidents.filter((incident) =>
-    state.filter === "open"
-      ? ["investigating", "open", "persisting"].includes(incident.status)
-      : incident.status === state.filter,
+    statuses[state.filter].includes(incident.status),
   );
 }
 
