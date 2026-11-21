@@ -422,6 +422,26 @@ def test_coupled_sampling_preserves_funnel_and_stock(
         assert all(o.stock >= 0 for offers in sim.world.offers.values() for o in offers)
 
 
+@pytest.mark.parametrize("scheduled_first", [False, True])
+def test_scheduled_reinjection_does_not_reactivate_cleared_state(
+    settings: Settings, scheduled_first: bool
+) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        manager = ScenarioManager(sim)
+        manager.inject("S3", sim.now + timedelta(hours=1) if scheduled_first else None)
+        manager.clear("S3")
+        due = sim.now + timedelta(hours=2)
+        manager.inject("S3", due)
+        play(sim, 3)
+        old, new = manager.timeline()
+        assert not old.active and old.cleared_ts is not None
+        assert new.active and new.injected_ts == due
+        manager.clear("S3")
+        play(sim, 1)
+        assert manager.active() == []
+        assert not any(s.active for s in manager.timeline())
+
+
 def test_coupled_stockouts_do_not_become_payment_failures(settings: Settings) -> None:
     with closing(Simulator(settings, db_path=":memory:")) as sim:
         for offers in sim.world.offers.values():

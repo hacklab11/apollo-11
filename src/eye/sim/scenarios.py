@@ -263,7 +263,11 @@ class ScenarioManager:
 
     def _before(self, sim: Simulator, hour: Hour) -> None:
         for state in self._states:
-            if state.id in self._pending and self._pending[state.id] <= hour.ts:
+            if (
+                state.cleared_ts is None
+                and state.id in self._pending
+                and self._pending[state.id] <= hour.ts
+            ):
                 self._start(state)
         self._reset_switches()
         for state in self.active():
