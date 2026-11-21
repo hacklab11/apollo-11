@@ -47,6 +47,33 @@ def test_canonical_and_fingerprint():
     )
 
 
+@pytest.mark.parametrize("status", ["resolved", "open", "innocent"])
+def test_excluded_hours(store: IncidentStore, status: str) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.entry.ts = start + timedelta(minutes=30)
+    incident.status = status
+    incident.resolved_ts = start + timedelta(hours=2) if status == "resolved" else None
+    store._save(incident)
+    until = start + timedelta(hours=4)
+    expected = (
+        set()
+        if status == "innocent"
+        else {
+            start + timedelta(hours=i) for i in range(2 if status == "resolved" else 4)
+        }
+    )
+    assert store.excluded_hours(until) == expected
+    assert store.excluded_hours(start) == set()
+    assert store.excluded_hours(start + timedelta(hours=1)) == (
+        set() if status == "innocent" else {start}
+    )
+
+
+def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
+    assert store.excluded_hours(make_incident_s7().entry.ts) == set()
+
+
 @pytest.mark.asyncio
 async def test_symptoms_persist_and_merge(tmp_path):
     path = tmp_path / "symptoms.duckdb"

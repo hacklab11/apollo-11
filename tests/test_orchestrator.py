@@ -374,7 +374,8 @@ async def test_step_investigates_upserts_and_resolves_after_clear(
         assert incident.status == "resolved"
         assert incident.resolved_ts == orchestrator.sim_ts
         assert injected.injected_ts not in orchestrator.clean_hours()
-        assert cleared.cleared_ts in orchestrator.clean_hours()
+        assert cleared.cleared_ts not in orchestrator.clean_hours()
+        assert incident.resolved_ts in orchestrator.clean_hours()
     finally:
         await stream.aclose()
         await orchestrator.close()

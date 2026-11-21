@@ -304,18 +304,9 @@ class Orchestrator:
 
     def clean_hours(self) -> list[datetime]:
         start = self.sim.history_start
-        timeline = self.scenarios.timeline() if self.scenarios else []
+        excluded = self.incidents.excluded_hours(self.sim.now)
         hours = (start + i * HOUR for i in range((self.sim.now - start) // HOUR))
-        return [
-            hour
-            for hour in hours
-            if not any(
-                state.injected_ts is not None
-                and state.injected_ts <= hour
-                and (state.cleared_ts is None or hour < state.cleared_ts)
-                for state in timeline
-            )
-        ]
+        return [hour for hour in hours if hour not in excluded]
 
     async def register_metric(self, request: AddMetricRequest) -> AddMetricResult:
         if self.add_metric is None:

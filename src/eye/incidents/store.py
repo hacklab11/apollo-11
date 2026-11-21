@@ -79,6 +79,18 @@ class IncidentStore:
         ).fetchone()
         return Incident.model_validate_json(row[0]) if row else None
 
+    def excluded_hours(self, until: datetime) -> set[datetime]:
+        hours: set[datetime] = set()
+        for incident in self.all():
+            if incident.status == "innocent":
+                continue
+            hour = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+            end = min(incident.resolved_ts or until, until)
+            while hour < end:
+                hours.add(hour)
+                hour += timedelta(hours=1)
+        return hours
+
     def _save(self, incident: Incident) -> None:
         self.db.execute(
             "INSERT INTO incidents (id, incident) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET incident = excluded.incident",
