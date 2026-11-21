@@ -52,7 +52,6 @@
     <div class="scenario-bar">
       <span class="eyebrow">DEMO SCENARIOS</span>
       <div id="scenarios" class="scenario-buttons"></div>
-      <span id="mode-label" class="mock-label"></span>
     </div>
     <div id="core-notice" class="notice" role="status" hidden>core not reachable</div>
     <div id="notice" class="notice" role="status" hidden></div>
@@ -130,7 +129,7 @@
               ></canvas>
             </div>
             <p class="chart-summary" id="chart-summary"></p>
-            <p id="fixture-note" class="muted"></p>
+            <p class="muted">Actual vs expected · shaded forecast range</p>
           </section>
           <section
             class="panel incidents-panel"
@@ -232,10 +231,6 @@
       </div>
       <p class="muted">
         Supply a metric query. The Cartographer proposes its relationships.
-      </p>
-      <p class="mock-callout">
-        Mock mode returns the fixed <strong>fee_per_order</strong> example,
-        regardless of input. No SQL is executed.
       </p>
       <form id="metric-form">
         <label for="new-name">Name</label

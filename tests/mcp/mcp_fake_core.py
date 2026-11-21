@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 
-MOCK = Path(__file__).resolve().parents[2] / "web" / "mock"
+MOCK = Path(__file__).resolve().parents[1] / "fixtures" / "web"
 
 
 def mock(name: str) -> object:
@@ -14,7 +14,7 @@ Calls = list[tuple[str, dict[str, str]]]
 
 
 def fake_core(calls: Calls) -> FastAPI:
-    """A tiny core API that serves the frozen web/mock payloads."""
+    """A tiny core API that serves the frozen tests/fixtures/web payloads."""
     app = FastAPI()
 
     @app.middleware("http")

@@ -42,11 +42,13 @@ MOCK_MODELS: dict[str, Any] = {
 
 @pytest.mark.parametrize(("filename", "model"), MOCK_MODELS.items())
 def test_mock_validates(repo_root: Path, filename: str, model: Any) -> None:
-    TypeAdapter(model).validate_json((repo_root / "web/mock" / filename).read_bytes())
+    TypeAdapter(model).validate_json(
+        (repo_root / "tests/fixtures/web" / filename).read_bytes()
+    )
 
 
 def test_mock_file_inventory(repo_root: Path) -> None:
-    assert {path.name for path in (repo_root / "web/mock").iterdir()} == {
+    assert {path.name for path in (repo_root / "tests/fixtures/web").iterdir()} == {
         *MOCK_MODELS,
         "events.jsonl",
     }
@@ -54,7 +56,9 @@ def test_mock_file_inventory(repo_root: Path) -> None:
 
 def test_event_stream_validates(repo_root: Path) -> None:
     lines = (
-        (repo_root / "web/mock/events.jsonl").read_text(encoding="utf-8").splitlines()
+        (repo_root / "tests/fixtures/web/events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     )
     events = [Event.model_validate_json(line) for line in lines]
     assert events
@@ -79,7 +83,7 @@ def test_event_stream_validates(repo_root: Path) -> None:
 
 
 def test_orders_chart_matches_s7_anomaly(repo_root: Path) -> None:
-    mocks = repo_root / "web/mock"
+    mocks = repo_root / "tests/fixtures/web"
     incident = Incident.model_validate_json((mocks / "incident_s7.json").read_bytes())
     series = Series.model_validate_json((mocks / "metric_orders.json").read_bytes())
     assert series.metric == incident.entry.metric
@@ -98,7 +102,7 @@ def test_orders_chart_matches_s7_anomaly(repo_root: Path) -> None:
 
 
 def test_graph_edges_reference_mock_metrics(repo_root: Path) -> None:
-    mocks = repo_root / "web/mock"
+    mocks = repo_root / "tests/fixtures/web"
     metrics = json.loads((mocks / "metrics.json").read_bytes())
     assert all("sql" not in metric for metric in metrics)
     graph = GraphView.model_validate_json((mocks / "graph.json").read_bytes())
@@ -117,7 +121,7 @@ def test_graph_edges_reference_mock_metrics(repo_root: Path) -> None:
 
 
 def test_incident_detail_and_trail_agree(repo_root: Path) -> None:
-    mocks = repo_root / "web/mock"
+    mocks = repo_root / "tests/fixtures/web"
     incident = Incident.model_validate_json((mocks / "incident_s7.json").read_bytes())
     trail = TypeAdapter(list[TrailStep]).validate_json(
         (mocks / "trail_s7.json").read_bytes()

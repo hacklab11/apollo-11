@@ -227,6 +227,14 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         }
         assert client.get("/").status_code == 200
         assert client.get("/web/app.js").status_code == 200
+        assert client.get("/app.js").status_code == 200
+        assert client.get("/styles.css").status_code == 200
+        for path in (
+            "/mock/status.json",
+            "/web/mock/status.json",
+            "/web/README.md",
+        ):
+            assert client.get(path).status_code == 404
         assert client.get("/api/metrics/no_such_metric").status_code == 404
 
 

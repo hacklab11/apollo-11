@@ -1,4 +1,3 @@
-const mockMode = new URLSearchParams(location.search).get("mock") === "1";
 const $ = (selector) => document.querySelector(selector);
 const escapeHtml = (value) =>
   String(value ?? "").replace(
@@ -47,128 +46,6 @@ const actorLetters = {
   chat: "C",
 };
 
-const fixtures = new Map();
-async function fixture(file, json = true) {
-  if (!fixtures.has(file)) {
-    fixtures.set(
-      file,
-      fetch(new URL(`mock/${file}`, import.meta.url))
-        .then(async (response) => {
-          if (!response.ok)
-            throw new Error(`Could not load ${file} (${response.status}).`);
-          return json ? response.json() : response.text();
-        })
-        .catch((error) => {
-          fixtures.delete(file);
-          throw error;
-        }),
-    );
-  }
-  return structuredClone(await fixtures.get(file));
-}
-
-let mockStatus;
-let mockScenarios;
-
-const mockApi = {
-  async getStatus() {
-    return (mockStatus ??= await fixture("status.json"));
-  },
-  getGraph: () => fixture("graph.json"),
-  getMetrics: () => fixture("metrics.json"),
-  getMetric: (_name, _query = {}) => fixture("metric_orders.json"),
-  async getMetricDefinition(name) {
-    if (name === "orders") return fixture("metric_def_orders.json");
-    const [metrics, graph] = await Promise.all([
-      api.getMetrics(),
-      api.getGraph(),
-    ]);
-    return {
-      ...metrics.find((metric) => metric.name === name),
-      in_edges: graph.edges.filter((edge) => edge.dst === name),
-      out_edges: graph.edges.filter((edge) => edge.src === name),
-    };
-  },
-  async addMetric() {
-    const result = await fixture("add_metric_result.json");
-    const name = "fee_per_order";
-    const expression = "fee_revenue / orders";
-    Object.assign(result.metric, {
-      name, expression, description: "Marketplace fee revenue in euros divided by units ordered.",
-      unit: "eur", dimensions: ["country", "platform", "category", "seller_tier", "channel"],
-    });
-    result.accepted = result.accepted.map((edge, index) => {
-      const src = ["fee_revenue", "orders"][index];
-      return { ...edge, id: `edg_${src}_${name}`, src, dst: name, identity: `${name} = ${expression}` };
-    });
-    result.notes = "Mock formula: fee revenue divided by orders. No query was executed.";
-    result.trail_investigation_id = "inv_add_fee_per_order";
-    return result;
-  },
-  getAnomalies: (_since) => fixture("anomalies.json"),
-  async getIncidents(status) {
-    const incidents = await fixture("incidents.json");
-    return status
-      ? incidents.filter((incident) => incident.status === status)
-      : incidents;
-  },
-  getIncident: (id) => {
-    const files = { inc_s7: "incident_s7.json", inc_s6: "incident_s6.json" };
-    if (!files[id])
-      return Promise.reject(new Error(`No incident fixture for ${id}.`));
-    return fixture(files[id]);
-  },
-  async getTrail(id) {
-    if (id === "inc_s7") return fixture("trail_s7.json");
-    // T00 has no trail_s6.json; its real TrailStep is present in the event fixture.
-    const [incident, events] = await Promise.all([
-      api.getIncident(id),
-      api.getEvents(),
-    ]);
-    return events
-      .filter(
-        (event) =>
-          event.type === "trail_step" &&
-          incident.investigation_ids.includes(event.payload.investigation_id),
-      )
-      .map((event) => event.payload);
-  },
-  async getScenarios() {
-    return (mockScenarios ??= await fixture("scenarios.json"));
-  },
-  async injectScenario(id) {
-    return setScenario(id, true);
-  },
-  async clearScenario(id) {
-    return setScenario(id, false);
-  },
-  async pauseClock() {
-    (await api.getStatus()).paused = true;
-    return mockStatus;
-  },
-  async resumeClock() {
-    (await api.getStatus()).paused = false;
-    return mockStatus;
-  },
-  async stepClock() {
-    const status = await api.getStatus();
-    status.sim_ts = new Date(
-      Date.parse(status.sim_ts) + 3_600_000,
-    ).toISOString();
-    status.tick += 1;
-    return status;
-  },
-  async getEvents() {
-    return (await fixture("events.jsonl", false))
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line));
-  },
-  chat: (_messages) => fixture("chat_response.json"),
-  getTruth: () => fixture("truth.json"),
-};
-
 let streamConnected = false;
 
 async function request(path, { method = "GET", query = {}, body } = {}) {
@@ -206,7 +83,7 @@ const post = (path, body) => request(path, { method: "POST", body });
 const metricPath = (name) => `/metrics/${encodeURIComponent(name)}`;
 const incidentPath = (id) => `/incidents/${encodeURIComponent(id)}`;
 
-export const api = mockMode ? mockApi : {
+export const api = {
   getStatus: () => request("/status"),
   getGraph: (query) => request("/graph", { query }),
   getMetrics: () => request("/metrics"),
@@ -223,20 +100,9 @@ export const api = mockMode ? mockApi : {
   pauseClock: () => post("/clock/pause"),
   resumeClock: () => post("/clock/resume"),
   stepClock: () => post("/clock/step"),
-  chat: mockApi.chat,
+  chat: (messages) => post("/chat", { messages }),
   getTruth: () => request("/demo/truth"),
 };
-
-async function setScenario(id, active) {
-  const scenarios = await api.getScenarios();
-  const scenario = scenarios.find((item) => item.id === id);
-  if (!scenario) throw new Error(`Unknown scenario ${id}.`);
-  scenario.active = active;
-  scenario[active ? "injected_ts" : "cleared_ts"] = (
-    await api.getStatus()
-  ).sim_ts;
-  return scenario;
-}
 
 const state = {
   status: null,
@@ -246,8 +112,6 @@ const state = {
   incident: null,
   selectedMetric: "orders",
   filter: "open",
-  events: [],
-  eventIndex: 0,
   messages: [],
   selectedRequest: 0,
   seriesRequest: 0,
@@ -565,13 +429,7 @@ async function selectMetric(name) {
     metric.expression ||
     definition.sql ||
     `${definition.in_edges?.length ?? 0} incoming · ${definition.out_edges?.length ?? 0} outgoing relationships`;
-  const reference = series.metric !== name;
-  $("#metric-unit").textContent = reference
-    ? "ORDERS REFERENCE"
-    : metric.unit === "eur" ? "EUR" : metric.unit ?? "count";
-  $("#fixture-note").textContent = reference
-    ? `No ${readable(name)} series fixture exists. Showing the Orders reference, not measurements for this metric.`
-    : `Actual vs expected · shaded forecast range${mockMode ? " · release marker at 27 Nov, 03:00 UTC" : ""}`;
+  $("#metric-unit").textContent = metric.unit === "eur" ? "EUR" : metric.unit ?? "count";
   if (seriesRequest === state.seriesRequest) renderChart(series);
 }
 
@@ -591,7 +449,7 @@ function renderChart(series) {
       ? ((last.value - last.expected) / last.expected) * 100
       : null;
   $("#chart-summary").textContent =
-    `${readable(series.metric)}: latest ${last?.value == null ? "no data" : number(last.value)}, expected ${last?.expected == null ? "unavailable" : number(last.expected)}${delta === null ? "" : ` (${signed(delta)}%)`}. Shading shows the expected lower–upper range.${mockMode ? " Vertical marker: checkout-web v5.8 release." : ""}`;
+    `${readable(series.metric)}: latest ${last?.value == null ? "no data" : number(last.value)}, expected ${last?.expected == null ? "unavailable" : number(last.expected)}${delta === null ? "" : ` (${signed(delta)}%)`}. Shading shows the expected lower–upper range.`;
   $("#metric-chart").setAttribute(
     "aria-label",
     $("#chart-summary").textContent,
@@ -685,36 +543,6 @@ function renderChart(series) {
         },
       },
     },
-    plugins: mockMode ? [
-      {
-        id: "release-marker",
-        afterDatasetsDraw(chart) {
-          const index = points.findIndex(
-            (point) =>
-              Date.parse(point.ts) >= Date.parse("2026-11-27T03:00:00Z"),
-          );
-          if (index < 0) return;
-          const x = chart.scales.x.getPixelForValue(index);
-          const { ctx, chartArea: area } = chart;
-          ctx.save();
-          ctx.setLineDash([3, 3]);
-          ctx.strokeStyle = "#8a5a09";
-          ctx.beginPath();
-          ctx.moveTo(x, area.top + 13);
-          ctx.lineTo(x, area.bottom);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = "#805309";
-          ctx.font = "9px sans-serif";
-          ctx.fillText(
-            "v5.8 release",
-            Math.min(x + 4, area.right - 64),
-            area.top + 9,
-          );
-          ctx.restore();
-        },
-      },
-    ] : [],
   });
 }
 
@@ -912,12 +740,6 @@ function appendEvent(event) {
   $("#feed").scrollTop = $("#feed").scrollHeight;
 }
 
-function replayNext() {
-  if (!state.events.length) return;
-  appendEvent(state.events[state.eventIndex]);
-  state.eventIndex = (state.eventIndex + 1) % state.events.length;
-}
-
 async function handleLiveEvent(event) {
   appendEvent(event);
   const { payload } = event;
@@ -1038,13 +860,13 @@ async function sendChat(event) {
     const message = renderMessage("assistant", response.answer);
     message.insertAdjacentHTML(
       "beforeend",
-      `<details><summary>Tool calls (${response.tool_calls.length})</summary>${response.tool_calls.map((call) => `<p><strong>${escapeHtml(call.tool)}</strong> · ${escapeHtml(call.summary)}</p><pre>${escapeHtml(JSON.stringify(call.input, null, 2))}</pre>`).join("")}</details>${mockMode ? response.incident_ids.map((id) => `<button class="incident-link" type="button" data-chat-incident="${escapeHtml(id)}">View ${escapeHtml(id)} ↗</button>`).join("") : ""}`,
+      `<details><summary>Tool calls (${response.tool_calls.length})</summary>${response.tool_calls.map((call) => `<p><strong>${escapeHtml(call.tool)}</strong> · ${escapeHtml(call.summary)}</p><pre>${escapeHtml(JSON.stringify(call.input, null, 2))}</pre>`).join("")}</details>${response.incident_ids.map((id) => `<button class="incident-link" type="button" data-chat-incident="${escapeHtml(id)}">View ${escapeHtml(id)} ↗</button>`).join("")}`,
     );
     $("#messages").scrollTop = $("#messages").scrollHeight;
   } catch (error) {
     renderMessage(
       "assistant",
-      `Could not load the mock answer: ${error.message}`,
+      `Could not load the answer: ${error.message}`,
     );
   } finally {
     $("#chat-submit").disabled = false;
@@ -1064,41 +886,15 @@ async function submitMetric(event) {
     const result = await api.addMetric(request);
     const edges = [...result.accepted, ...result.ambiguous, ...result.rejected];
     state.newEdges = new Set(edges.map((edge) => edge.id));
-    if (mockMode) applyMockMetric(result.metric, edges);
-    else await refreshGraph();
+    await refreshGraph();
     $("#metric-result").innerHTML =
-      `<strong>${mockMode ? "Mock metric" : "Metric"} mapped: ${escapeHtml(result.metric.name)}</strong><p>${escapeHtml(result.notes)}</p>${["accepted", "ambiguous", "rejected"].map((group) => `<h4>${readable(group)} (${result[group].length})</h4><ul>${result[group].map((edge) => `<li>${escapeHtml(edge.src)} → ${escapeHtml(edge.dst)} · ${escapeHtml(readable(edge.type))}</li>`).join("") || "<li>None</li>"}</ul>`).join("")}<p>New relationships are highlighted in the graph.</p><details><summary>Full AddMetricResult</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>`;
+      `<strong>Metric mapped: ${escapeHtml(result.metric.name)}</strong><p>${escapeHtml(result.notes)}</p>${["accepted", "ambiguous", "rejected"].map((group) => `<h4>${readable(group)} (${result[group].length})</h4><ul>${result[group].map((edge) => `<li>${escapeHtml(edge.src)} → ${escapeHtml(edge.dst)} · ${escapeHtml(readable(edge.type))}</li>`).join("") || "<li>None</li>"}</ul>`).join("")}<p>New relationships are highlighted in the graph.</p><details><summary>Full AddMetricResult</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>`;
   } catch (error) {
     $("#metric-result").textContent = error.message;
   } finally {
     submit.disabled = false;
     submit.textContent = "Ask Cartographer";
   }
-}
-
-function applyMockMetric(metric, edges) {
-  if (!state.metrics.some((item) => item.name === metric.name))
-    state.metrics.push(metric);
-  const ids = new Set(state.graph.nodes.map((node) => node.id));
-  for (const id of new Set([
-    metric.name,
-    ...edges.flatMap((edge) => [edge.src, edge.dst]),
-  ])) {
-    if (ids.has(id)) continue;
-    const definition = state.metrics.find((item) => item.name === id);
-    state.graph.nodes.push({
-      id,
-      label: readable(id),
-      domain: definition?.domain,
-      unit: definition?.unit,
-      state: "normal",
-    });
-  }
-  for (const edge of edges)
-    if (!state.graph.edges.some((item) => item.id === edge.id))
-      state.graph.edges.push(edge);
-  renderGraph();
-  renderIncidents();
 }
 
 function bindControls() {
@@ -1118,11 +914,6 @@ function bindControls() {
   $("#clock-step").addEventListener("click", () =>
     attempt(async () => {
       updateStatus(await api.stepClock());
-      if (mockMode) appendEvent({
-        type: "tick",
-        sim_ts: state.status.sim_ts,
-        payload: { tick: state.status.tick },
-      });
     }),
   );
   $("#scenarios").addEventListener("click", (event) =>
@@ -1135,7 +926,7 @@ function bindControls() {
         : api.injectScenario(button.dataset.scenario));
       renderScenario(scenario);
       notify(
-        `${scenario.id} ${scenario.active ? "injected" : "cleared"}${mockMode ? " locally. Mock incident and chart fixtures remain unchanged." : "."}`,
+        `${scenario.id} ${scenario.active ? "injected" : "cleared"}.`,
       );
     }),
   );
@@ -1190,42 +981,9 @@ function bindControls() {
 }
 
 async function init() {
-  $("#mode-label").textContent = mockMode ? "MOCK DATA · NO LIVE CALLS" : "LIVE API";
   bindControls();
-  if (mockMode) {
-    $("#feed-caption").textContent = "Replay · one event every 2 seconds · last 30";
-    $("#feed").setAttribute("aria-label", "Replayed events");
-  } else {
-    $(".mock-callout").hidden = true;
-    connectEvents();
-    await refreshLive();
-    return;
-  }
-  const [status, graph, metrics, incidents, scenarios, events] =
-    await Promise.all([
-      api.getStatus(),
-      api.getGraph(),
-      api.getMetrics(),
-      api.getIncidents(),
-      api.getScenarios(),
-      api.getEvents(),
-    ]);
-  Object.assign(state, { status, graph, metrics, incidents, events });
-  renderStatus();
-  renderScenarios(scenarios);
-  renderGraph();
-  renderIncidents();
-  const first = filteredIncidents()[0];
-  await Promise.all([
-    state.graph.nodes.some((node) => node.id === "orders")
-      ? selectMetric("orders")
-      : state.graph.nodes[0] && selectMetric(state.graph.nodes[0].id),
-    first && openIncident(first.id),
-  ]);
-  replayNext();
-  setInterval(() => {
-    if (!state.status.paused) replayNext();
-  }, 2000);
+  connectEvents();
+  await refreshLive();
 }
 
 attempt(init);
