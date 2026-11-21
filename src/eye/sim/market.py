@@ -165,8 +165,8 @@ class Market:
                             if o.seller_id == offer.seller_id
                         )
                         qty = min(wanted, max(0, capacity - self.used[offer.seller_id]))
-                        qty = round(qty * self.replenishment_mult.get(sku, 1.0))
                         self.blocked[offer.seller_id] += wanted - qty
+                        qty = round(qty * self.replenishment_mult.get(sku, 1.0))
                         self.used[offer.seller_id] += qty
                         if qty:
                             offer.inbound.append((ts + timedelta(hours=48), qty))

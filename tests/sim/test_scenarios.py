@@ -3,10 +3,12 @@ from contextlib import closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
 
+import numpy as np
 import pytest
 
 from eye.config import Settings
 from eye.sim.engine import Hour, Simulator
+from eye.sim.market import Market
 from eye.sim.scenarios import ScenarioManager, inject
 
 
@@ -349,6 +351,30 @@ def test_lifecycle_empty_scheduled_and_errors(settings: Settings) -> None:
             assert con.execute(
                 "SELECT action, ts FROM scenario_log ORDER BY ts"
             ).fetchall() == [("inject", due), ("clear", due + timedelta(hours=1))]
+
+
+@pytest.mark.parametrize("capacity", [0, 5, 100000])
+def test_replenishment_reduction_is_not_capacity_blocked(
+    settings: Settings, capacity: int
+) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        world = sim.world
+        offer = next(o for o in world.offers["E01"] if o.seller_id != "1P")
+        for group in world.offers.values():
+            for o in group:
+                o.stock = 100000
+                if o.seller_id == offer.seller_id:
+                    o.fba_capacity_week = 0
+        offer.stock = 0
+        offer.fba_capacity_week = capacity
+        normal = Market(deepcopy(world))
+        reduced = Market(deepcopy(world))
+        reduced.replenishment_mult["E01"] = 0.3
+        ts = sim.now.replace(hour=6)
+        normal.before_demand(ts, np.random.default_rng(42))
+        reduced.before_demand(ts, np.random.default_rng(42))
+        assert reduced.blocked == normal.blocked
+        assert reduced.used[offer.seller_id] == round(normal.used[offer.seller_id] * 0.3)
 
 
 @pytest.mark.parametrize("empty_stock", [False, True])
