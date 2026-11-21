@@ -686,6 +686,25 @@ def test_campaign_false_alarm_before_checkout_is_not_dropped(name: str) -> None:
     assert "open" in results["also.I1.status_any"]["actual"]
 
 
+def test_detection_deadline_uses_the_best_report_candidate() -> None:
+    good = make_incident_s7()
+    wrong = good.model_copy(
+        update={
+            "id": "early-wrong",
+            "verdict": "HYPOTHESIS",
+            "root_cause": None,
+            "summary": "Wrong explanation",
+        }
+    )
+    late = good.model_copy(update={"opened_ts": CAMPAIGN_TS + 5 * harness.HOUR})
+    results = {
+        c["check"]: c for c in harness.evaluate(oracle_entry(), [wrong, late], [])
+    }
+    assert results["expect.verdict_any"]["actual"] == ["CONFIRMED"]
+    assert results["max_ticks_to_detect"]["actual"] == 3
+    assert not results["max_ticks_to_detect"]["passed"]
+
+
 def test_unknown_check_errors() -> None:
     with pytest.raises(ValueError, match="Unknown oracle check"):
         harness.evaluate({"expect": {"typo": True}}, [], [])

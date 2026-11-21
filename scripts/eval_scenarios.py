@@ -637,18 +637,27 @@ def evaluate(
         spec = spec.get("expect", spec)
         candidates = matching_incidents(entry, raw, steps, spec, scenario)
         sentinel_steps = [t for t in steps if t["actor"] == "sentinel"]
-        if prefix == "expect.":
-            selected.extend(candidates)
         choices = [
-            _checks(
-                spec,
-                [i],
-                [t for t in steps if t["investigation_id"] in i["investigation_ids"]]
-                + sentinel_steps,
+            (
+                i,
+                _checks(
+                    spec,
+                    [i],
+                    [
+                        t
+                        for t in steps
+                        if t["investigation_id"] in i["investigation_ids"]
+                    ]
+                    + sentinel_steps,
+                ),
             )
             for i in candidates
-        ] or [_checks(spec, [], sentinel_steps)]
-        chosen = max(choices, key=lambda checks: sum(c["passed"] for c in checks))
+        ] or [(None, _checks(spec, [], sentinel_steps))]
+        incident, chosen = max(
+            choices, key=lambda choice: sum(c["passed"] for c in choice[1])
+        )
+        if prefix == "expect." and incident is not None:
+            selected.append(incident)
         for result in chosen:
             if result["check"] == "max_incidents_for_scenario":
                 result.update(
