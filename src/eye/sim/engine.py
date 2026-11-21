@@ -115,12 +115,7 @@ class Simulator:
                 if action.key not in self._seller_action_keys
             }.values()
         )
-        for action in self.market.apply_seller_actions(actions):
-            if action.kind == "set_price":
-                assert action.price is not None
-                self.selleros_export.record_manual_price(
-                    action.seller_id, action.sku, action.price, hour.ts
-                )
+        applied_actions = self.market.apply_seller_actions(actions)
         if actions:
             hour.batches["seller_actions"] = [
                 (
@@ -190,6 +185,12 @@ class Simulator:
             hook(self, hour)
         self.store.append(hour.batches)
         self._seller_action_keys.update(action.key for action in actions)
+        for action in applied_actions:
+            if action.kind == "set_price":
+                assert action.price is not None
+                self.selleros_export.record_manual_price(
+                    action.seller_id, action.sku, action.price, hour.ts
+                )
         self.now += _HOUR
         if feed is not None:
             feed.ack([action.key for action in seller_actions])

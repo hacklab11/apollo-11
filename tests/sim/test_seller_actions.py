@@ -338,6 +338,7 @@ def test_failed_step_retries_unacknowledged_actions(
         assert sim.now == ts
         assert offer.price == 77
         assert feed.pending() == pending
+        assert sim.selleros_export.history.get(offer.seller_id, []) == []
         with sim.store.cursor() as reader:
             assert reader.execute("SELECT count(*) FROM seller_actions").fetchone() == (
                 0,
@@ -347,6 +348,13 @@ def test_failed_step_retries_unacknowledged_actions(
         sim.step()
         assert offer.price == 77
         assert feed.pending() == []
+        exported = json.loads(sim.selleros_export.path.read_text())
+        seller = next(
+            s for s in exported["sellers"] if s["seller_id"] == offer.seller_id
+        )
+        assert [
+            entry for entry in seller["price_history"] if entry["sku"] == "E02"
+        ] == [{"ts": ts.isoformat(), "sku": "E02", "price": 77, "source": "manual"}]
         sim.step()
         with sim.store.cursor() as reader:
             assert reader.execute(
