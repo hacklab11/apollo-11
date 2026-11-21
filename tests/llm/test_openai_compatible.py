@@ -216,6 +216,35 @@ async def test_nonretryable_errors(transport, bad):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("message", None),
+        ("message", []),
+        ("message", "bad"),
+        ("usage", "bad"),
+        ("tool_calls", [None]),
+        ("function", None),
+    ],
+)
+async def test_malformed_success_response(transport, field, value):
+    raw = final()
+    message = raw["choices"][0]["message"]
+    if field == "message":
+        raw["choices"][0][field] = value
+    elif field == "usage":
+        raw[field] = value
+    elif field == "function":
+        message["tool_calls"][0][field] = value
+    else:
+        message[field] = value
+    _, requests = transport([raw])
+    with pytest.raises(LLMUnavailable, match="^Invalid Chat Completions response$"):
+        await run_agent(spec(), "go", "inv", discard)
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_missing_key(transport, monkeypatch):
     _, requests = transport([])
     monkeypatch.delenv("OPENROUTER_API_KEY")

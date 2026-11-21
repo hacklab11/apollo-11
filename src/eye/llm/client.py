@@ -186,7 +186,13 @@ class LLMClient:
                 if response.status_code < 400:
                     try:
                         return _chat_response(response.json(), payload["model"])
-                    except (ValueError, KeyError, TypeError, IndexError):
+                    except (
+                        ValueError,
+                        KeyError,
+                        TypeError,
+                        IndexError,
+                        AttributeError,
+                    ):
                         raise LLMUnavailable(
                             "Invalid Chat Completions response"
                         ) from None
