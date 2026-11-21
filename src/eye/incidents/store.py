@@ -114,6 +114,29 @@ class IncidentStore:
             [incident.id, incident.model_dump_json()],
         )
 
+    def _sync_impact(self) -> list[Incident]:
+        items = self.all()
+        groups: dict[str, list[Incident]] = {}
+        for item in items:
+            if not item.merged_into:
+                groups.setdefault(
+                    fingerprint(item.entry.metric, item.entry.segment), []
+                ).append(item)
+        for group in groups.values():
+            active = [item for item in group if self._active(item)]
+            if len(group) < 2 or not active:
+                continue
+            owner = max(
+                active,
+                key=lambda item: (item.verdict is not None, item.entry.ts, item.id),
+            )
+            for item in group:
+                rate = item.entry.impact_eur_per_hour if item.id == owner.id else 0
+                if item.impact_eur_per_hour != rate:
+                    item.impact_eur_per_hour = rate
+                    self._save(item)
+        return items
+
     def add_step(self, step: TrailStep) -> None:
         self.db.execute(
             "INSERT INTO trail_steps VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET step = excluded.step",
@@ -218,7 +241,7 @@ class IncidentStore:
             suggested_actions=[],
         )
         self._save(item)
-        return item
+        return next(current for current in self._sync_impact() if current.id == item.id)
 
     def _merge(
         self, keeper: Incident, newer: Incident, *, findings: Incident | None = None
@@ -448,7 +471,7 @@ class IncidentStore:
             item = current
             item.notifications.append(notification)
         self._save(item)
-        return item
+        return next(current for current in self._sync_impact() if current.id == item.id)
 
     def lifecycle(
         self,
@@ -458,10 +481,22 @@ class IncidentStore:
         ],
     ) -> list[Incident]:
         changed = []
-        for item in self.all():
-            last_tick = self.db.execute(
-                "SELECT lifecycle_ts FROM incidents WHERE id = ?", [item.id]
-            ).fetchone()[0]
+        items = self._sync_impact()
+        last_ticks = dict(
+            self.db.execute("SELECT id, lifecycle_ts FROM incidents").fetchall()
+        )
+        starts: dict[str, datetime] = {}
+        charged: dict[str, datetime] = {}
+        for item in items:
+            if not self._active(item):
+                continue
+            key = fingerprint(item.entry.metric, item.entry.segment)
+            starts[key] = min(starts.get(key, item.opened_ts), item.opened_ts)
+            if (last_tick := last_ticks[item.id]) is not None:
+                charged[key] = max(charged.get(key, last_tick), last_tick)
+        for item in items:
+            last_tick = last_ticks[item.id]
+            key = fingerprint(item.entry.metric, item.entry.segment)
             reinvestigating = (
                 item.status == "investigating" and item.verdict is not None
             )
@@ -471,11 +506,16 @@ class IncidentStore:
                     item.status not in {"open", "persisting", "deferred"}
                     and not reinvestigating
                 )
-                or ts <= (last_tick or item.opened_ts)
+                or ts <= (last_tick or starts.get(key, item.opened_ts))
             ):
                 continue
+            impact = (
+                item.impact_eur_per_hour
+                if ts > charged.get(key, starts.get(key, item.opened_ts))
+                else 0
+            )
             if reinvestigating:
-                item.impact_eur_total += item.impact_eur_per_hour
+                item.impact_eur_total += impact
                 item.updated_ts = ts
                 self._save(item)
                 self.db.execute(
@@ -507,7 +547,7 @@ class IncidentStore:
                 elif abs(z) >= self.settings.resolve_z and ticks >= 2:
                     item.status = "persisting"
                 if item.status != "resolved":
-                    item.impact_eur_total += item.impact_eur_per_hour
+                    item.impact_eur_total += impact
             if item.status == "resolved":
                 item.resolved_ts = ts
             item.updated_ts = ts

@@ -134,6 +134,11 @@ Matches inside the cooldown only attach. This bounds repeated decisions for a
 persisting cause without permanently suppressing a new cause. Interrupted investigations
 resume their id. In-place reinvestigations continue accumulating hourly impact while
 pending, without running resolution transitions until the investigation completes.
+Incidents sharing the same entry metric and segment share one hourly impact: the
+latest completed active investigation owns the rate (or the latest pending one if
+none has completed). Older incidents retain accumulated totals and historical
+exclusions, but expose zero current EUR/h. An innocent followup leaves ownership
+with the earlier active incident. Ownership handoffs cannot charge a tick twice.
 
 ### 5.3 Upsert (after an investigation)
 

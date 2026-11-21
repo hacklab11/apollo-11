@@ -544,6 +544,90 @@ async def test_followup_preserves_established_history_and_cooldown(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("finish_before_tick", [False, True])
+@pytest.mark.parametrize("verdict", ["CONFIRMED", "HYPOTHESIS", "INNOCENT"])
+async def test_followup_charges_each_abnormal_hour_once(
+    finish_before_tick: bool, verdict: str
+) -> None:
+    settings = Settings(sim={"autostart": False})
+    store = IncidentStore(":memory:")
+    old = make_incident_s7()
+    old.status = "open"
+    old.entry.impact_eur_per_hour = old.impact_eur_per_hour = 25
+    old.impact_eur_total = 100
+    old.investigation_ids = ["inv_old"]
+    store._save(old)
+    entry = old.entry.model_copy(
+        update={
+            "id": "anm_followup",
+            "ts": old.entry.ts + 2 * HOUR,
+            "impact_eur_per_hour": 40,
+        }
+    )
+    release = asyncio.Event()
+
+    async def investigate(anomaly, on_step):
+        await release.wait()
+        root = (
+            old.root_cause.model_copy(
+                update={
+                    "cause_type": "price_change",
+                    "first_change_ts": entry.ts,
+                }
+            )
+            if verdict == "CONFIRMED"
+            else None
+        )
+        return InvestigationResult(
+            investigation_id="scripted",
+            entry=anomaly,
+            verdict=verdict,
+            summary="New cause",
+            root_cause=root,
+            hypotheses=[root] if root else [],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=1,
+            stop_reason="innocent" if verdict == "INNOCENT" else "budget",
+        )
+
+    core = Orchestrator(
+        settings,
+        Clock(entry.ts),
+        Sentinel(0),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    try:
+        core._match(
+            SentinelDecision(anomaly=entry, action="investigate", reason="New cause")
+        )
+        core._dispatch()
+        assert sum(item.impact_eur_per_hour for item in store.all()) == 25
+        if not finish_before_tick:
+            store.lifecycle(entry.ts, lambda *_: 9)
+        release.set()
+        await asyncio.gather(*core._tasks)
+        assert len(store.all()) == 2
+        rate = 25 if verdict == "INNOCENT" else 40
+        # The API and MCP sum these rates, so superseded/pending rates must be zero.
+        assert sum(item.impact_eur_per_hour for item in store.all()) == rate
+        store.lifecycle(entry.ts, lambda *_: 9)
+        total = 100 + (rate if finish_before_tick else 25)
+        assert sum(item.impact_eur_total for item in store.all()) == total
+        store.lifecycle(entry.ts + HOUR, lambda *_: 9)
+        assert sum(item.impact_eur_total for item in store.all()) == total + rate
+        assert store.get(old.id).root_cause == old.root_cause
+    finally:
+        release.set()
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
     settings = Settings(sim={"autostart": False})
     seen = []
