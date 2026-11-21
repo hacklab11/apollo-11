@@ -24,7 +24,9 @@ Open `http://localhost:5500/?mock=1` for the graph, sample incidents, and invest
 
 ### Local stack and rehearsal
 
-For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or record mode. Start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings). Leave `sim.start_ts` unchanged so replay fixtures still match. Start the services with `./scripts/dev.sh`; Core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status` and open the observatory at `http://localhost:8000/`.
+For live or record mode with the default Claude provider, set `ANTHROPIC_API_KEY` in your environment. To rehearse with OpenRouter instead, follow the [provider setup](src/eye/llm/prompts/README.md#openai-compatible-providers) in a local checkout and set `OPENROUTER_API_KEY` in your environment.
+
+Start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings). Leave `sim.start_ts` unchanged so replay fixtures still match. Start the services with `./scripts/dev.sh`; Core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status` and open the observatory at `http://localhost:8000/`.
 
 ```sh
 uv run python scripts/demo_run.py --script demo
