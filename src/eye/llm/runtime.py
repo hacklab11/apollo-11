@@ -59,6 +59,19 @@ def _schema(model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
+def _supports_strict(node: Any) -> bool:
+    if isinstance(node, dict):
+        if (
+            node.get("type") == "object"
+            and node.get("additionalProperties", False) is not False
+        ):
+            return False
+        return all(_supports_strict(value) for value in node.values())
+    if isinstance(node, list):
+        return all(_supports_strict(value) for value in node)
+    return True
+
+
 async def run_agent(
     spec: AgentSpec,
     user_content: str,
@@ -85,6 +98,10 @@ async def run_agent(
             "strict": True,
         }
     )
+    for definition in definitions:
+        definition["strict"] = definition["strict"] and _supports_strict(
+            definition["input_schema"]
+        )
     definitions.sort(key=lambda t: t["name"])
     system = [
         {

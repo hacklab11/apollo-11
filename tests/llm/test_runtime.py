@@ -30,6 +30,11 @@ class Output(BaseModel):
     summary: str
 
 
+class MappingOutput(BaseModel):
+    numbers: dict[str, float]
+    summary: str
+
+
 def increment(args: Input) -> Output:
     return Output(value=args.value + 1, summary=f"Incremented {args.value} by 1")
 
@@ -166,10 +171,6 @@ async def discard(step):
 
 @pytest.mark.asyncio
 async def test_mapping_schema_and_submit(harness):
-    class MappingOutput(BaseModel):
-        numbers: dict[str, float]
-        summary: str
-
     payload = {"numbers": {"sales": 12.5}, "summary": "Sales 12.5"}
     _, requests = harness([response([tool("submit", payload)])])
     result = await run_agent(
@@ -177,6 +178,10 @@ async def test_mapping_schema_and_submit(harness):
     )
     assert result.numbers == {"sales": 12.5}
     definition = next(t for t in requests[0]["tools"] if t["name"] == "submit")
+    assert definition["strict"] is False
+    assert all(
+        t["strict"] is True for t in requests[0]["tools"] if t["name"] != "submit"
+    )
     schema = definition["input_schema"]
     assert schema["additionalProperties"] is False
     assert schema["properties"]["numbers"]["additionalProperties"] == {"type": "number"}
@@ -313,3 +318,21 @@ async def test_live_two_tool_round_trip():
             "double",
             "submit",
         }
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"), reason="ANTHROPIC_API_KEY unset"
+)
+async def test_live_mapping_submit():
+    async with AsyncAnthropic(max_retries=2) as sdk:
+        configure_client(LLMClient(LlmSettings(), sdk))
+        answer = await run_agent(
+            replace(spec(), submit_model=MappingOutput),
+            "Run both arithmetic tools. Call submit with numbers mapping increment to 3 "
+            "and double to 6, plus a short summary. Do not use a value field.",
+            "live-mapping-test",
+            discard,
+        )
+        assert answer.numbers == {"increment": 3.0, "double": 6.0}
