@@ -61,6 +61,30 @@ def test_empty_reset_is_repeatable(tmp_path: Path, offline: None) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.parametrize(
+    "cache_path",
+    [
+        "data/world.duckdb",
+        "data/ops.duckdb",
+        "data/world.duckdb.wal",
+        "data/ops.duckdb.wal",
+        "data/graph.json",
+        "data/graph.json.tmp",
+    ],
+)
+def test_runtime_cache_overlap_refused_before_deletion(
+    tmp_path: Path, offline: None, cache_path: str
+) -> None:
+    cache = tmp_path / cache_path
+    cache.parent.mkdir(parents=True)
+    cache.write_text("recorded")
+    settings = Settings()
+    settings.llm.cache_path = Path(cache_path)
+    with pytest.raises(RuntimeError, match="LLM cache overlaps runtime state"):
+        resetter.reset(settings, tmp_path)
+    assert cache.read_text() == "recorded"
+
+
 def test_locked_database_refuses_before_deletion(tmp_path: Path, offline: None) -> None:
     path = tmp_path / resetter.OPS_DB
     path.parent.mkdir()

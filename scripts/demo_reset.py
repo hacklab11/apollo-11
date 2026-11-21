@@ -53,14 +53,17 @@ def reset(settings: Settings, root: Path = ROOT) -> None:
     }
     if selleros.is_symlink():
         raise RuntimeError(f"SellerOS data directory is a symlink: {selleros}")
-    targets = [
+    runtime_paths = [
         *databases,
         *(Path(f"{path}.wal") for path in databases),
         graph,
         graph.with_suffix(".json.tmp"),
+    ]
+    targets = [
+        *runtime_paths,
         *(path for path in selleros.rglob("*") if path.is_file() or path.is_symlink()),
     ]
-    if any(path.resolve() in keep for path in targets[:6]):
+    if any(path.resolve() in keep for path in runtime_paths):
         raise RuntimeError("LLM cache overlaps runtime state; check settings")
     targets = [path for path in targets if path.resolve() not in keep]
     with ExitStack() as stack:
