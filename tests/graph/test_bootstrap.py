@@ -47,12 +47,26 @@ def test_breakdown_edges_for_every_dimension(
     graph: GraphStore, graph_engine: MetricEngine
 ) -> None:
     registry = graph_engine._registry
+    unvalidated = []
     for metric in registry.metrics.values():
         edges = {e.dimension: e for e in graph.out_edges(metric.name, {"breakdown"})}
         assert sorted(edges) == sorted(metric.dimensions), metric.name
         assert all(e.src == e.dst == metric.name for e in edges.values())
-        expected = "ambiguous" if metric.status == "pending" else "validated"
-        assert {e.status for e in edges.values()} <= {expected}, metric.name
+        for edge in edges.values():
+            if metric.status == "pending":
+                assert edge.status == "ambiguous", edge.id
+                assert edge.evidence == {"pending_metrics": [metric.name]}
+            elif edge.status != "validated":
+                assert edge.status == "ambiguous", edge.id
+                unvalidated.append((edge.id, edge.evidence))
+    # T08's validate_breakdown pools only additive SQL numerators/denominators;
+    # contribution_margin is itself a formula, so this one stays ambiguous.
+    assert unvalidated == [
+        (
+            "edg_breakdown_contribution_per_order_country",
+            {"error": "ratio formula components must be additive SQL metrics"},
+        )
+    ]
     for name in RATIO_METRICS:
         for edge in graph.out_edges(name, {"breakdown"}):
             assert edge.status == "validated", edge.id
