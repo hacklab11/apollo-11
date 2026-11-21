@@ -136,6 +136,25 @@ async def test_lifecycle_lookup_error_leaves_incident_unchanged(store):
 
 
 @pytest.mark.asyncio
+async def test_attached_anomalies_do_not_skip_lifecycle(store):
+    incident = await store.upsert(result())
+    for hour, z in ((1, 0), (2, 5), (3, 5)):
+        ts = incident.entry.ts + timedelta(hours=hour)
+        anomaly = incident.entry.model_copy(update={"ts": ts})
+        attached = store.match(
+            SentinelDecision(anomaly=anomaly, action="investigate", reason="Recurring")
+        )
+        assert attached.updated_ts == ts
+        store.lifecycle(ts, lambda *_, z=z: z)
+        current = store.get(incident.id)
+        assert current.normal_ticks == (1 if hour == 1 else 0)
+        assert current.impact_eur_total == hour * incident.impact_eur_per_hour
+        if hour >= 2:
+            assert current.status == "persisting"
+        assert store.lifecycle(ts, lambda *_: 0) == []
+
+
+@pytest.mark.asyncio
 async def test_causal_chain_links_without_merging(store):
     store.path_exists = lambda src, dst: (src, dst) == ("cart_to_checkout_rate", "gmv")
     first = await store.upsert(result())

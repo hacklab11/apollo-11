@@ -52,6 +52,9 @@ class IncidentStore:
             "CREATE TABLE IF NOT EXISTS incidents (id VARCHAR PRIMARY KEY, incident JSON, trigger_id VARCHAR, ticks INTEGER DEFAULT 0)"
         )
         self.db.execute(
+            "ALTER TABLE incidents ADD COLUMN IF NOT EXISTS lifecycle_ts TIMESTAMPTZ"
+        )
+        self.db.execute(
             "CREATE TABLE IF NOT EXISTS trail_steps (id VARCHAR PRIMARY KEY, investigation_id VARCHAR, step JSON)"
         )
         self.path_exists = path_exists
@@ -351,10 +354,13 @@ class IncidentStore:
     ) -> list[Incident]:
         changed = []
         for item in self.all():
+            last_tick = self.db.execute(
+                "SELECT lifecycle_ts FROM incidents WHERE id = ?", [item.id]
+            ).fetchone()[0]
             if (
                 item.merged_into
                 or item.status not in {"open", "persisting", "deferred"}
-                or ts <= item.updated_ts
+                or ts <= (last_tick or item.opened_ts)
             ):
                 continue
             reading = z_lookup(item.entry.metric, item.entry.segment, ts)
@@ -387,7 +393,8 @@ class IncidentStore:
             item.updated_ts = ts
             self._save(item)
             self.db.execute(
-                "UPDATE incidents SET ticks = ? WHERE id = ?", [ticks, item.id]
+                "UPDATE incidents SET ticks = ?, lifecycle_ts = ? WHERE id = ?",
+                [ticks, ts, item.id],
             )
             changed.append(item)
         return changed
