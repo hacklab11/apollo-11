@@ -154,6 +154,8 @@ const mockApi = {
   getTruth: () => fixture("truth.json"),
 };
 
+let streamConnected = false;
+
 async function request(path, { method = "GET", query = {}, body } = {}) {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(query)) {
@@ -181,6 +183,7 @@ async function request(path, { method = "GET", query = {}, body } = {}) {
         : `${method} ${path} failed (${response.status}).`,
     );
   }
+  if (path === "/status" && streamConnected) $("#core-notice").hidden = true;
   return response.json();
 }
 
@@ -890,10 +893,12 @@ function connectEvents(reconnect = false) {
     "graph_changed", "scenario_changed", "agent_status",
   ]) stream.addEventListener(type, receive);
   stream.onopen = () => {
+    streamConnected = true;
     $("#core-notice").hidden = true;
     if (reconnect) attempt(() => refreshLive(true));
   };
   stream.onerror = () => {
+    streamConnected = false;
     stream.close();
     $("#core-notice").hidden = false;
     setTimeout(() => connectEvents(true), 2000);
