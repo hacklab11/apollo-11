@@ -195,6 +195,169 @@ class Sentinel:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("verdict", ["HYPOTHESIS", "CONFIRMED"])
+@pytest.mark.parametrize("status", ["open", "persisting"])
+@pytest.mark.parametrize("failure", [False, True])
+async def test_reinvestigation_reserves_incident_and_replaces_findings(
+    verdict: str, status: str, failure: bool
+) -> None:
+    settings = Settings(sim={"autostart": False})
+    store = IncidentStore(":memory:")
+    previous = make_incident_s7()
+    previous.status = status
+    previous.verdict = verdict
+    previous.investigation_ids = ["inv_previous"]
+    if verdict == "HYPOTHESIS":
+        previous.root_cause = None
+    store._save(previous)
+    started, release = asyncio.Event(), asyncio.Event()
+    seen = []
+    entry = previous.entry.model_copy(
+        update={"id": "anm_new_cause", "ts": previous.entry.ts + 2 * HOUR}
+    )
+    root = make_incident_s7().root_cause.model_copy(
+        update={"cause_type": "price_change", "first_change_ts": entry.ts}
+    )
+
+    async def investigate(anomaly, on_step):
+        seen.append(anomaly)
+        started.set()
+        await release.wait()
+        if failure:
+            raise RuntimeError("offline investigation failed")
+        return InvestigationResult(
+            investigation_id="ignored",
+            entry=anomaly,
+            verdict="CONFIRMED",
+            summary="New price change",
+            root_cause=root,
+            hypotheses=[root],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=1,
+            stop_reason="confirmed",
+        )
+
+    core = Orchestrator(
+        settings,
+        Clock(previous.entry.ts),
+        Sentinel(0),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+
+    async def narrative(result):
+        return result.summary, result.summary
+
+    store.reporter = narrative
+    try:
+        decision = SentinelDecision(
+            anomaly=entry, action="investigate", reason="New cause"
+        )
+        core._match(decision)
+        reserved = store.get(previous.id)
+        assert reserved.status == "investigating"
+        assert reserved.entry == entry
+        assert len(reserved.investigation_ids) == 2
+        new_id = reserved.investigation_ids[-1]
+        assert new_id != "inv_previous"
+        core._match(decision)
+        assert len(core._pending) == 1
+        core._dispatch()
+        await started.wait()
+        core._match(decision)
+        assert len(core._tasks) == 1 and not core._pending
+        assert store.get(previous.id).investigation_ids == reserved.investigation_ids
+        release.set()
+        await asyncio.gather(*core._tasks)
+        assert seen == [entry]
+        updated = store.get(previous.id)
+        assert updated.entry == entry
+        assert updated.root_cause == (None if failure else root)
+        assert (
+            "investigation failed: RuntimeError" if failure else "New price change"
+        ) in updated.summary
+        assert updated.updated_ts == entry.ts
+        assert updated.investigation_ids == ["inv_previous", new_id]
+        assert updated.occurrences == previous.occurrences + 3
+
+        for stamp in (entry.ts, entry.ts + HOUR):
+            core._match(
+                decision.model_copy(
+                    update={
+                        "anomaly": entry.model_copy(
+                            update={"ts": stamp, "id": str(stamp)}
+                        )
+                    }
+                )
+            )
+        assert not core._pending
+        assert store.get(previous.id).entry == entry
+        # Explicit attach never requests fresh work, even outside the cooldown.
+        core._match(
+            SentinelDecision(
+                anomaly=entry.model_copy(update={"ts": entry.ts + 4 * HOUR}),
+                action="attach",
+                attach_to_incident=previous.id,
+                reason="Same cause",
+            )
+        )
+        assert not core._pending
+        core._match(
+            decision.model_copy(
+                update={
+                    "anomaly": entry.model_copy(
+                        update={"ts": entry.ts + 2 * HOUR, "id": "next"}
+                    )
+                }
+            )
+        )
+        assert len(core._pending) == 1
+        assert len(store.get(previous.id).investigation_ids) == 3
+    finally:
+        release.set()
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_innocent_incident_does_not_block_new_investigation() -> None:
+    settings = Settings(sim={"autostart": False})
+    store = IncidentStore(":memory:")
+    old = make_incident_s7()
+    old.status, old.verdict = "innocent", "INNOCENT"
+    store._save(old)
+    core = Orchestrator(
+        settings,
+        Clock(old.entry.ts),
+        Sentinel(0),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=lambda *_: None,
+    )
+    try:
+        core._match(
+            SentinelDecision(
+                anomaly=old.entry.model_copy(
+                    update={"id": "new", "ts": old.entry.ts + HOUR}
+                ),
+                action="investigate",
+                reason="New cause",
+            )
+        )
+        assert len(core._pending) == 1
+        assert core._pending[0].id != old.id
+        assert store.get(old.id).status == "innocent"
+    finally:
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
     settings = Settings(sim={"autostart": False})
     seen = []

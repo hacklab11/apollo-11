@@ -31,6 +31,7 @@ from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable, RunCallLimitExceeded
 
 HOUR = timedelta(hours=1)
+_REINVESTIGATION_COOLDOWN = 2 * HOUR
 log = logging.getLogger(__name__)
 type StepSink = Callable[[TrailStep], Awaitable[None]]
 type Investigate = Callable[[Anomaly, StepSink], Awaitable[InvestigationResult]]
@@ -440,12 +441,24 @@ class Orchestrator:
         ):
             item = self.incidents.match(decision)
             if item is not None:
-                self.emit("incident_upserted", item)
-                if (
+                fresh = (
                     item.status == "investigating"
                     and item.entry.id == decision.anomaly.id
                     and item.occurrences == 1
+                )
+                if (
+                    item.status in {"open", "persisting"}
+                    and decision.anomaly.ts - item.entry.ts >= _REINVESTIGATION_COOLDOWN
                 ):
+                    # Reserve before dispatch so other matching candidates only attach.
+                    item.status = "investigating"
+                    item.entry = decision.anomaly
+                    item.normal_ticks = 0
+                    item.investigation_ids.append(f"inv_{uuid4().hex}")
+                    self.incidents._save(item)
+                    fresh = True
+                self.emit("incident_upserted", item)
+                if fresh:
                     self._pending.append(item)
 
     def _dispatch(self) -> None:

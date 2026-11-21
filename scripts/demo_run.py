@@ -128,20 +128,42 @@ async def get_incident(client: httpx.AsyncClient, incident_id: str) -> Incident:
 
 
 async def find_incident(
-    client: httpx.AsyncClient, injected: datetime
+    client: httpx.AsyncClient,
+    injected: datetime,
+    *,
+    rejected: list[str] | None = None,
 ) -> Incident | None:
     response = await request(client, "GET", "/api/incidents")
     for item in INCIDENTS.validate_json(response.content):
-        if item.status not in OPEN_STATUSES or item.entry.ts < injected:
+        if rejected is None and (
+            item.status not in OPEN_STATUSES or item.entry.ts < injected
+        ):
             continue
         incident = await get_incident(client, item.id)
         root = incident.root_cause
-        if root and (
-            root.cause_type == "price_change"
-            and root.segment.get("category") == "electronics"
-            and root.first_change_ts == injected
-        ):
+        reasons = []
+        if item.status not in OPEN_STATUSES:
+            reasons.append(f"status={item.status}")
+        if item.entry.ts < injected:
+            reasons.append(f"entry={item.entry.ts.isoformat()} predates S8")
+        if root is None:
+            reasons.append("no root cause")
+        else:
+            if root.cause_type != "price_change":
+                reasons.append(f"cause={root.cause_type}")
+            if root.segment.get("category") != "electronics":
+                reasons.append("root segment is not electronics")
+            if root.first_change_ts != injected:
+                reasons.append(
+                    f"first_change={root.first_change_ts}, expected {injected}"
+                )
+        if not reasons:
             return incident
+        if rejected is not None and (
+            incident.entry.segment.get("category") == "electronics"
+            or (root and root.segment.get("category") == "electronics")
+        ):
+            rejected.append(f"{incident.id} ({incident.title}): {', '.join(reasons)}")
     return None
 
 
@@ -221,7 +243,12 @@ async def demo(client: httpx.AsyncClient, seconds: float) -> None:
                 say(f"  {incident.id}: {incident.verdict} — {incident.summary}")
                 break
         else:
-            raise RuntimeError("no open electronics price-change incident for S8")
+            rejected: list[str] = []
+            await find_incident(client, injected, rejected=rejected)
+            detail = "; ".join(rejected) or "no electronics incidents found"
+            raise RuntimeError(
+                f"no open electronics price-change incident for S8; {detail}"
+            )
 
     with stage(
         "4. Add fee_per_order with SQL only. Show fees = units × fee per order, "
@@ -312,7 +339,58 @@ def seconds_per_hour(value: str) -> float:
 
 async def run(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
-        await demo(client, args.speed)
+        try:
+            await demo(client, args.speed)
+        except (
+            httpx.HTTPStatusError,
+            httpx.RequestError,
+            httpx.InvalidURL,
+            ValidationError,
+            RuntimeError,
+        ) as exc:
+            if isinstance(exc, RuntimeError) and str(exc).startswith(
+                "no open electronics price-change incident for S8;"
+            ):
+                raise
+            if isinstance(exc, httpx.HTTPStatusError):
+                reason = (
+                    f"{exc.request.method} {exc.request.url.path} "
+                    f"returned HTTP {exc.response.status_code}"
+                )
+            elif isinstance(exc, RuntimeError):
+                reason = str(exc)
+            else:
+                reason = f"{type(exc).__name__}. Check the base URL and core API"
+            try:
+                async with asyncio.timeout(2):
+                    response = await request(client, "GET", "/api/scenarios")
+                    scenarios = SCENARIOS.validate_json(response.content)
+                    injected = next(
+                        (item.injected_ts for item in scenarios if item.id == "S8"),
+                        None,
+                    )
+                    if injected is None:
+                        detail = "S8 not injected; active scenarios=" + ",".join(
+                            item.id for item in scenarios if item.active
+                        )
+                    else:
+                        rejected: list[str] = []
+                        incident = await find_incident(
+                            client, injected, rejected=rejected
+                        )
+                        detail = (
+                            f"S8 incident found: {incident.id} ({incident.status})"
+                            if incident
+                            else "; ".join(rejected) or "no electronics incidents found"
+                        )
+            except (
+                httpx.HTTPError,
+                httpx.InvalidURL,
+                ValidationError,
+                TimeoutError,
+            ):
+                detail = "incident diagnostics unavailable"
+            raise RuntimeError(f"{reason}; {detail}") from exc
 
 
 def main() -> int:

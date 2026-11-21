@@ -121,6 +121,15 @@ For a Sentinel decision `investigate`:
 2. Graph: candidate metric is downstream of an open incident's `root_node` and segments overlap → attach.
 3. Else start an investigation; create an incident with status `investigating`.
 
+An explicit `investigate` decision that matches an `open` or `persisting` incident
+requests fresh analysis, even if its previous root was confirmed. The orchestrator
+reserves that incident as `investigating` before queueing, replaces its entry with
+the new anomaly, and appends a fresh investigation id. Allow this at most once per
+two simulated hours, measured from the latest investigated entry timestamp; matches
+inside that cooldown only attach. This bounds repeated decisions for a persisting
+cause without letting an old diagnosis permanently suppress a new cause. Queued or
+running investigations only attach, and interrupted investigations resume their id.
+
 ### 5.3 Upsert (after an investigation)
 
 - Fill the incident from `InvestigationResult`; set final fingerprint.
