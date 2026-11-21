@@ -2,25 +2,31 @@
 
 import argparse
 import asyncio
+import hashlib
 import json
+import re
 import time
+from collections.abc import Iterator
 from contextlib import ExitStack, closing
 from datetime import UTC, datetime
+from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
-from uuid import uuid4
+from unittest.mock import patch
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import yaml
 
-from eye.a2a_client import A2AClient
+from eye.a2a_client import A2AClient, AgentCardInfo
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
 from eye.config import load_settings
-from eye.contracts import Incident, TrailStep
+from eye.contracts import Incident, SellerAlertAck, SpecialistResponse, TrailStep
 from eye.graph.bootstrap import load_or_bootstrap
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient, configure_client
+from eye.llm.client import LLMClient, LLMUnavailable, configure_client
+from eye.llm.runtime import run_agent
 from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator
 from eye.registry.engine import MetricEngine
@@ -30,6 +36,149 @@ from eye.sim.scenarios import _TITLES, ScenarioManager
 from eye.tools.stats import expected
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def request_identity(request: dict) -> dict:
+    return {
+        "model": request["model"],
+        "system": "".join(b["text"] for b in request["system"]),
+        "tools": [t["name"] for t in request["tools"]],
+        "messages": request["messages"],
+    }
+
+
+def digest(value: Any) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=lambda model: model.model_dump(mode="json"),
+        ).encode()
+    ).hexdigest()
+
+
+def append_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as output:
+        output.write(json.dumps(value, sort_keys=True) + "\n")
+
+
+class EvalLLMClient(LLMClient):
+    """Preserve request identities and prohibit replay's live fallback."""
+
+    def __init__(self, settings: Any, trace: Path) -> None:
+        super().__init__(settings)
+        self.trace = trace
+        self.replay_misses = 0
+
+    async def create(self, request: dict) -> Any:
+        identity = request_identity(request)
+        key = digest(identity)
+        append_json(self.trace, {"key": key, "identity": identity})
+        if self.settings.mode == "replay":
+            path = Path(self.settings.cache_path)
+            keys = (
+                {json.loads(line)["key"] for line in path.read_text().splitlines()}
+                if path.exists()
+                else set()
+            )
+            if key not in keys:
+                self.replay_misses += 1
+                print(json.dumps({"event": "replay_miss", "key": key}))
+                raise LLMUnavailable(
+                    f"Offline replay has no response for {key}; request saved to {self.trace}"
+                )
+        response = await super().create(request)
+        return type(response).model_validate_json(
+            json.dumps(response.model_dump(mode="json"), sort_keys=True)
+        )
+
+
+class EvalA2AClient(A2AClient):
+    """Snapshot external boundaries in the same fixture as LLM responses."""
+
+    def __init__(self, settings: Any, mode: str, path: Path) -> None:
+        super().__init__(settings)
+        self.mode, self.path = mode, path
+        self.replay_misses = 0
+
+    async def exchange(self, method: str, args: dict) -> Any:
+        key = "a2a:" + digest({"method": method, "args": args})
+        if self.mode == "replay":
+            for line in (
+                self.path.read_text().splitlines() if self.path.exists() else []
+            ):
+                entry = json.loads(line)
+                if entry["key"] == key:
+                    return entry["response_json"]
+            self.replay_misses += 1
+            print(json.dumps({"event": "replay_miss", "kind": "a2a", "key": key}))
+            raise LLMUnavailable(
+                f"Offline replay has no A2A snapshot for {method}: {key}"
+            )
+        if method == "fetch_cards":
+            value = {
+                name: card.model_dump(mode="json")
+                for name, card in (await super().fetch_cards()).items()
+            }
+        elif method == "ask":
+            value = (await super().ask(args["agent"], args["request"])).model_dump(
+                mode="json"
+            )
+        else:
+            value = (await super().notify_seller_os(args["alert"])).model_dump(
+                mode="json"
+            )
+        if self.mode == "record":
+            append_json(self.path, {"key": key, "response_json": value})
+        return value
+
+    async def fetch_cards(self) -> dict[str, AgentCardInfo]:
+        return {
+            name: AgentCardInfo.model_validate(card)
+            for name, card in (await self.exchange("fetch_cards", {})).items()
+        }
+
+    async def ask(self, agent: str, request: Any) -> SpecialistResponse:
+        return SpecialistResponse.model_validate(
+            await self.exchange("ask", {"agent": agent, "request": request})
+        )
+
+    async def notify_seller_os(self, alert: Any) -> SellerAlertAck:
+        return SellerAlertAck.model_validate(
+            await self.exchange("notify", {"alert": alert})
+        )
+
+
+def seeded_ids(seed: int, scenario: str, module: str) -> Iterator[Any]:
+    n = 0
+    while True:
+        yield uuid5(NAMESPACE_URL, f"eye-eval:{seed}:{scenario}:{module}:{n}")
+        n += 1
+
+
+async def deterministic_agent(
+    spec: Any, content: str, investigation_id: str, on_step: Any, **kwargs: Any
+) -> Any:
+    counts: dict[str, int] = {}
+
+    async def stable_step(step: TrailStep) -> None:
+        identity = digest(
+            {
+                "actor": step.actor,
+                "action": step.action,
+                "tool": step.tool,
+                "input": step.input,
+                "summary": step.output_summary,
+            }
+        )
+        occurrence = counts.get(identity, 0)
+        counts[identity] = occurrence + 1
+        id_ = uuid5(NAMESPACE_URL, f"{investigation_id}:{identity}:{occurrence}")
+        await on_step(step.model_copy(update={"id": f"stp_{id_.hex}"}))
+
+    return await run_agent(spec, content, investigation_id, stable_step, **kwargs)
 
 
 def load_oracle() -> dict[str, Any]:
@@ -106,6 +255,9 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 all(any(s.get(dim) == value for s in segments) for value in values)
                 for dim, values in wanted.items()
             )
+        elif key == "must_not_root_node":
+            actual = [h["root_node"] for h in roots]
+            ok = bool(items) and not set(actual).intersection(wanted)
         elif key in {
             "must_mention",
             "must_mention_any",
@@ -192,16 +344,25 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 for t in trails
                 if (t.get("output") or {}).get("action") == "attach"
             ]
+            metric = wanted["metric"] if isinstance(wanted, dict) else wanted
+            segment = wanted.get("segment", {}) if isinstance(wanted, dict) else {}
             ok = any(
-                value.get("anomaly", {}).get("metric") == wanted
+                value.get("anomaly", {}).get("metric") == metric
+                and segment.items()
+                <= value.get("anomaly", {}).get("segment", {}).items()
                 and value.get("attach_to_incident") in {i["id"] for i in items}
                 for value in actual
             )
-        elif key in {"first_change_at_inject", "first_hour_deferred"}:
+        elif key in {
+            "first_change_at_inject",
+            "first_hour_deferred",
+            "first_hour_completeness",
+        }:
             injections = [
                 t["output"]["inject_ts"]
                 for t in trails
-                if (t.get("output") or {}).get("scenario_id") == wanted
+                if (t.get("output") or {}).get("scenario_id")
+                == (wanted["scenario"] if isinstance(wanted, dict) else wanted)
             ]
             if key == "first_change_at_inject":
                 actual = [h["first_change_ts"] for h in roots]
@@ -220,6 +381,10 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 ok = bool(injections) and any(
                     datetime.fromisoformat(value["anomaly"]["ts"])
                     == datetime.fromisoformat(injections[0])
+                    and (
+                        key != "first_hour_completeness"
+                        or value["anomaly"].get("completeness") == wanted["value"]
+                    )
                     for value in actual
                 )
         else:
@@ -235,26 +400,74 @@ def evaluate(
     raw = [i.model_dump(mode="json") for i in incidents if i.merged_into is None]
     steps = [t.model_dump(mode="json") for t in trails]
 
-    def group(spec: dict, prefix: str) -> list[dict]:
-        spec = spec.get("expect", spec)
-        candidates = [
-            i
-            for i in raw
-            if not spec.get("entry_metrics_any")
-            or i["entry"]["metric"] in spec["entry_metrics_any"]
+    start = datetime.fromisoformat(entry["start_ts"]) if "start_ts" in entry else None
+    selected: list[dict] = []
+
+    def matched(spec: dict, scenario: str | None = None) -> list[dict]:
+        commands = [
+            (p.rsplit("@", 1)[0], int(p.rsplit("@", 1)[1]))
+            for p in entry.get("play", [])
+            if not p.startswith("clear(")
         ]
-        if spec.get("segment_contains"):
-            candidates = [
-                i
-                for i in candidates
-                if any(
-                    all(
-                        h.get("segment", {}).get(dim) in values
-                        for dim, values in spec["segment_contains"].items()
-                    )
-                    for h in [i["entry"], i.get("root_cause") or {}, *i["hypotheses"]]
-                )
-            ]
+        if scenario is None:
+            scenario = next(
+                (name for name, _ in commands if not name.startswith("I")),
+                commands[0][0] if commands else None,
+            )
+        offset = next((hour for name, hour in commands if name == scenario), 0)
+        until = min(
+            (hour for name, hour in commands if hour > offset),
+            default=entry.get("run_hours", float("inf")),
+        )
+        candidates = []
+        for item in raw:
+            opened = datetime.fromisoformat(item["opened_ts"])
+            if start and not start + offset * HOUR <= opened < start + until * HOUR:
+                continue
+            report = json.dumps(
+                {
+                    "report": {
+                        key: item[key]
+                        for key in (
+                            "title",
+                            "summary",
+                            "suggested_actions",
+                            "open_questions",
+                        )
+                    },
+                    "trail": [
+                        t
+                        for t in steps
+                        if t["investigation_id"] in item["investigation_ids"]
+                    ],
+                },
+                sort_keys=True,
+            ).casefold()
+            cause = spec.get("cause_type")
+            tokens = [*spec.get("must_mention", []), *([cause] if cause else [])]
+            mentioned = any(
+                re.search(r"(?<!\w)" + re.escape(word.casefold()) + r"(?!\w)", report)
+                for word in tokens
+            )
+            cause_match = cause and any(
+                h.get("cause_type") == cause
+                for h in [item.get("root_cause") or {}, *item["hypotheses"]]
+                if h.get("status") != "refuted"
+            )
+            if (
+                not (spec.get("entry_metrics_any") or tokens or cause)
+                or item["entry"]["metric"] in spec.get("entry_metrics_any", [])
+                or mentioned
+                or cause_match
+            ):
+                candidates.append(item)
+        return candidates
+
+    def group(spec: dict, prefix: str, scenario: str | None = None) -> list[dict]:
+        spec = spec.get("expect", spec)
+        candidates = matched(spec, scenario)
+        if prefix == "expect.":
+            selected.extend(candidates)
         choices = [
             _checks(
                 spec,
@@ -275,37 +488,41 @@ def evaluate(
 
     results = group(entry, "expect.")
     for name, spec in entry.get("also", {}).items():
-        if name == "I1":
+        if name in {"I1", "I3"}:
             other = [
                 i
                 for i in incidents
                 if i.verdict == "INNOCENT"
                 or (i.root_cause and i.root_cause.cause_type == "planned_event")
-                or "black-friday-2026" in i.summary.casefold()
+                or (
+                    not i.root_cause
+                    and ("black-friday-2026" if name == "I1" else "coupon")
+                    in i.summary.casefold()
+                )
             ]
             nested = evaluate({"expect": spec.get("expect", spec)}, other, trails)
             for result in nested:
                 result["check"] = result["check"].replace("expect.", f"also.{name}.", 1)
             results.extend(nested)
         else:
-            results.extend(group(spec, f"also.{name}."))
+            results.extend(group(spec, f"also.{name}.", name))
     if "max_ticks_to_detect" in entry:
-        metrics = entry["expect"].get("entry_metrics_any", [])
         start = (
             datetime.fromisoformat(entry["start_ts"]) if "start_ts" in entry else None
         )
         hours = [
             int(p.rsplit("@", 1)[1])
             for p in entry["play"]
-            if not p.startswith("clear") and not p.startswith("I1")
+            if not p.startswith("clear") and not p.startswith("I")
         ]
         offset = min(hours, default=0)
         ticks = (
             min(
                 (
-                    (i.opened_ts - start) // HOUR - offset + 1
-                    for i in incidents
-                    if i.entry.metric in metrics
+                    (datetime.fromisoformat(i["opened_ts"]) - start) // HOUR
+                    - offset
+                    + 1
+                    for i in selected
                 ),
                 default=None,
             )
@@ -331,7 +548,10 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         if not command.startswith("clear(") and command.rsplit("@", 1)[0] not in _TITLES
     ]
     if unavailable:
-        reason = f"scenario {unavailable[0]} not available in the simulator"
+        reason = "; ".join(
+            f"scenario {scenario} not available in the simulator"
+            for scenario in sorted(unavailable, key=lambda name: name != "S8")
+        )
         return {
             "scenario": name,
             "checks": [
@@ -347,6 +567,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
     settings = load_settings(ROOT / "config/settings.yaml")
     settings.sim.seed = args.seed
     settings.sim.autostart = False
+    settings.orchestrator.max_concurrent_investigations = 1
     record = args.record or (
         args.record_dir / f"{name.lower()}.jsonl"
         if args.record_dir
@@ -358,20 +579,43 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         else args.mode
     )
     settings.llm.cache_path = record
-    llm = LLMClient(settings.llm)
+    trace = ROOT / f"data/eval/{name}-{settings.llm.mode}-requests.jsonl"
+    trace.parent.mkdir(parents=True, exist_ok=True)
+    trace.write_text("")
+    llm = EvalLLMClient(settings.llm, trace)
     configure_client(llm)
     with TemporaryDirectory(prefix="eye-eval-") as directory, ExitStack() as stack:
+        for module in (
+            "eye.agents.sentinel",
+            "eye.agents.detective",
+            "eye.agents.skeptic",
+        ):
+            stack.enter_context(
+                patch.object(import_module(module), "run_agent", deterministic_agent)
+            )
+        for module in (
+            "eye.orchestrator",
+            "eye.incidents.store",
+            "eye.agents.detective",
+            "eye.llm.runtime",
+            "eye.main",
+            "eye.a2a_client",
+        ):
+            stream = seeded_ids(args.seed, name, module)
+            stack.enter_context(patch(f"{module}.uuid4", side_effect=stream.__next__))
         path = Path(directory)
         sim = stack.enter_context(
             closing(Simulator(settings, db_path=path / "world.duckdb"))
         )
+        with sim.store.cursor() as setup:
+            setup.execute("SET threads = 1")
         sim.selleros_export.path = path / "sellers.json"
         sim.backfill()
         connection = stack.enter_context(sim.store.cursor())
         registry = load_registry(connection)
         engine = MetricEngine(connection, registry)
         graph = load_or_bootstrap(engine, path / "graph.json", ROOT / "config")
-        a2a = A2AClient(settings.a2a)
+        a2a = EvalA2AClient(settings.a2a, settings.llm.mode, record)
         investigate = Detective(
             connection,
             registry,
@@ -479,6 +723,15 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             for row in store.db.execute("SELECT step FROM trail_steps").fetchall()
         ]
         checks = evaluate(entry, incidents, trails)
+        replay_misses = llm.replay_misses + a2a.replay_misses
+        if replay_misses:
+            checks.append(
+                {
+                    "check": "offline_replay_available",
+                    "passed": False,
+                    "actual": replay_misses,
+                }
+            )
         usage = llm.status()
         return {
             "scenario": name,
@@ -488,6 +741,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                 None,
             ),
             "llm_calls": usage["calls_per_hour"],
+            "replay_misses": replay_misses,
             "tokens": llm.tokens_in + llm.tokens_out,
             "seconds": round(time.monotonic() - started, 2),
             "incidents": [i.model_dump(mode="json") for i in incidents],
@@ -523,6 +777,7 @@ async def main() -> int:
             print(
                 f"{name} | {check['check']} | {'PASS' if check['passed'] else 'FAIL'} | {json.dumps(check['actual'])} | {result['ticks_to_detect']} | {result['llm_calls']} | {result['tokens']} | {result['seconds']}"
             )
+        print(f"replay_miss count: {result.get('replay_misses', 0)}")
         passed &= all(c["passed"] for c in result["checks"])
     return 0 if passed else 1
 

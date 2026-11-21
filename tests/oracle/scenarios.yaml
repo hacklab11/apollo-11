@@ -1,5 +1,5 @@
 D6:
-  play: [I1@0, S8@10]
+  play: [I3@0, S8@10]
   run_hours: 24
   on_incident_open: add_metric(fee_per_order)
   on_selleros_ack: clear(S8)
@@ -10,21 +10,25 @@ D6:
       root_node_any: [aov, price_change_rate]
       cause_type: price_change
       segment_contains: {category: [electronics]}
-      must_mention: [price, Black Friday, planned, SellerOS]
+      must_mention: [price, coupon, planned, SellerOS]
       must_mention_any: [manual, typo, pricing error]
       must_mention_scenario_seller: S8
-      must_not_root_cause: [traffic_change, planned_event, repricer_loop]
+      must_not_root_cause: [traffic_change, planned_event, repricer_loop, stockout]
+      must_not_root_node: [buybox_share, in_stock_rate]
       contribution_kind: planned
       evidence_groups_min: 2
       first_change_at_inject: S8
       first_hour_deferred: S8
+      first_hour_completeness: {scenario: S8, value: 0.5}
       verdict_sequence: [HYPOTHESIS, CONFIRMED]
       notification_action: revert manual price
+      metric_attached:
+        metric: fee_per_order
+        segment: {category: electronics, seller_tier: 3P}
       max_incidents_for_scenario: 1
     status_any: [resolved]
-    metric_attached: fee_per_order
   also:
-    I1: {status_any: [innocent], or_no_incident: true}
+    I3: {status_any: [innocent], or_no_incident: true}
 S1: &S1
   play: [S1@0]
   run_hours: 14
@@ -119,14 +123,14 @@ S7: &S7
   also:
     I1: {status_any: [innocent], or_no_incident: true}
 S8:
-  play: [I1@0, S8@10]
+  play: [I3@0, S8@10]
   run_hours: 20
   expect:
     <<: *S8_expect
     verdict_any: [HYPOTHESIS, CONFIRMED]
     status_any: [open, persisting, resolved]
   also:
-    I1: {status_any: [innocent], or_no_incident: true}
+    I3: {status_any: [innocent], or_no_incident: true}
 I1: &I1
   play: [I1@0]
   run_hours: 6
@@ -145,6 +149,14 @@ I2: &I2
     or_no_incident: true
     must_mention: [FR, partition]
     must_mention_any: [incomplete, late]
+I3:
+  play: [I3@0]
+  run_hours: 6
+  expect:
+    verdict_any: [INNOCENT]
+    status_any: [innocent]
+    or_no_incident: true
+    must_mention: [coupon-day-electronics, planned]
 D1:
   <<: *S3
   play: [I1@0, S3@0]
