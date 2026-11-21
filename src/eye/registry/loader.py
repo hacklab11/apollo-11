@@ -20,7 +20,12 @@ DIMENSIONS: frozenset[str] = frozenset(get_args(Dimension))
 HIDDEN_TABLES = frozenset({"scenario_log"})
 
 _log = logging.getLogger(__name__)
-_TABLE_REF = re.compile(r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)", re.IGNORECASE)
+_TABLE_REF = re.compile(
+    r'\b(?:FROM|JOIN)\s+(?:"?\w+"?\.)*"?([A-Za-z_]\w*)"?', re.IGNORECASE
+)
+_CTE_NAME = re.compile(
+    r'"?([A-Za-z_]\w*)"?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(', re.IGNORECASE
+)
 _METRIC_NAME = re.compile(r"[a-z][a-z0-9_]*")
 _FORMULA_NODES = frozenset(
     {ast.Expression, ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.Load}
@@ -165,7 +170,8 @@ def _read_metrics(path: Path) -> dict[str, MetricDef]:
         if metric.kind == "sql":
             if not metric.sql or metric.expression:
                 raise ValueError(f"{metric.name}: kind sql needs sql and no expression")
-            if hidden := HIDDEN_TABLES & set(source_tables(metric.sql)):
+            # Any mention is refused, so quoting or qualifying the name cannot get past it.
+            if hidden := [t for t in HIDDEN_TABLES if t in metric.sql.lower()]:
                 raise ValueError(f"{metric.name}: may not read {', '.join(hidden)}")
         elif not metric.expression or metric.sql:
             raise ValueError(f"{metric.name}: kind formula needs expression and no sql")
