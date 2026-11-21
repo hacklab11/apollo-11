@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from eye.registry.engine import MetricEngine
 from eye.tools.drill import decompose
 from eye.tools.identity import parse_identity
 
@@ -45,7 +46,10 @@ def test_s5_attribution_and_empty() -> None:
     old["contribution_margin"] = 850
     new["contribution_margin"] = 520
 
-    class Engine:
+    class Engine(MetricEngine):
+        def __init__(self) -> None:
+            pass
+
         _registry = SimpleNamespace(
             identities=[
                 SimpleNamespace(

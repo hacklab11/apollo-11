@@ -80,7 +80,7 @@ def test_baseline_breakdowns(baseline: tuple[Path, datetime]) -> None:
         assert sum(r.share for r in result.contributions) == pytest.approx(1)
 
 
-class SyntheticEngine:
+class SyntheticEngine(MetricEngine):
     def __init__(self, values: dict[str, list[float | None]]) -> None:
         self.values = values
         self.start = datetime(2026, 1, 1, tzinfo=UTC)
@@ -178,11 +178,15 @@ def test_shift_share_entering_exiting_and_zero_denominator(
         return {key: {a: pair} for key, pair in rows.items()}
 
     monkeypatch.setattr("eye.tools.drill.ratio_sums", sums)
-    result = mix_rate_split(None, "ratio", "country", start, start + timedelta(hours=1))
+    result = mix_rate_split(
+        SyntheticEngine({}), "ratio", "country", start, start + timedelta(hours=1)
+    )
     assert sum(result.totals.values()) == pytest.approx(result.delta, abs=1e-9)
     assert sum(r.delta for r in result.contributions) == pytest.approx(
         result.delta, abs=1e-9
     )
     monkeypatch.setattr("eye.tools.drill.ratio_sums", lambda *args, **kwargs: {})
     with pytest.raises(ValueError, match="positive denominator"):
-        mix_rate_split(None, "ratio", "country", start, start + timedelta(hours=1))
+        mix_rate_split(
+            SyntheticEngine({}), "ratio", "country", start, start + timedelta(hours=1)
+        )

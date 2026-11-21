@@ -5,7 +5,7 @@ from itertools import product
 from math import isfinite
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validate_call
 
 from eye.registry.engine import MetricEngine
 from eye.tools.identity import parse_identity, ratio_sums
@@ -77,6 +77,7 @@ def _result(
     )
 
 
+@validate_call(config={"arbitrary_types_allowed": True})
 def validate_identity(
     engine: MetricEngine,
     identity: str,
@@ -147,6 +148,7 @@ def validate_identity(
     return _result(residuals, skipped, groups, identity=True)
 
 
+@validate_call(config={"arbitrary_types_allowed": True})
 def validate_breakdown(
     engine: MetricEngine,
     metric: str,
@@ -194,6 +196,7 @@ def validate_breakdown(
     )
 
 
+@validate_call(config={"arbitrary_types_allowed": True})
 def lagged_correlation(
     engine: MetricEngine,
     src: str,

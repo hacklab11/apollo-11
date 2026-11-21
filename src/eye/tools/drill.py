@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from math import log
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validate_call
 
 from eye.contracts import Contribution
 from eye.registry.engine import MetricEngine
@@ -17,6 +17,7 @@ class AttributionResult(BaseModel):
     summary: str = Field(max_length=300)
 
 
+@validate_call(config={"arbitrary_types_allowed": True})
 def decompose(
     engine: MetricEngine,
     metric: str,
@@ -79,6 +80,7 @@ def decompose(
     )
 
 
+@validate_call(config={"arbitrary_types_allowed": True})
 def mix_rate_split(
     engine: MetricEngine,
     ratio_metric: str,
