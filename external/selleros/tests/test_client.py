@@ -5,14 +5,14 @@ import httpx
 import pytest
 from pydantic import ValidationError
 from selleros.client import LLMClient, LlmSettings, LLMUnavailable, configure_client
-from selleros.data import Store
+from selleros.data import FileSellerStore
 from test_selleros import FIXTURES, answer, install_mock, message, request
 
 
 @pytest.fixture
 def store(tmp_path):
     shutil.copyfile(FIXTURES / "s6.json", tmp_path / "sellers.json")
-    return Store(tmp_path)
+    return FileSellerStore(tmp_path)
 
 
 def completion(name="submit", args=None):
