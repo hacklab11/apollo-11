@@ -13,6 +13,7 @@
 - {src: fba_blocked_units, dst: in_stock_rate, lag_hours: 48, rationale: Units blocked by capacity never reach stock.}
 - {src: price_index_vs_1p, dst: buybox_share, lag_hours: 0, rationale: Cheaper offers win the Buy Box.}
 - {src: price_change_rate, dst: price_index_vs_1p, lag_hours: 0, rationale: Repricing moves Buy Box prices.}
+- {src: price_change_rate, dst: aov, lag_hours: 0, rationale: Offer price changes move the average order value.}
 - {src: buybox_share, dst: small_seller_gmv_share, lag_hours: 0, rationale: Buy Box winners take the GMV.}
 - {src: in_stock_rate, dst: buybox_share, lag_hours: 0, rationale: Only in-stock offers can hold the Buy Box.}
 - {src: buybox_share, dst: in_stock_rate, lag_hours: 6, rationale: Small sellers that win the Buy Box at low prices sell out.}

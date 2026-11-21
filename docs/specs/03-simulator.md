@@ -108,6 +108,7 @@ Among in-stock offers of a SKU: lowest `price × (1 + 0.5 × (1 − rating))` wi
 | `match` | if `lowest_other < price × 0.97`: `price = max(lowest_other, floor)` |
 | `beat` | if `lowest_other < price × 0.97` or (not Buy Box and `lowest_other ≤ price`): `price = max(lowest_other × 0.99, floor)` |
 | recovery (all non-fixed) | if `lowest_other > price × 1.03` and price < ref_price: `price = min(lowest_other × 0.99, ref_price)` |
+| drift-up (all non-fixed, after recovery and before match/beat) | if `price < ref_price × 0.9` and `lowest_other ≥ price × 0.97`: `price = min(price × 1.05, ref_price)` |
 
 - Floor: `cost × 1.05`. Three small sellers (S-03, S-07, S-12) have `floor = None` → hard minimum `0.40 × ref_price`.
 - Modes: 1P `match` (with floor = cogs); large_3P `match`; small_3P: 60% `match`, 40% `beat`.
