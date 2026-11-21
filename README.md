@@ -37,7 +37,7 @@ export SELLEROS_PROVIDER=openai_compatible
 export SELLEROS_MODEL=nvidia/nemotron-3.5-lightning:free
 ```
 
-Both default to the OpenRouter URL and `OPENROUTER_API_KEY` when configured this way. Do not put either provider's key in settings or commit the local changes. The free-model D6 eval did not pass; see [Eval results](#eval-results).
+Core and SellerOS already default to `https://openrouter.ai/api/v1` and read the key from `OPENROUTER_API_KEY` in this mode. Do not put API keys in settings or commit local overrides. A free-model D6 eval did not pass; see [Eval results](#eval-results).
 
 Start all services in the first terminal:
 
@@ -61,7 +61,7 @@ The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
-Add `--record` to save **core** LLM responses to `data/llm_cache.jsonl`. Keep the cache out of git and use `llm.mode: replay` in your local settings for the next launch. Replay may still call the API on a cache miss. The HTTP mode switch affects only core, not the separately running specialists.
+To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your local settings before launch. Keep the cache out of git and use `llm.mode: replay` for the next launch. Replay may still call the API on a cache miss. The LLM mode is read only at startup; there is no runtime switch.
 
 ### Docker
 
