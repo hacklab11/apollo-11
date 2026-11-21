@@ -82,9 +82,7 @@ def tool_spec(session: Client, tool: Tool) -> ToolSpec:
     return ToolSpec(tool.name, tool.description or tool.name, model, call, strict=False)
 
 
-def create_router(
-    settings: LlmSettings, mcp_url: str = "http://127.0.0.1:8100/mcp"
-) -> APIRouter:
+def create_router(settings: LlmSettings, mcp_url: str) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/chat")

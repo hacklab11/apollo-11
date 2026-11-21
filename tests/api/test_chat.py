@@ -15,6 +15,8 @@ from eye.config import LlmSettings
 from eye.llm.client import LLMClient
 from eye.mcp_server import create_server
 
+MCP_URL = "http://127.0.0.1:8100/mcp"
+
 
 def response(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -86,13 +88,13 @@ async def test_chat_through_real_mcp(monkeypatch, kind: str) -> None:
 
         @asynccontextmanager
         async def connected(url: str):
-            assert url == "http://127.0.0.1:8100/mcp"
+            assert url == MCP_URL
             yield session
 
         monkeypatch.setattr("eye.api.chat.Client", connected)
         monkeypatch.setattr("eye.llm.client._client", LLMClient(LlmSettings(), sdk))
         app = FastAPI()
-        app.include_router(create_router(LlmSettings()))
+        app.include_router(create_router(LlmSettings(), MCP_URL))
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://chat"
         ) as client:
@@ -129,7 +131,7 @@ async def test_chat_through_real_mcp(monkeypatch, kind: str) -> None:
 )
 async def test_input_limits(messages: list[dict[str, str]]) -> None:
     app = FastAPI()
-    app.include_router(create_router(LlmSettings()))
+    app.include_router(create_router(LlmSettings(), MCP_URL))
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app), base_url="http://chat"
     ) as client:
@@ -168,7 +170,7 @@ async def test_conversation_and_agent_limits(monkeypatch, kind: str) -> None:
         monkeypatch.setattr("eye.api.chat.Client", connected)
         monkeypatch.setattr("eye.llm.client._client", LLMClient(LlmSettings(), sdk))
         app = FastAPI()
-        app.include_router(create_router(LlmSettings()))
+        app.include_router(create_router(LlmSettings(), MCP_URL))
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app), base_url="http://chat"
         ) as client:

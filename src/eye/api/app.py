@@ -84,7 +84,12 @@ def create_app(
             await orchestrator.close()
 
     app = FastAPI(lifespan=lifespan)
-    app.include_router(chat.create_router(orchestrator.settings.llm))
+    app.include_router(
+        chat.create_router(
+            orchestrator.settings.llm,
+            f"http://127.0.0.1:{orchestrator.settings.ports.mcp}/mcp",
+        )
+    )
 
     def compare(
         name: str, start: datetime, end: datetime, segment: dict[str, str]
