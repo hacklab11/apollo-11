@@ -100,11 +100,12 @@ Append `/.well-known/agent-card.json` to an A2A base address to inspect its card
 
 ## Eval results
 
-No measured results yet. The [scenario eval card](docs/tasks/T23-oracle-and-eval.md) defines the harness; the [eval spec](docs/specs/14-testing-and-evals.md) defines the pass criteria. Mock incidents are not eval evidence.
+The [scenario eval card](docs/tasks/T23-oracle-and-eval.md) defines the harness; the [eval spec](docs/specs/14-testing-and-evals.md) defines the pass criteria. Mock incidents are not eval evidence.
 
 | Run | Result | Ticks to detect | LLM calls |
 | --- | --- | --- | --- |
-| S1–S8, I1–I3, D1–D6 | Not yet measured | — | — |
+| S3 (offline replay) | Failed: 4 cache misses; no incident to score | — | 0 |
+| Other scenarios and combined runs | Not yet measured | — | — |
 
 ## Limitations
 
