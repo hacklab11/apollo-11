@@ -23,11 +23,61 @@ from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient
 from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
-from eye.registry.loader import Registry
+from eye.registry.loader import Identity, Registry
 from eye.tools.sqlguard import check
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/llm"
 SQL = "SELECT ts, country, category, seller_tier, refunds AS num, units AS den FROM orders_hourly"
+FEE_SQL = """SELECT ts, country, platform, category, seller_tier, channel,
+SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
+GROUP BY ts, country, platform, category, seller_tier, channel"""
+
+
+def fee_world(cartographer: Cartographer) -> None:
+    con = cartographer.engine._con
+    con.execute("ALTER TABLE orders_hourly ADD COLUMN platform VARCHAR DEFAULT 'web'")
+    con.execute("ALTER TABLE orders_hourly ADD COLUMN channel VARCHAR DEFAULT 'search'")
+    con.execute("ALTER TABLE orders_hourly ADD COLUMN gmv DOUBLE")
+    con.execute("ALTER TABLE orders_hourly ADD COLUMN fee_revenue DOUBLE")
+    con.execute(
+        "UPDATE orders_hourly SET gmv = units * (50 + 10 * sin(epoch(ts) / 13700) + extract(day FROM ts) + CASE WHEN country = 'DE' THEN 4 ELSE 0 END)"
+    )
+    con.execute("UPDATE orders_hourly SET fee_revenue = gmv * 0.12")
+    dims = ["country", "platform", "category", "seller_tier", "channel"]
+    registry = cartographer.engine._registry
+    for name, description, unit, value in [
+        ("orders", "Total units ordered.", "count", "units"),
+        ("gmv", "Total value of merchandise sold, in euros.", "eur", "gmv"),
+        (
+            "fee_revenue",
+            "Total marketplace fees earned from orders, in euros.",
+            "eur",
+            "fee_revenue",
+        ),
+        (
+            "aov",
+            "Merchandise value in euros per unit ordered, calculated as GMV divided by orders.",
+            "eur",
+            "gmv",
+        ),
+    ]:
+        metric = MetricDef(
+            name=name,
+            description=description,
+            unit=unit,
+            domain="orders",
+            kind="sql",
+            sql=f"SELECT ts, country, platform, category, seller_tier, channel, {value} AS num"
+            + (", units AS den" if name == "aov" else "")
+            + " FROM orders_hourly",
+            dimensions=dims,
+        )
+        registry.metrics[name] = metric
+        registry.source_tables[name] = ("orders_hourly",)
+        registry.has_den[name] = name == "aov"
+        cartographer.graph.add_metric(metric)
+    registry.identities.append(Identity(id="F2", text="gmv = orders * aov"))
+    cartographer.engine.invalidate()
 
 
 @pytest.fixture
@@ -88,15 +138,23 @@ async def placement(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str, live: bool
 ) -> None:
     network = install(monkeypatch, case, live)
-    req = AddMetricRequest(
-        name="refund_rate" if case == "refund" else "order_copy",
-        description="Number of refunds divided by orders"
-        if case == "refund"
-        else "Duplicate of total orders",
-        sql=SQL
-        if case == "refund"
-        else "SELECT ts, country, category, seller_tier, units AS num FROM orders_hourly",
-    )
+    if case == "fee_per_order":
+        fee_world(cartographer)
+        req = AddMetricRequest(
+            name="fee_per_order",
+            description="Marketplace fee revenue in euros divided by units ordered.",
+            sql=FEE_SQL,
+        )
+    else:
+        req = AddMetricRequest(
+            name="refund_rate" if case == "refund" else "order_copy",
+            description="Number of refunds divided by orders"
+            if case == "refund"
+            else "Duplicate of total orders",
+            sql=SQL
+            if case == "refund"
+            else "SELECT ts, country, category, seller_tier, units AS num FROM orders_hourly",
+        )
     steps: list[TrailStep] = []
 
     async def trail(step: TrailStep) -> None:
@@ -116,6 +174,29 @@ async def placement(
             "category",
             "seller_tier",
         }
+    elif case == "fee_per_order":
+        formula = [
+            e
+            for e in result.accepted
+            if e.identity == "fee_revenue = orders * fee_per_order"
+        ]
+        assert {e.src for e in formula if e.status == "validated"} == {
+            "orders",
+            "fee_per_order",
+        }
+        assert {
+            e.dimension
+            for e in result.accepted
+            if e.type == "breakdown" and e.status == "validated"
+        } == {"country", "platform", "category", "seller_tier", "channel"}
+        assert any(
+            e.src == "aov"
+            and e.dst == "fee_per_order"
+            and e.type == "causal_hypothesis"
+            and e.status == "hypothesis"
+            and e.lag_hours == 0
+            for e in result.accepted
+        )
     else:
         assert result.ambiguous
         assert "duplicate" in result.notes.lower()
@@ -125,7 +206,7 @@ async def placement(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["refund", "duplicate"])
+@pytest.mark.parametrize("case", ["refund", "duplicate", "fee_per_order"])
 async def test_replay(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -134,7 +215,7 @@ async def test_replay(
 
 @pytest.mark.live
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["refund", "duplicate"])
+@pytest.mark.parametrize("case", ["refund", "duplicate", "fee_per_order"])
 async def test_record(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
