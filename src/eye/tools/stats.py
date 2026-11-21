@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import combinations
 from math import sqrt
 from statistics import mean, median
 
@@ -117,9 +118,12 @@ class _Stats:
         registry: Registry,
         start: datetime,
         end: datetime,
+        *,
+        max_group_dims: int = 1,
     ) -> None:
         self.con = con
         self.registry = registry
+        self._max_group_dims = max_group_dims
         self._cache: dict[tuple, dict[SegmentKey, Samples]] = {}
         self._partitions: dict[tuple[str | None, datetime, str], list[int]] = (
             defaultdict(lambda: [0, 0])
@@ -186,13 +190,20 @@ class _Stats:
         has_den = self.registry.has_den[metric.name]
         keys = [f'"{dim}"' for dim in dims]
         select = ["ts", *keys, "SUM(num)", "SUM(den)" if has_den else "NULL"]
+        grouped_indexes = {}
         if keys:
+            mask = (1 << len(dims)) - 1
+            grouped_indexes = {
+                mask ^ sum(1 << (len(dims) - 1 - idx) for idx in indexes): indexes
+                for size in range(self._max_group_dims + 1)
+                for indexes in combinations(range(len(dims)), size)
+            }
             select.append(f"GROUPING_ID({', '.join(keys)})")
-            grouping = (
-                "GROUP BY GROUPING SETS ((ts), "
-                + ", ".join(f"(ts, {key})" for key in keys)
-                + ")"
+            groups = ", ".join(
+                f"({', '.join(['ts', *(keys[idx] for idx in indexes)])})"
+                for indexes in grouped_indexes.values()
             )
+            grouping = f"GROUP BY GROUPING SETS ({groups})"
         else:
             grouping = "GROUP BY ts"
         where = ["ts >= ?", "ts <= ?", *(f'"{dim}" = ?' for dim in segment)]
@@ -213,11 +224,12 @@ class _Stats:
             if num is None:
                 continue
             scope = total
-            if dims and (selected := ((1 << len(dims)) - 1) ^ row[-1]):
-                index = len(dims) - selected.bit_length()
-                if row[index] is None:
+            if dims and (indexes := grouped_indexes[row[-1]]):
+                if any(row[idx] is None for idx in indexes):
                     continue
-                scope = tuple(sorted((*total, (dims[index], str(row[index])))))
+                scope = tuple(
+                    sorted((*total, *((dims[idx], str(row[idx])) for idx in indexes)))
+                )
             slices[scope][ts] = _Sample(
                 float(num), float(den or 0) if has_den else None
             )
@@ -585,19 +597,25 @@ def scan_anomalies(
 ) -> ScanOutput:
     settings = settings or SentinelSettings()
     ts = data.ts.astimezone(UTC)
-    stats = _Stats(con, registry, ts - 29 * DAY, ts + HOUR)
+    stats = _Stats(con, registry, ts - 29 * DAY, ts + HOUR, max_group_dims=2)
     weights = _graph_weights(graph)
     margin, per_order = _impact_scale(stats, ts)
     anomalies = []
     for metric in registry.active:
-        floor = {"count": 20.0, "eur": 200.0}.get(metric.unit)
-        for key, [(point, _, _)] in stats.baselines(
+        for key, [(point, _, reference)] in stats.baselines(
             metric, (ts,), {}, metric.dimensions
         ).items():
-            if point.actual is None or point.expected is None or point.z is None:
+            if (
+                point.actual is None
+                or point.expected is None
+                or point.z is None
+                or reference is None
+            ):
                 continue
-            if abs(point.z) < settings.z_threshold or (
-                floor is not None and point.expected < floor
+            if (
+                abs(point.z) < settings.z_threshold
+                or (metric.unit == "count" and point.expected < 20)
+                or (metric.unit == "eur" and reference.num < 200)
             ):
                 continue
             anomalies.append(

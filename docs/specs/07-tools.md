@@ -19,7 +19,7 @@ Every tool output has a `summary: str` field (≤ 300 chars, with the key number
 |---|---|---|---|
 | `query_metric` | name, start, end, segment, group_by | list of `Series` | all |
 | `baseline_compare` | name, start, end, segment | per hour: actual, expected, lower/upper (± 3 spread), z; window totals; summary | Sentinel, Detective, Skeptic |
-| `scan_anomalies` | ts | top N `Anomaly` (kind `point`) over all active metrics × (total + each single-dim segment) with \|z\| ≥ `sentinel.z_threshold` | Sentinel (prefetched) |
+| `scan_anomalies` | ts | top N `Anomaly` (kind `point`) over all active metrics × (total + one- and two-dimension segments) with \|z\| ≥ `sentinel.z_threshold` | Sentinel (prefetched) |
 | `scan_divergent_segments` | ts, window_hours=6 | `Anomaly` (kind `divergent_segment` or `share_shift`) | Sentinel (prefetched) |
 | `drill_down` | metric, dim, start, end, base_start, base_end, segment | per value: actual, expected, delta, share_of_total_delta, z; sorted by \|share\| | Detective |
 | `decompose` | metric, start, end, base_start, base_end, segment | `Contribution` rows along formula in-edges, sum of shares = 1 | Detective |
@@ -36,8 +36,8 @@ Every tool output has a `summary: str` field (≤ 300 chars, with the key number
 ## 3. Algorithms
 
 ### 3.1 `scan_anomalies(ts)`
-- For each active metric and each segment in {total} ∪ {each value of each declared dimension}: compute z at `ts`.
-- Skip segments whose expected value is below a floor (count metrics < 20, eur < 200) to avoid noise.
+- For each active metric, compute z at `ts` for the total, each value of each declared dimension, and each observed combination of values for every pair of declared dimensions.
+- To avoid noise, skip count segments with an expected value below 20 and euro segments with less than €200 in expected hourly euros. Use the expected numerator for per-unit euro metrics (e.g. fee revenue for fees per order); z still uses the per-unit value.
 - `impact_eur_per_hour` = |delta| × impact_weight × eur_scale, where eur_scale = 1 for eur metrics, = mean contribution per unit for counts (contribution_margin mean / orders mean for `orders`-like metrics), and = mean contribution_margin per hour × relative change for ratio metrics.
 - `priority = |z| × max(impact_weight, 0.05) × completeness`.
 - Return the top `sentinel.top_k × 3` by priority. The Sentinel sees the top `top_k`.
