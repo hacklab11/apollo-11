@@ -232,6 +232,14 @@ async def scenario(
     assert sum(row.share for row in result.contributions) == pytest.approx(1, abs=0.02)
     assert [step.n for step in steps] == list(range(1, len(steps) + 1))
     assert any(step.actor == "skeptic" for step in steps)
+    if case == "s7":
+        assert any(
+            step.actor == "skeptic"
+            and step.tool == "planned_effect_check"
+            and step.output is not None
+            and step.output["verdict"] == "opposite"
+            for step in steps
+        )
     assert any(
         step.action == "a2a_call" and step.output and step.output["answered"]
         for step in steps

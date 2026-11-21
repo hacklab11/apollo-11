@@ -119,8 +119,13 @@ class _WindowTools:
         )
 
     def controls(self, args: _ControlInput) -> CompareSegmentsOutput:
+        segment = {dim: value for dim, value in args.segment.items() if dim != args.dim}
         return compare_segments(
-            CompareSegmentsInput(**args.model_dump(), **self.window.bounds()),
+            CompareSegmentsInput(
+                **args.model_dump(exclude={"segment"}),
+                segment=segment,
+                **self.window.bounds(),
+            ),
             con=self.con,
             registry=self.registry,
         )
@@ -306,7 +311,12 @@ class Skeptic:
             )
         if result.verdict == "partly_innocent":
             share = max(
-                (check.explained_share for check in checks.values()), default=0.0
+                (
+                    check.explained_share
+                    for check in checks.values()
+                    if check.verdict in {"matches", "exceeds"}
+                ),
+                default=0.0,
             )
             return result.model_copy(
                 update={
