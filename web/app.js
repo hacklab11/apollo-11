@@ -568,7 +568,7 @@ async function selectMetric(name) {
   const reference = series.metric !== name;
   $("#metric-unit").textContent = reference
     ? "ORDERS REFERENCE"
-    : `${metric.unit ?? "count"} / hour`;
+    : metric.unit === "eur" ? "EUR" : metric.unit ?? "count";
   $("#fixture-note").textContent = reference
     ? `No ${readable(name)} series fixture exists. Showing the Orders reference, not measurements for this metric.`
     : `Actual vs expected · shaded forecast range${mockMode ? " · release marker at 27 Nov, 03:00 UTC" : ""}`;
