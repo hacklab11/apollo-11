@@ -61,7 +61,7 @@ def _result(
         median < 0.005 and p95 < 0.02 if identity else max(residuals) < 0.005
     )
     if identity:
-        passed = passed and all(g["passed"] for g in groups)
+        passed = passed and all(g["passed"] for g in groups if g["n"])
     return ValidationResult(
         passed=passed,
         evidence={
