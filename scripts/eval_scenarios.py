@@ -19,10 +19,17 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import yaml
 
 from eye.a2a_client import A2AClient, AgentCardInfo
+from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
 from eye.config import load_settings
-from eye.contracts import Incident, SellerAlertAck, SpecialistResponse, TrailStep
+from eye.contracts import (
+    AddMetricRequest,
+    Incident,
+    SellerAlertAck,
+    SpecialistResponse,
+    TrailStep,
+)
 from eye.graph.bootstrap import load_or_bootstrap
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable, configure_client
@@ -36,6 +43,18 @@ from eye.sim.scenarios import _TITLES, ScenarioManager
 from eye.tools.stats import expected
 
 ROOT = Path(__file__).resolve().parents[1]
+
+DEMO_METRICS = {
+    "fee_per_order": AddMetricRequest(
+        name="fee_per_order",
+        description="Marketplace fee revenue in euros divided by units ordered.",
+        unit="eur",
+        # docs/specs/05 §4; same SQL as tests/agents/test_cartographer.py:FEE_SQL.
+        sql="""SELECT ts, country, platform, category, seller_tier, channel,
+SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
+GROUP BY ts, country, platform, category, seller_tier, channel""",
+    )
+}
 
 
 def request_identity(request: dict) -> dict:
@@ -71,6 +90,8 @@ class EvalLLMClient(LLMClient):
         super().__init__(settings)
         self.trace = trace
         self.replay_misses = 0
+        self.total_calls = 0
+        self.replayed_calls = 0
 
     async def create(self, request: dict) -> Any:
         identity = request_identity(request)
@@ -89,7 +110,9 @@ class EvalLLMClient(LLMClient):
                 raise LLMUnavailable(
                     f"Offline replay has no response for {key}; request saved to {self.trace}"
                 )
+        self.total_calls += 1
         response = await super().create(request)
+        self.replayed_calls += self.settings.mode == "replay"
         return type(response).model_validate_json(
             json.dumps(response.model_dump(mode="json"), sort_keys=True)
         )
@@ -185,6 +208,13 @@ def load_oracle() -> dict[str, Any]:
     return yaml.safe_load((ROOT / "tests/oracle/scenarios.yaml").read_text())
 
 
+def stored_trails(store: IncidentStore) -> list[TrailStep]:
+    return [
+        TrailStep.model_validate_json(row[0])
+        for row in store.db.execute("SELECT step FROM trail_steps").fetchall()
+    ]
+
+
 def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
     results = []
 
@@ -273,6 +303,16 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
             )
             matches = [word.casefold() in actual for word in wanted]
             ok = any(matches) if key == "must_mention_any" else all(matches)
+            actual = {
+                "found": [
+                    word for word, found in zip(wanted, matches, strict=True) if found
+                ],
+                "missing": [
+                    word
+                    for word, found in zip(wanted, matches, strict=True)
+                    if not found
+                ],
+            }
         elif key == "max_incidents_for_scenario":
             actual = len(items)
             ok = 0 < actual <= wanted
@@ -393,79 +433,148 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
     return results
 
 
+def matching_incidents(
+    entry: dict,
+    raw: list[dict],
+    steps: list[dict],
+    spec: dict,
+    scenario: str | None = None,
+) -> list[dict]:
+    start = datetime.fromisoformat(entry["start_ts"]) if "start_ts" in entry else None
+    commands = [
+        (p.rsplit("@", 1)[0], int(p.rsplit("@", 1)[1]))
+        for p in entry.get("play", [])
+        if not p.startswith("clear(")
+    ]
+    if scenario is None:
+        scenario = next(
+            (name for name, _ in commands if not name.startswith("I")),
+            commands[0][0] if commands else None,
+        )
+    offset = next((hour for name, hour in commands if name == scenario), 0)
+    until = min(
+        (hour for name, hour in commands if hour > offset),
+        default=entry.get("run_hours", float("inf")),
+    )
+    candidates = []
+    for item in raw:
+        if item.get("merged_into") is not None:
+            continue
+        opened = datetime.fromisoformat(item["opened_ts"])
+        if start and not start + offset * HOUR <= opened < start + until * HOUR:
+            continue
+        report = json.dumps(
+            {
+                "report": {
+                    key: item[key]
+                    for key in (
+                        "title",
+                        "summary",
+                        "suggested_actions",
+                        "open_questions",
+                    )
+                },
+                "trail": [
+                    t
+                    for t in steps
+                    if t["investigation_id"] in item["investigation_ids"]
+                ],
+            },
+            sort_keys=True,
+        ).casefold()
+        cause = spec.get("cause_type")
+        tokens = [*spec.get("must_mention", []), *([cause] if cause else [])]
+        mentioned = any(
+            re.search(r"(?<!\w)" + re.escape(word.casefold()) + r"(?!\w)", report)
+            for word in tokens
+        )
+        cause_match = cause and any(
+            h.get("cause_type") == cause
+            for h in [item.get("root_cause") or {}, *item["hypotheses"]]
+            if h.get("status") != "refuted"
+        )
+        if (
+            not (spec.get("entry_metrics_any") or tokens or cause)
+            or item["entry"]["metric"] in spec.get("entry_metrics_any", [])
+            or mentioned
+            or cause_match
+        ):
+            candidates.append(item)
+    return candidates
+
+
+class ConditionalActions:
+    def __init__(self, entry: dict, metrics: dict[str, AddMetricRequest]) -> None:
+        self.entry, self.metrics = entry, metrics
+        self.actions: dict[str, tuple[str, str]] = {}
+        self.completed: set[str] = set()
+        self.incident_id: str | None = None
+        for trigger in ("on_incident_open", "on_selleros_ack"):
+            if trigger not in entry:
+                continue
+            action = re.fullmatch(
+                r"\s*(add_metric|clear)\(\s*([A-Za-z][A-Za-z0-9_]*)\s*\)\s*",
+                entry[trigger],
+            )
+            if action is None:
+                raise ValueError(f"Invalid conditional action: {entry[trigger]}")
+            method, target = action.groups()
+            if method == "add_metric" and target not in metrics:
+                raise ValueError(f"No metric SQL defined for {target}")
+            self.actions[trigger] = method, target
+
+    async def poll(
+        self, core: Any, incidents: list[Incident], trails: list[TrailStep]
+    ) -> None:
+        if not self.actions:
+            return
+        raw = [i.model_dump(mode="json") for i in incidents]
+        steps = [t.model_dump(mode="json") for t in trails]
+        if self.incident_id is None:
+            candidates = [
+                i
+                for i in matching_incidents(
+                    self.entry, raw, steps, self.entry["expect"]
+                )
+                if i["status"] in {"open", "persisting"}
+            ]
+            if candidates:
+                self.incident_id = min(
+                    candidates, key=lambda i: (i["opened_ts"], i["id"])
+                )["id"]
+        incident = next((i for i in raw if i["id"] == self.incident_id), None)
+        if incident is None:
+            return
+        acknowledged = any(
+            t["actor"] == "selleros"
+            and t["action"] == "a2a_call"
+            and t["investigation_id"] in incident["investigation_ids"]
+            and (t.get("output") or {}).get("received") is True
+            for t in steps
+        )
+        for trigger, (method, target) in self.actions.items():
+            if trigger in self.completed or (
+                trigger == "on_selleros_ack" and not acknowledged
+            ):
+                continue
+            if method == "add_metric":
+                await core.register_metric(self.metrics[target])
+            else:
+                await core.set_scenario(target, active=False)
+            self.completed.add(trigger)
+
+
 def evaluate(
     entry: dict, incidents: list[Incident], trails: list[TrailStep]
 ) -> list[dict]:
     """Pure checker; choose one coherent incident, never mix unrelated reports."""
     raw = [i.model_dump(mode="json") for i in incidents if i.merged_into is None]
     steps = [t.model_dump(mode="json") for t in trails]
-
-    start = datetime.fromisoformat(entry["start_ts"]) if "start_ts" in entry else None
     selected: list[dict] = []
-
-    def matched(spec: dict, scenario: str | None = None) -> list[dict]:
-        commands = [
-            (p.rsplit("@", 1)[0], int(p.rsplit("@", 1)[1]))
-            for p in entry.get("play", [])
-            if not p.startswith("clear(")
-        ]
-        if scenario is None:
-            scenario = next(
-                (name for name, _ in commands if not name.startswith("I")),
-                commands[0][0] if commands else None,
-            )
-        offset = next((hour for name, hour in commands if name == scenario), 0)
-        until = min(
-            (hour for name, hour in commands if hour > offset),
-            default=entry.get("run_hours", float("inf")),
-        )
-        candidates = []
-        for item in raw:
-            opened = datetime.fromisoformat(item["opened_ts"])
-            if start and not start + offset * HOUR <= opened < start + until * HOUR:
-                continue
-            report = json.dumps(
-                {
-                    "report": {
-                        key: item[key]
-                        for key in (
-                            "title",
-                            "summary",
-                            "suggested_actions",
-                            "open_questions",
-                        )
-                    },
-                    "trail": [
-                        t
-                        for t in steps
-                        if t["investigation_id"] in item["investigation_ids"]
-                    ],
-                },
-                sort_keys=True,
-            ).casefold()
-            cause = spec.get("cause_type")
-            tokens = [*spec.get("must_mention", []), *([cause] if cause else [])]
-            mentioned = any(
-                re.search(r"(?<!\w)" + re.escape(word.casefold()) + r"(?!\w)", report)
-                for word in tokens
-            )
-            cause_match = cause and any(
-                h.get("cause_type") == cause
-                for h in [item.get("root_cause") or {}, *item["hypotheses"]]
-                if h.get("status") != "refuted"
-            )
-            if (
-                not (spec.get("entry_metrics_any") or tokens or cause)
-                or item["entry"]["metric"] in spec.get("entry_metrics_any", [])
-                or mentioned
-                or cause_match
-            ):
-                candidates.append(item)
-        return candidates
 
     def group(spec: dict, prefix: str, scenario: str | None = None) -> list[dict]:
         spec = spec.get("expect", spec)
-        candidates = matched(spec, scenario)
+        candidates = matching_incidents(entry, raw, steps, spec, scenario)
         if prefix == "expect.":
             selected.extend(candidates)
         choices = [
@@ -589,6 +698,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "eye.agents.sentinel",
             "eye.agents.detective",
             "eye.agents.skeptic",
+            "eye.agents.cartographer",
         ):
             stack.enter_context(
                 patch.object(import_module(module), "run_agent", deterministic_agent)
@@ -597,6 +707,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "eye.orchestrator",
             "eye.incidents.store",
             "eye.agents.detective",
+            "eye.agents.cartographer",
             "eye.llm.runtime",
             "eye.main",
             "eye.a2a_client",
@@ -657,6 +768,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             scenario_titles=_TITLES,
             a2a=a2a,
             investigate=investigate,
+            add_metric=Cartographer(engine, graph, llm=settings.llm).add_metric,
             invalidate=engine.invalidate,
         )
 
@@ -705,6 +817,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         store.notify = notify
         store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
+        actions = ConditionalActions(entry, DEMO_METRICS)
         try:
             for hour in range(entry["run_hours"]):
                 for command in entry["play"]:
@@ -715,13 +828,12 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                             action[6:-1] if clear else action, active=not clear
                         )
                 await core.step_once()
+                if actions.actions:
+                    await actions.poll(core, store.all(), stored_trails(store))
         finally:
             await core.close()
         incidents = store.all()
-        trails = [
-            TrailStep.model_validate_json(row[0])
-            for row in store.db.execute("SELECT step FROM trail_steps").fetchall()
-        ]
+        trails = stored_trails(store)
         checks = evaluate(entry, incidents, trails)
         replay_misses = llm.replay_misses + a2a.replay_misses
         if replay_misses:
@@ -732,7 +844,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                     "actual": replay_misses,
                 }
             )
-        usage = llm.status()
         return {
             "scenario": name,
             "checks": checks,
@@ -740,7 +851,9 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                 (c["actual"] for c in checks if c["check"] == "max_ticks_to_detect"),
                 None,
             ),
-            "llm_calls": usage["calls_per_hour"],
+            "llm_calls": llm.total_calls,
+            "replayed_calls": llm.replayed_calls,
+            "conditional_actions": sorted(actions.completed),
             "replay_misses": replay_misses,
             "tokens": llm.tokens_in + llm.tokens_out,
             "seconds": round(time.monotonic() - started, 2),
@@ -771,7 +884,7 @@ async def main() -> int:
         result = await run_scenario(name, oracle[name], args)
         (output / f"{name}.json").write_text(json.dumps(result, indent=2) + "\n")
         print(
-            "scenario | check | result | actual | ticks to detect | LLM calls | tokens | seconds"
+            "scenario | check | result | actual | ticks to detect | LLM calls (including replayed) | tokens (including replayed) | seconds"
         )
         for check in result["checks"]:
             print(

@@ -3,13 +3,15 @@
 from copy import deepcopy
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from factories import CAMPAIGN_TS, make_incident_s7
 from pydantic import BaseModel
 
 from eye.config import A2aSettings, LlmSettings
-from eye.contracts import Contribution, TrailStep
+from eye.contracts import AddMetricRequest, Contribution, Incident, TrailStep
 from eye.llm.client import LLMUnavailable
 
 SPEC = spec_from_file_location(
@@ -169,6 +171,165 @@ async def test_replay_miss_never_calls_sdk(tmp_path: Path) -> None:
         )
     assert client._sdk is None
     assert client.replay_misses == 1
+    assert client.total_calls == client.replayed_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["live", "replay"])
+async def test_llm_run_totals_include_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    class Response(BaseModel):
+        content: str = "response"
+
+    async def create(self: object, request: dict) -> Response:
+        return Response()
+
+    monkeypatch.setattr(harness.LLMClient, "create", create)
+    request = {"model": "test", "system": [], "tools": [], "messages": []}
+    cache = tmp_path / "fixture.jsonl"
+    cache.write_text(
+        harness.json.dumps({"key": harness.digest(harness.request_identity(request))})
+        + "\n"
+    )
+    client = harness.EvalLLMClient(
+        LlmSettings(mode=mode, cache_path=cache), tmp_path / "requests.jsonl"
+    )
+    await client.create(request)
+    await client.create(request)
+    assert client.total_calls == 2
+    assert client.replayed_calls == (2 if mode == "replay" else 0)
+    assert client.status()["calls_per_hour"] == 0
+
+
+def demo_incident(id_: str = "demo", hour: int = 10) -> Incident:
+    incident = make_incident_s7()
+    return incident.model_copy(
+        update={
+            "id": id_,
+            "opened_ts": CAMPAIGN_TS + hour * harness.HOUR,
+            "status": "open",
+            "investigation_ids": [f"inv_{id_}"],
+            "entry": incident.entry.model_copy(update={"metric": "aov"}),
+        }
+    )
+
+
+def demo_actions() -> object:
+    entry = deepcopy(harness.load_oracle()["D6"])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    return harness.ConditionalActions(entry, harness.DEMO_METRICS)
+
+
+def seller_ack(incident: Incident, received: bool = True) -> TrailStep:
+    return TrailStep(
+        id="ack",
+        investigation_id=incident.investigation_ids[0],
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="selleros",
+        action="a2a_call",
+        output_summary="SellerOS ack",
+        output={"received": received},
+    )
+
+
+@pytest.mark.asyncio
+async def test_conditional_actions_match_first_open_incident_and_fire_once() -> None:
+    actions = demo_actions()
+    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    await actions.poll(core, [], [])
+    await actions.poll(core, [demo_incident("before", 9)], [])
+    await actions.poll(
+        core, [demo_incident().model_copy(update={"status": "deferred"})], []
+    )
+    core.register_metric.assert_not_awaited()
+    first, later = demo_incident(), demo_incident("later", 11)
+    await actions.poll(core, [later, first], [])
+    core.register_metric.assert_awaited_once_with(harness.DEMO_METRICS["fee_per_order"])
+    assert actions.incident_id == first.id
+    assert actions.completed == {"on_incident_open"}
+    core.set_scenario.assert_not_awaited()
+    await actions.poll(
+        core, [first, later], [seller_ack(first, False), seller_ack(later)]
+    )
+    core.set_scenario.assert_not_awaited()
+    await actions.poll(core, [first, later], [seller_ack(first)])
+    await actions.poll(core, [first, later], [seller_ack(first)])
+    core.set_scenario.assert_awaited_once_with("S8", active=False)
+    core.register_metric.assert_awaited_once()
+    assert actions.completed == {"on_incident_open", "on_selleros_ack"}
+
+
+@pytest.mark.asyncio
+async def test_conditional_action_failure_is_not_marked_complete() -> None:
+    actions = demo_actions()
+    core = SimpleNamespace(
+        register_metric=AsyncMock(side_effect=ValueError("registration rejected")),
+        set_scenario=AsyncMock(),
+    )
+    incident = demo_incident()
+    with pytest.raises(ValueError, match="registration rejected"):
+        await actions.poll(core, [incident], [seller_ack(incident)])
+    assert not actions.completed
+    core.set_scenario.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_conditional_actions_parse_other_targets() -> None:
+    metric = AddMetricRequest(
+        name="another_metric",
+        description="Another metric",
+        sql="SELECT ts, units AS num FROM orders_hourly",
+    )
+    actions = harness.ConditionalActions(
+        {
+            "expect": {"entry_metrics_any": ["aov"]},
+            "on_incident_open": " clear( S4 ) ",
+            "on_selleros_ack": "add_metric(another_metric)",
+        },
+        {"another_metric": metric},
+    )
+    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    incident = demo_incident()
+    await actions.poll(core, [incident], [])
+    core.set_scenario.assert_awaited_once_with("S4", active=False)
+    core.register_metric.assert_not_awaited()
+    await actions.poll(core, [incident], [seller_ack(incident)])
+    core.register_metric.assert_awaited_once_with(metric)
+
+
+@pytest.mark.parametrize(
+    "action", ["unknown(S8)", "clear(S8); clear(I3)", "add_metric(unknown_metric)"]
+)
+def test_invalid_conditional_actions_fail_clearly(action: str) -> None:
+    with pytest.raises(ValueError):
+        harness.ConditionalActions({"on_incident_open": action}, harness.DEMO_METRICS)
+
+
+def test_demo_sql_matches_documented_cartographer_example() -> None:
+    assert (
+        harness.DEMO_METRICS["fee_per_order"].sql
+        == """SELECT ts, country, platform, category, seller_tier, channel,
+SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
+GROUP BY ts, country, platform, category, seller_tier, channel"""
+    )
+
+
+def test_mentions_report_only_found_and_missing_tokens() -> None:
+    incident = make_incident_s7().model_copy(
+        update={
+            "title": "",
+            "summary": "Coupon day is planned",
+            "suggested_actions": [],
+            "open_questions": [],
+        }
+    )
+    result = harness.evaluate(
+        {"expect": {"must_mention": ["coupon", "planned", "SellerOS"]}}, [incident], []
+    )[0]
+    assert result["actual"] == {"found": ["coupon", "planned"], "missing": ["SellerOS"]}
+    assert not result["passed"]
 
 
 @pytest.mark.asyncio
