@@ -30,3 +30,23 @@ The API key is read only by the SDK from the environment.
 
 The test-only prompt lives in `tests/llm/agent.md`. Run the opt-in live round trip
 with `uv run pytest tests/llm -m live -q` after setting `ANTHROPIC_API_KEY`.
+
+## OpenAI-compatible providers
+
+Claude remains the default. For Chat Completions endpoints set `llm.provider` to
+`openai_compatible`, `llm.base_url` to the API root (default
+`https://openrouter.ai/api/v1`), and `llm.models.default` to the provider's model
+ID. `llm.api_key_env` names the environment variable read at each live call
+(default `OPENROUTER_API_KEY`); never put the key in settings. Tools remain
+Pydantic-validated locally, but strict flags and Claude-specific options are not
+sent. Malformed/non-object JSON arguments become an invalid reserved input
+field, so the loop returns a validation error to the model rather than silently
+accepting empty arguments. Thinking blocks are not forwarded.
+
+Compatible-provider replay keys additionally include provider and base URL to
+avoid collisions with Claude or another endpoint. Network retries (429, 5xx,
+transport failures) are twice with short backoff, within one logical budget call.
+Run the opt-in provider test with
+`uv run pytest tests/llm/test_openai_compatible.py -m live -q` after setting
+`OPENROUTER_API_KEY`; `EYE_LIVE_OPENAI_MODEL` optionally overrides
+`nvidia/nemotron-3-ultra-550b-a55b:free`.
