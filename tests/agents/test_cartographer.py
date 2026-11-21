@@ -32,7 +32,7 @@ SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
 GROUP BY ts, country, platform, category, seller_tier, channel"""
 
 
-def fee_world(cartographer: Cartographer) -> None:
+def fee_world(cartographer: Cartographer, *, mixed: bool = False) -> None:
     con = cartographer.engine._con
     con.execute("ALTER TABLE orders_hourly ADD COLUMN platform VARCHAR DEFAULT 'web'")
     con.execute("ALTER TABLE orders_hourly ADD COLUMN channel VARCHAR DEFAULT 'search'")
@@ -42,6 +42,16 @@ def fee_world(cartographer: Cartographer) -> None:
         "UPDATE orders_hourly SET gmv = units * (50 + 10 * sin(epoch(ts) / 13700) + extract(day FROM ts) + CASE WHEN country = 'DE' THEN 4 ELSE 0 END)"
     )
     con.execute("UPDATE orders_hourly SET fee_revenue = gmv * 0.12")
+    if mixed:
+        con.execute(
+            "UPDATE orders_hourly SET seller_tier = CASE WHEN country = 'FR' THEN '1P' ELSE 'small_3P' END, units = CASE WHEN country = 'FR' THEN 80 + 40 * sin(epoch(ts) / 13700) + extract(day FROM ts) ELSE 100 END"
+        )
+        con.execute(
+            "UPDATE orders_hourly SET gmv = units * CASE WHEN seller_tier = '1P' THEN 100 ELSE 40 END"
+        )
+        con.execute(
+            "UPDATE orders_hourly SET fee_revenue = CASE WHEN seller_tier = '1P' THEN 0 ELSE gmv * 0.08 END"
+        )
     dims = ["country", "platform", "category", "seller_tier", "channel"]
     registry = cartographer.engine._registry
     for name, description, unit, value in [
@@ -137,8 +147,8 @@ async def placement(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str, live: bool
 ) -> None:
     network = install(monkeypatch, case, live)
-    if case == "fee_per_order":
-        fee_world(cartographer)
+    if case in {"fee_per_order", "fee_per_order_mix"}:
+        fee_world(cartographer, mixed=case == "fee_per_order_mix")
         req = AddMetricRequest(
             name="fee_per_order",
             description="Marketplace fee revenue in euros divided by units ordered.",
@@ -173,7 +183,7 @@ async def placement(
             "category",
             "seller_tier",
         }
-    elif case == "fee_per_order":
+    elif case in {"fee_per_order", "fee_per_order_mix"}:
         formula = [
             e
             for e in result.accepted
@@ -196,6 +206,14 @@ async def placement(
             and e.lag_hours == 0
             for e in result.accepted
         )
+        if case == "fee_per_order_mix":
+            edge = next(
+                e
+                for e in result.accepted
+                if e.src == "aov" and e.type == "causal_hypothesis"
+            )
+            assert edge.evidence["corr"] < -0.3
+            assert edge.evidence["n"] > 0
     else:
         assert result.ambiguous
         assert "duplicate" in result.notes.lower()
@@ -205,7 +223,9 @@ async def placement(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["refund", "duplicate", "fee_per_order"])
+@pytest.mark.parametrize(
+    "case", ["refund", "duplicate", "fee_per_order", "fee_per_order_mix"]
+)
 async def test_replay(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
@@ -214,7 +234,9 @@ async def test_replay(
 
 @pytest.mark.live
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["refund", "duplicate", "fee_per_order"])
+@pytest.mark.parametrize(
+    "case", ["refund", "duplicate", "fee_per_order", "fee_per_order_mix"]
+)
 async def test_record(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:

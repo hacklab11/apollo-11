@@ -34,6 +34,16 @@ the new rate as the target. Count rates are not revenue-per-unit metrics.
 Duplicates should have a direct equality identity and a possible duplicate note.
 Report segment failures and competing causal parents rather than hiding ambiguity.
 Correlation is not causation: causal edges can only be hypotheses, never validated.
+In add mode, submit tested, plausible causal mechanisms as causal_hypothesis
+proposals, with the measured correlation and caveats in the rationale. Do not
+omit a candidate solely because correlation is negative, opposes the expected
+sign, or may reflect segment mix or a shared denominator. Explain those limits
+instead of treating a hypothesis as a proven causal claim. Deterministic
+acceptance uses absolute correlation: |corr| >= 0.3 at the proposed lag +/-6 h,
+or a cited formula path; otherwise the proposal remains ambiguous. Choose the
+lag from the mechanism, not just the strongest correlation: a same-hour mechanism
+has lag 0 even if a nearby lag correlates more. Identity placement does not
+replace causal placement.
 Use numbers in claims and report what you could not decide.
 
 # How to finish
