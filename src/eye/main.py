@@ -1,6 +1,8 @@
 """Build and run the core service."""
 
 import json
+import logging
+import sys
 import time
 from collections.abc import Sequence
 from contextlib import ExitStack, closing
@@ -181,6 +183,12 @@ def _reporter(
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
     settings = load_settings()
     bootstrap = import_module("eye.graph.bootstrap")
     detective = _optional_module("eye.agents.detective")
