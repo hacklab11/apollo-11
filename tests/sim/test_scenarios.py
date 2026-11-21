@@ -420,3 +420,24 @@ def test_coupled_sampling_preserves_funnel_and_stock(
                    OR payment_attempts > checkout_starts OR checkout_starts > carts
             """).fetchone() == (0,)
         assert all(o.stock >= 0 for offers in sim.world.offers.values() for o in offers)
+
+
+def test_coupled_stockouts_do_not_become_payment_failures(settings: Settings) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        for offers in sim.world.offers.values():
+            for offer in offers:
+                if offer.stock:
+                    offer.stock = 100
+
+        def coupled(world: Simulator, hour: Hour) -> None:
+            hour.demand.coupled_volume_mult = 100.0
+
+        sim.pre_demand_hooks.append(coupled)
+        sim.step()
+        with sim.store.cursor() as con:
+            attempts, successes = con.execute(
+                "SELECT sum(attempts), sum(successes) FROM payments_hourly"
+            ).fetchone()
+            assert attempts > 1000
+            assert 0.94 < successes / attempts < 0.99
+        assert all(o.stock >= 0 for offers in sim.world.offers.values() for o in offers)

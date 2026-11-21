@@ -277,11 +277,18 @@ def _generate_demand(
         feed_clicks = np.minimum(_scale_counts(feed_clicks, factor), impressions)
         for index, offer in enumerate(offers):
             if offer is not None:
-                requested = psp_successes[:, :, index, :].copy().ravel()
+                requested = psp_attempts[:, :, index, :].copy().ravel()
+                if requested.sum() <= offer.stock:
+                    continue
                 cumulative = np.cumsum(requested)
-                psp_successes[:, :, index, :] = np.minimum(
+                allocated = np.minimum(
                     requested, np.maximum(0, offer.stock - cumulative + requested)
                 ).reshape(len(_SEGMENTS), len(CHANNELS), len(PSPS))
+                psp_attempts[:, :, index, :] = allocated
+                psp_successes[:, :, index, :] = rng.binomial(allocated, rates)
+        attempts = psp_attempts.sum(axis=-1)
+        starts = attempts + extra_starts
+        carts = starts + extra_carts
     for index, offer in enumerate(offers):
         if offer is not None:
             offer.stock -= int(psp_successes[:, :, index, :].sum())
