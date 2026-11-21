@@ -19,6 +19,8 @@ from eye.contracts import (
     TrailStep,
 )
 
+OPS_DB = Path("data/ops.duckdb")
+
 
 def canonical(segment: dict[str, str]) -> str:
     return ",".join(f"{key}={value}" for key, value in sorted(segment.items()))
@@ -37,7 +39,7 @@ def _overlap(left: dict[str, str], right: dict[str, str]) -> bool:
 class IncidentStore:
     def __init__(
         self,
-        path: str | Path = "data/ops.duckdb",
+        path: str | Path = OPS_DB,
         *,
         path_exists: Callable[[str, str], bool] = lambda src, dst: False,
         reporter: Callable[[InvestigationResult], Awaitable[tuple[str, str]]]

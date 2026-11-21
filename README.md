@@ -61,6 +61,15 @@ The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
+To reset for another rehearsal, stop `./scripts/dev.sh` with Ctrl+C and wait for all services to exit, then run from the checkout root:
+
+```sh
+uv run python scripts/demo_reset.py
+./scripts/dev.sh
+```
+
+The reset refuses if service processes/ports appear active or either database is locked. It prints each removed file: the simulator world and operations databases (including WALs), graph snapshot, and SellerOS runtime data, including action journals. It keeps the configured Core LLM cache and SellerOS `llm_cache.jsonl`. The graph must be rebuilt because it can contain demo-added metrics, node states and world-derived evidence; keeping it could carry the previous rehearsal into the new one. This also discards saved seed refinement, but recorded model responses remain cached. Unlike the older `scripts/reset.sh` (which deletes all data including caches), this command preserves recordings. After restart, check for tick 0 and a paused clock before running the demo again. `--settings PATH` selects a different settings file; simulator and store paths come from their runtime defaults, not the read-only `data.path` warehouse setting.
+
 To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your local settings before launch. Keep the cache out of git and use `llm.mode: replay` for the next launch. Replay may still call the API on a cache miss. The LLM mode is read only at startup; there is no runtime switch.
 
 ### Docker
