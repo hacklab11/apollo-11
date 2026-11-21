@@ -307,7 +307,10 @@ class Cartographer:
             if req.sql:
                 sqlguard.check(req.sql, allowed)
             else:
-                for name in formula_inputs(req.expression):
+                names = formula_inputs(req.expression)
+                if not names:
+                    raise ValueError("expression must reference registered metrics")
+                for name in names:
                     registry.get(name)
             await step("guard", "passed")
         except ValueError as error:
@@ -380,13 +383,19 @@ class Cartographer:
             ],
             "identities": [i.text for i in registry.identities],
         }
+
+        async def agent_step(record: TrailStep) -> None:
+            nonlocal n
+            n += 1
+            await on_step(record.model_copy(update={"n": n}))
+
         submitted = cast(
             Submission,
             await run_agent(
                 self._spec(engine),
                 json.dumps(context, sort_keys=True),
                 investigation,
-                on_step,
+                agent_step,
             ),
         )
         await step("proposals", f"{len(submitted.edges)} proposals")

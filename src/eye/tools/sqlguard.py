@@ -34,14 +34,19 @@ def check(sql: str, allowed_tables: Collection[str]) -> None:
             raise ValueError(f"Invalid SQL: {error}") from error
     if tree.get("error"):
         raise ValueError("SQL could not be parsed")
-    nodes = list(_nodes(tree))
-    ctes = {
-        entry["key"].lower()
-        for node in nodes
-        for entry in node.get("cte_map", {}).get("map", [])
-    }
     allowed = {name.lower() for name in allowed_tables} - {"scenario_log"}
-    for node in nodes:
+
+    def tables(value: Any, ctes: frozenset[str] = frozenset()) -> None:
+        if isinstance(value, list):
+            for child in value:
+                tables(child, ctes)
+            return
+        if not isinstance(value, dict):
+            return
+        node = value
+        ctes = ctes | {
+            entry["key"].lower() for entry in node.get("cte_map", {}).get("map", [])
+        }
         if node.get("type") == "BASE_TABLE":
             parts = [node.get(k) for k in ("catalog_name", "schema_name", "table_name")]
             name = ".".join(p for p in parts if p).lower()
@@ -50,6 +55,11 @@ def check(sql: str, allowed_tables: Collection[str]) -> None:
                 or name not in allowed | ctes
             ):
                 raise ValueError(f"Table is not allowed: {name}")
+        for child in node.values():
+            tables(child, ctes)
+
+    tables(tree)
+    for node in _nodes(tree):
         if node.get("type") == "TABLE_FUNCTION":
             raise ValueError("Table functions are not allowed")
         if node.get("class") == "FUNCTION":

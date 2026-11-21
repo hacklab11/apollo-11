@@ -176,6 +176,14 @@ async def test_guard_does_not_mutate(cartographer: Cartographer) -> None:
     )
 
 
+def test_cte_names_do_not_escape_subqueries() -> None:
+    with pytest.raises(ValueError, match="Table is not allowed: private_table"):
+        check(
+            "SELECT * FROM (WITH private_table AS (SELECT * FROM orders_hourly) SELECT * FROM private_table) x, private_table",
+            {"orders_hourly"},
+        )
+
+
 @pytest.mark.asyncio
 async def test_empty_and_invalid_columns(cartographer: Cartographer) -> None:
     with pytest.raises(ValueError, match="ts and num"):
