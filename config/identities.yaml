@@ -1,0 +1,17 @@
+# Seed identities (docs/specs/05-metric-registry.md §5). Checked by validate_identity (T08).
+- id: F1
+  text: "contribution_margin = fee_revenue + ad_revenue + first_party_margin - platform_discounts - fulfillment_cost - marketing_cost - refund_cost"
+- id: F2
+  text: "gmv = orders * aov"
+- id: F3
+  text: "orders = carts * checkout_conversion"
+- id: F4
+  text: "carts = sessions * cart_rate"
+- id: F5
+  text: "checkout_conversion = cart_to_checkout_rate * checkout_to_payment_rate * payment_success_rate"
+- id: F6
+  text: "ad_spend = ad_clicks * avg_cpc"
+- id: F7
+  text: "ad_clicks = ad_impressions * ad_ctr"
+- id: F8
+  text: "contribution_per_order = contribution_margin / orders"

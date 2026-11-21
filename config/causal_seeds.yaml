@@ -1,0 +1,26 @@
+# Causal candidates for graph bootstrap (docs/specs/05-metric-registry.md §6).
+# src is upstream, dst downstream. The Cartographer validates, keeps or rejects each one.
+- {src: search_relevance, dst: search_ctr, lag_hours: 0, rationale: Irrelevant results get fewer clicks.}
+- {src: search_relevance, dst: search_conversion, lag_hours: 0, rationale: Irrelevant results lead to fewer purchases.}
+- {src: search_conversion, dst: orders, lag_hours: 0, rationale: Search is the largest order channel.}
+- {src: feed_unavailable_exposure_share, dst: feed_purchase_rate, lag_hours: 0, rationale: Clicks on out-of-stock items cannot convert.}
+- {src: feed_purchase_rate, dst: orders, lag_hours: 0, rationale: The feed is an order channel.}
+- {src: in_stock_rate, dst: orders, lag_hours: 0, rationale: Shoppers cannot buy items that are out of stock.}
+- {src: in_stock_rate, dst: search_conversion, lag_hours: 0, rationale: Search clicks on out-of-stock items do not convert.}
+- {src: po_fill_rate, dst: in_stock_rate, lag_hours: 24, rationale: Short deliveries leave less first-party stock.}
+- {src: po_qty_vs_forecast, dst: in_stock_rate, lag_hours: 48, rationale: Ordering below forecast runs stock down after delivery time.}
+- {src: supplier_delay_hours, dst: in_stock_rate, lag_hours: 24, rationale: Late deliveries delay restocking.}
+- {src: fba_blocked_units, dst: in_stock_rate, lag_hours: 48, rationale: Units blocked by capacity never reach stock.}
+- {src: price_index_vs_1p, dst: buybox_share, lag_hours: 0, rationale: Cheaper offers win the Buy Box.}
+- {src: price_change_rate, dst: price_index_vs_1p, lag_hours: 0, rationale: Repricing moves Buy Box prices.}
+- {src: buybox_share, dst: small_seller_gmv_share, lag_hours: 0, rationale: Buy Box winners take the GMV.}
+- {src: in_stock_rate, dst: buybox_share, lag_hours: 0, rationale: Only in-stock offers can hold the Buy Box.}
+- {src: in_stock_rate, dst: avg_cpc, lag_hours: 6, rationale: Out-of-stock sellers bid more.}
+- {src: avg_cpc, dst: ad_revenue, lag_hours: 0, rationale: Ad revenue is clicks times CPC.}
+- {src: sessions, dst: carts, lag_hours: 0, rationale: More visits create more carts.}
+- {src: marketing_cost, dst: sessions, lag_hours: 0, rationale: Paid acquisition buys sessions.}
+- {src: platform_discounts, dst: contribution_margin, lag_hours: 0, rationale: Platform-funded discounts are a cost.}
+- {src: cart_to_checkout_rate, dst: orders, lag_hours: 0, rationale: Carts that never reach checkout never become orders.}
+- {src: client_error_rate, dst: cart_to_checkout_rate, lag_hours: 0, rationale: Client errors can block checkout.}
+- {src: payment_success_rate, dst: orders, lag_hours: 0, rationale: Failed payments are lost orders.}
+- {src: buybox_share, dst: refund_cost, lag_hours: 72, rationale: New low-price sellers can raise refunds.}

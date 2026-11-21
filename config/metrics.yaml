@@ -1,0 +1,598 @@
+# Seed metric registry (docs/specs/05-metric-registry.md).
+# kind: sql returns ts, <dimensions...>, num[, den]; the engine adds the time filter.
+# Descriptions come from docs/domain-notes/metric-descriptions.md.
+
+# Outcomes and finance
+
+- name: gmv
+  description: Total value of merchandise sold, in euros.
+  unit: eur
+  domain: orders
+  kind: sql
+  dimensions: [country, platform, category, seller_tier, channel]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, seller_tier, channel, gmv AS num
+    FROM orders_hourly
+
+- name: orders
+  description: Total units ordered.
+  unit: count
+  domain: orders
+  kind: sql
+  dimensions: [country, platform, category, seller_tier, channel]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, seller_tier, channel, units AS num
+    FROM orders_hourly
+
+- name: aov
+  description: Merchandise value in euros per unit ordered, calculated as GMV divided by orders.
+  unit: eur
+  domain: orders
+  kind: formula
+  expression: gmv / orders
+  dimensions: [country, platform, category, seller_tier, channel]
+  higher_is_better: true
+
+- name: fee_revenue
+  description: Total marketplace fees earned from orders, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, platform, category, seller_tier, channel]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, seller_tier, channel, fee_revenue AS num
+    FROM orders_hourly
+
+- name: first_party_margin
+  description: First-party merchandise value minus its cost of goods, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, platform, category, channel]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, channel, gmv - cogs_1p AS num
+    FROM orders_hourly
+    WHERE seller_tier = '1P'
+
+- name: platform_discounts
+  description: Total discounts funded by the platform, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, platform, category, seller_tier, channel]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, platform, category, seller_tier, channel, platform_discount AS num
+    FROM orders_hourly
+
+- name: fulfillment_cost
+  description: Total order fulfillment costs, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, platform, category, channel]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, platform, category, channel, fulfillment_cost AS num
+    FROM orders_hourly
+
+- name: ad_revenue
+  description: Total advertiser spending earned by the platform, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, category, advertiser_id, spend AS num
+    FROM ads_hourly
+
+- name: marketing_cost
+  description: Total platform spending on external marketing, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, spend AS num
+    FROM marketing_hourly
+
+- name: refund_cost
+  description: Total cost of refunds, in euros.
+  unit: eur
+  domain: finance
+  kind: sql
+  dimensions: [country, category, seller_tier]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, category, seller_tier, refund_cost AS num
+    FROM refunds_hourly
+
+- name: refunds
+  description: Total number of refunds.
+  unit: count
+  domain: finance
+  kind: sql
+  dimensions: [country, category, seller_tier]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, category, seller_tier, refunds AS num
+    FROM refunds_hourly
+
+- name: contribution_margin
+  description: Fee revenue plus ad revenue and first-party margin, minus platform discounts, fulfillment costs, marketing costs, and refund costs, in euros.
+  unit: eur
+  domain: finance
+  kind: formula
+  expression: fee_revenue + ad_revenue + first_party_margin - platform_discounts - fulfillment_cost - marketing_cost - refund_cost
+  dimensions: [country]
+  higher_is_better: true
+
+- name: contribution_per_order
+  description: Contribution margin in euros per unit ordered.
+  unit: eur
+  domain: finance
+  kind: formula
+  expression: contribution_margin / orders
+  dimensions: [country]
+  higher_is_better: true
+
+# Traffic, search, feed
+
+- name: sessions
+  description: Total visits to the marketplace.
+  unit: count
+  domain: traffic
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, sessions AS num
+    FROM traffic_hourly
+
+- name: searches
+  description: Total searches made on the marketplace.
+  unit: count
+  domain: search
+  kind: sql
+  dimensions: [country, platform, category]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, searches AS num
+    FROM search_hourly
+
+- name: search_ctr
+  description: Search-result clicks divided by searches.
+  unit: ratio
+  domain: search
+  kind: sql
+  dimensions: [country, platform, category]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, result_clicks AS num, searches AS den
+    FROM search_hourly
+
+- name: search_relevance
+  description: Average search relevance score, weighted by the number of searches.
+  unit: ratio
+  domain: search
+  kind: sql
+  dimensions: [country, platform, category]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, category, relevance * searches AS num, searches AS den
+    FROM search_hourly
+
+- name: search_conversion
+  description: Units ordered through search divided by searches.
+  unit: ratio
+  domain: search
+  kind: sql
+  dimensions: [country, platform, category]
+  higher_is_better: true
+  # UNION ALL instead of a join keeps SUM(num) / SUM(den) exact at every level.
+  sql: |
+    SELECT ts, country, platform, category, units AS num, 0 AS den
+    FROM orders_hourly
+    WHERE channel = 'search'
+    UNION ALL
+    SELECT ts, country, platform, category, 0 AS num, searches AS den
+    FROM search_hourly
+
+- name: feed_impressions
+  description: Total item impressions in the recommendation feed.
+  unit: count
+  domain: feed
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, impressions AS num
+    FROM feed_hourly
+
+- name: feed_ctr
+  description: Feed clicks divided by feed impressions.
+  unit: ratio
+  domain: feed
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, clicks AS num, impressions AS den
+    FROM feed_hourly
+
+- name: feed_purchase_rate
+  description: Units ordered through the feed divided by feed clicks.
+  unit: ratio
+  domain: feed
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, units AS num, 0 AS den
+    FROM orders_hourly
+    WHERE channel = 'feed'
+    UNION ALL
+    SELECT ts, country, platform, 0 AS num, clicks AS den
+    FROM feed_hourly
+
+- name: feed_unavailable_exposure_share
+  description: Share of feed impressions showing out-of-stock items.
+  unit: ratio
+  domain: feed
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: false
+  sql: |
+    SELECT ts, country, platform,
+           CASE WHEN in_stock THEN 0 ELSE impressions END AS num,
+           impressions AS den
+    FROM feed_hourly
+
+# Checkout and payments
+
+- name: carts
+  description: Total carts created.
+  unit: count
+  domain: orders
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, carts AS num
+    FROM checkout_hourly
+
+- name: cart_rate
+  description: Carts created divided by marketplace sessions.
+  unit: ratio
+  domain: orders
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, carts AS num, 0 AS den
+    FROM checkout_hourly
+    UNION ALL
+    SELECT ts, country, platform, 0 AS num, sessions AS den
+    FROM traffic_hourly
+
+- name: cart_to_checkout_rate
+  description: Checkout starts divided by carts created.
+  unit: ratio
+  domain: orders
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, checkout_starts AS num, carts AS den
+    FROM checkout_hourly
+
+- name: checkout_to_payment_rate
+  description: Payment attempts divided by checkout starts.
+  unit: ratio
+  domain: orders
+  kind: sql
+  dimensions: [country, platform]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, payment_attempts AS num, checkout_starts AS den
+    FROM checkout_hourly
+
+- name: payment_success_rate
+  description: Successful payments divided by payment attempts.
+  unit: ratio
+  domain: quality
+  kind: sql
+  dimensions: [country, platform, psp]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, platform, psp, successes AS num, attempts AS den
+    FROM payments_hourly
+
+- name: payment_latency_p95
+  description: Attempt-weighted average of reported 95th-percentile payment latencies, in milliseconds; not a pooled payment percentile.
+  unit: ms
+  domain: quality
+  kind: sql
+  dimensions: [psp]
+  higher_is_better: false
+  sql: |
+    SELECT ts, psp, latency_p95_ms * attempts AS num, attempts AS den
+    FROM payments_hourly
+
+- name: checkout_conversion
+  description: Units ordered divided by carts created.
+  unit: ratio
+  domain: orders
+  kind: formula
+  expression: orders / carts
+  dimensions: [country, platform]
+  higher_is_better: true
+
+- name: client_error_rate
+  description: Client-side errors divided by sessions, by platform.
+  unit: ratio
+  domain: quality
+  kind: sql
+  dimensions: [platform]
+  higher_is_better: false
+  sql: |
+    SELECT ts, platform, errors AS num, 0 AS den
+    FROM client_errors_hourly
+    UNION ALL
+    SELECT ts, platform, 0 AS num, sessions AS den
+    FROM traffic_hourly
+
+# Marketplace and ecosystem
+
+- name: buybox_share
+  description: Share of category merchandise value sold by each seller tier, used as a Buy Box share measure.
+  unit: ratio
+  domain: marketplace
+  kind: sql
+  dimensions: [category, seller_tier]
+  # The denominator is the whole category, so the value is a share only when seller_tier is fixed.
+  sql: |
+    SELECT ts, category, seller_tier, gmv AS num,
+           SUM(gmv) OVER (PARTITION BY ts, category) AS den
+    FROM (
+      SELECT ts, category, seller_tier, SUM(gmv) AS gmv
+      FROM orders_hourly
+      GROUP BY ts, category, seller_tier
+    )
+
+- name: small_seller_gmv_share
+  description: Share of merchandise value sold by small third-party sellers.
+  unit: ratio
+  domain: marketplace
+  kind: sql
+  dimensions: [country, category]
+  sql: |
+    SELECT ts, country, category,
+           CASE WHEN seller_tier = 'small_3P' THEN gmv ELSE 0 END AS num,
+           gmv AS den
+    FROM orders_hourly
+
+- name: price_index_vs_1p
+  description: Average price-to-reference-price ratio of third-party Buy Box offers, for comparison with the first-party price index.
+  unit: index
+  domain: marketplace
+  kind: sql
+  dimensions: [category]
+  sql: |
+    SELECT o.ts, o.category, o.price / s.ref_price AS num, 1 AS den
+    FROM offers_hourly o
+    JOIN skus s ON s.sku = o.sku
+    WHERE o.is_buybox AND o.seller_tier <> '1P'
+
+- name: price_change_rate
+  description: Share of offers whose price changed since the previous hour.
+  unit: ratio
+  domain: marketplace
+  kind: sql
+  dimensions: [category, seller_tier]
+  sql: |
+    SELECT ts, category, seller_tier,
+           CASE WHEN price <> prev_price THEN 1 ELSE 0 END AS num,
+           1 AS den
+    FROM (
+      SELECT ts, category, seller_tier, price,
+             LAG(ts) OVER w AS prev_ts,
+             LAG(price) OVER w AS prev_price
+      FROM offers_hourly
+      WINDOW w AS (PARTITION BY sku, seller_id ORDER BY ts)
+    )
+    WHERE prev_ts = ts - INTERVAL 1 HOUR
+
+- name: active_small_sellers
+  description: Number of distinct small third-party sellers with at least one order in the hour.
+  unit: count
+  domain: marketplace
+  kind: sql
+  dimensions: [category]
+  higher_is_better: true
+  sql: |
+    SELECT ts, category, 1 AS num
+    FROM (
+      SELECT DISTINCT ts, category, seller_id
+      FROM orders_hourly
+      WHERE seller_tier = 'small_3P' AND units > 0
+    )
+
+- name: seller_hhi
+  description: Sum of squared seller merchandise-value shares within a category; higher values mean sales are more concentrated.
+  unit: index
+  domain: marketplace
+  kind: sql
+  dimensions: [category]
+  higher_is_better: false
+  sql: |
+    SELECT ts, category,
+           power(gmv / SUM(gmv) OVER (PARTITION BY ts, category), 2) AS num
+    FROM (
+      SELECT ts, category, seller_id, SUM(gmv) AS gmv
+      FROM orders_hourly
+      GROUP BY ts, category, seller_id
+    )
+
+# Supply
+
+- name: in_stock_rate
+  description: Demand-weighted share of Buy Box holding or eligible offers that are in stock, using item popularity as the weight.
+  unit: ratio
+  domain: supply
+  kind: sql
+  dimensions: [category, seller_tier]
+  higher_is_better: true
+  sql: |
+    SELECT o.ts, o.category, o.seller_tier,
+           CASE WHEN o.in_stock THEN s.popularity ELSE 0 END AS num,
+           s.popularity AS den
+    FROM offers_hourly o
+    JOIN skus s ON s.sku = o.sku
+
+- name: stockout_skus
+  description: Number of SKUs with no in-stock offer.
+  unit: count
+  domain: supply
+  kind: sql
+  dimensions: [category]
+  higher_is_better: false
+  sql: |
+    SELECT ts, category, 1 AS num
+    FROM offers_hourly
+    GROUP BY ts, category, sku
+    HAVING NOT bool_or(in_stock)
+
+- name: po_fill_rate
+  description: Delivered units divided by ordered units for first-party purchase orders, grouped by delivery day.
+  unit: ratio
+  domain: supply
+  kind: sql
+  dimensions: [category]
+  higher_is_better: true
+  sql: |
+    SELECT date_trunc('day', p.delivered_ts) AS ts, s.category,
+           p.delivered_qty AS num, p.qty AS den
+    FROM purchase_orders p
+    JOIN skus s ON s.sku = p.sku
+    WHERE p.delivered_ts IS NOT NULL
+
+- name: po_qty_vs_forecast
+  description: Purchase-order quantity divided by the stock needed to reach ten days of supply, using average daily sales over the previous seven days at order time.
+  unit: ratio
+  domain: supply
+  kind: sql
+  dimensions: [category]
+  sql: |
+    SELECT date_trunc('hour', p.ordered_ts) AS ts, s.category, p.qty AS num,
+           COALESCE((
+             SELECT SUM(o.units) FROM orders_hourly o
+             WHERE o.sku = p.sku AND o.seller_tier = '1P'
+               AND o.ts >= p.ordered_ts - INTERVAL 7 DAY AND o.ts < p.ordered_ts
+           ), 0) / 7.0 * 10
+           - COALESCE((
+             SELECT f.stock FROM offers_hourly f
+             WHERE f.sku = p.sku AND f.seller_id = '1P'
+               AND f.ts = date_trunc('hour', p.ordered_ts)
+           ), 0) AS den
+    FROM purchase_orders p
+    JOIN skus s ON s.sku = p.sku
+
+- name: supplier_delay_hours
+  description: Average hours between expected and actual delivery across deliveries; positive values mean late delivery.
+  unit: hours
+  domain: supply
+  kind: sql
+  dimensions: [category]
+  higher_is_better: false
+  sql: |
+    SELECT date_trunc('hour', p.delivered_ts) AS ts, s.category,
+           epoch(p.delivered_ts - p.eta_ts) / 3600 AS num, 1 AS den
+    FROM purchase_orders p
+    JOIN skus s ON s.sku = p.sku
+    WHERE p.delivered_ts IS NOT NULL
+
+- name: fba_blocked_units
+  description: Total units blocked by fulfillment capacity limits.
+  unit: count
+  domain: supply
+  kind: sql
+  dimensions: [seller_tier]
+  higher_is_better: false
+  sql: |
+    SELECT CAST(f.day AS TIMESTAMPTZ) AS ts, s.tier AS seller_tier, f.blocked_units AS num
+    FROM fba_capacity_daily f
+    JOIN sellers s ON s.seller_id = f.seller_id
+
+# Ads
+
+- name: ad_impressions
+  description: Total advertising impressions shown.
+  unit: count
+  domain: ads
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, category, advertiser_id, impressions AS num
+    FROM ads_hourly
+
+- name: ad_clicks
+  description: Total clicks on advertisements.
+  unit: count
+  domain: ads
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, category, advertiser_id, clicks AS num
+    FROM ads_hourly
+
+- name: ad_spend
+  description: Total advertiser spending in euros, the same amount recorded as platform ad revenue.
+  unit: eur
+  domain: ads
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, category, advertiser_id, spend AS num
+    FROM ads_hourly
+
+- name: avg_cpc
+  description: Advertising spend in euros divided by ad clicks.
+  unit: eur
+  domain: ads
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  sql: |
+    SELECT ts, country, category, advertiser_id, spend AS num, clicks AS den
+    FROM ads_hourly
+
+- name: ad_ctr
+  description: Ad clicks divided by ad impressions.
+  unit: ratio
+  domain: ads
+  kind: sql
+  dimensions: [country, category, advertiser_id]
+  higher_is_better: true
+  sql: |
+    SELECT ts, country, category, advertiser_id, clicks AS num, impressions AS den
+    FROM ads_hourly
+
+- name: budget_pace_ratio
+  description: Cumulative daily advertiser spend divided by daily budget times the planned cumulative spending share, using each advertiser's latest hour.
+  unit: ratio
+  domain: ads
+  kind: sql
+  dimensions: [advertiser_id]
+  sql: |
+    SELECT ts, advertiser_id, spent_today AS num,
+           daily_budget * planned_cum_share AS den
+    FROM ads_hourly
