@@ -8,7 +8,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
+import httpx2
 import pytest
+from anthropic import AsyncAnthropic
 from anthropic.types.beta import BetaMessage
 
 from eye.agents.cartographer import (
@@ -18,11 +20,14 @@ from eye.agents.cartographer import (
     Submission,
 )
 from eye.agents.sentinel import Sentinel
+from eye.api.app import create_app
 from eye.config import LlmSettings, Settings
 from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore
-from eye.llm.client import BudgetExceeded, LLMClient
+from eye.llm.client import BudgetExceeded, LLMClient, LLMUnavailable
+from eye.llm.runtime import AgentRefused
+from eye.main import _refine_causal_seeds
 from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Identity, Registry
@@ -374,6 +379,182 @@ async def test_refinement_is_cached(
     assert json.loads(payload)["mode"] == "refine_seeds"
     assert "numbers" in json.loads(payload)["seeds"][0]
     assert cartographer.graph.edges()[0].status == "ambiguous"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [400, 401, 403, "missing_auth"])
+async def test_startup_refinement_model_unavailable_retries(
+    cartographer: Cartographer,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    failure: int | str,
+) -> None:
+    seed = Edge(
+        id="seed",
+        src="orders",
+        dst="refunds",
+        type="causal_hypothesis",
+        status="hypothesis",
+        confidence=0.5,
+        evidence={},
+        created_by="seed",
+    )
+    cartographer.graph.add_edge(seed)
+    requests = []
+
+    async def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if len(requests) == 1 and failure != "missing_auth":
+            return httpx2.Response(
+                failure,
+                json={
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error"
+                        if failure == 400
+                        else "authentication_error",
+                        "message": "Credit balance unavailable: sensitive-provider-message",
+                    },
+                },
+            )
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_retry",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-opus-5-5",
+                "stop_reason": "tool_use",
+                "stop_sequence": None,
+                "usage": {"input_tokens": 10, "output_tokens": 10},
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "submit_retry",
+                        "name": "submit",
+                        "input": {
+                            "seeds": [
+                                {
+                                    "src": "orders",
+                                    "dst": "refunds",
+                                    "status": "hypothesis",
+                                    "confidence": 0.5,
+                                    "rationale": "Plausible lagged mechanism; no usable correlation.",
+                                }
+                            ],
+                            "edges": [],
+                            "notes": "Reviewed",
+                        },
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    async with AsyncAnthropic(
+        api_key=None if failure == "missing_auth" else "offline-placeholder",
+        max_retries=0,
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)),
+    ) as sdk:
+        settings = Settings(sim={"autostart": False})
+        llm = LLMClient(settings.llm, sdk)
+        monkeypatch.setattr("eye.llm.client._client", llm)
+        engine = cartographer.engine
+        end = engine._con.execute(
+            "SELECT max(ts) + INTERVAL 1 HOUR FROM orders_hourly"
+        ).fetchone()[0]
+        store = IncidentStore(":memory:")
+
+        async def refine(clean_hours, on_step):
+            await _refine_causal_seeds(cartographer, clean_hours, on_step)
+
+        orchestrator = Orchestrator(
+            settings,
+            SimpleNamespace(
+                now=end, live_start=end, history_start=end - timedelta(days=28)
+            ),
+            Sentinel(engine._con, engine._registry, graph=cartographer.graph),
+            store,
+            llm,
+            lambda *_: (0.0, 1.0),
+            refine=refine,
+        )
+        app = create_app(
+            orchestrator, engine._con, engine._registry, cartographer.graph, engine
+        )
+        try:
+            async with app.router.lifespan_context(app):
+                assert cartographer.graph.edges() == [seed]
+                trail = store.trail("cartographer:bootstrap")
+                assert trail and trail[-1].action == "note"
+                assert "unavailable" in trail[-1].output_summary.lower()
+                assert "sensitive-provider-message" not in trail[-1].output_summary
+                failures = [
+                    json.loads(r.message)
+                    for r in caplog.records
+                    if '"event": "refinement_unavailable"' in r.message
+                ]
+                assert len(failures) == 1
+                assert "sensitive-provider-message" not in caplog.text
+                sdk.api_key = "offline-placeholder"
+                await orchestrator.start()
+                refined = cartographer.graph.edges()[0]
+                assert refined.evidence["refined"] is True
+                assert refined.evidence["llm_refined"] is True
+                count = len(requests)
+                await orchestrator.start()
+                assert len(requests) == count
+        finally:
+            store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMUnavailable("provider unavailable"),
+        BudgetExceeded("budget"),
+        AgentRefused("refusal"),
+        TypeError("implementation error"),
+    ],
+)
+async def test_startup_refinement_only_suppresses_model_failures(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    seed = Edge(
+        id="seed",
+        src="orders",
+        dst="refunds",
+        type="causal_hypothesis",
+        status="hypothesis",
+        confidence=0.5,
+        evidence={},
+        created_by="seed",
+    )
+    cartographer.graph.add_edge(seed)
+    monkeypatch.setattr(
+        cartographer, "refine_causal_seeds", AsyncMock(side_effect=error)
+    )
+    sink = AsyncMock()
+    if isinstance(error, TypeError):
+        with pytest.raises(TypeError, match="implementation error"):
+            await _refine_causal_seeds(cartographer, [], sink)
+        sink.assert_not_awaited()
+    else:
+        await _refine_causal_seeds(cartographer, [], sink)
+        assert sink.call_args.args[0].action == "note"
+    assert cartographer.graph.edges() == [seed]
+
+
+@pytest.mark.asyncio
+async def test_startup_refinement_without_seeds_skips_model(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = AsyncMock(side_effect=AssertionError("No seeds to refine"))
+    monkeypatch.setattr(cartographer, "refine_causal_seeds", run)
+    await _refine_causal_seeds(cartographer, [], AsyncMock())
+    run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
