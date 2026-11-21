@@ -17,12 +17,28 @@ from a2a.types.a2a_pb2 import (
     SendMessageRequest,
     TaskState,
 )
-from google.protobuf.json_format import MessageToDict, ParseDict
+from a2a.utils.errors import A2AError
+from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from google.protobuf.struct_pb2 import Value
 from pydantic import BaseModel, Field
 
 from eye.config import A2aSettings
-from eye.contracts import SellerAlert, SellerAlertAck, SpecialistRequest, SpecialistResponse
+from eye.contracts import (
+    SellerAlert,
+    SellerAlertAck,
+    SpecialistRequest,
+    SpecialistResponse,
+)
+
+_FAILURES = (
+    A2AError,
+    httpx.HTTPError,
+    TimeoutError,
+    ValueError,
+    TypeError,
+    KeyError,
+    ParseError,
+)
 
 
 class AgentCardInfo(BaseModel):
@@ -88,7 +104,7 @@ class A2AClient:
             try:
                 async with asyncio.timeout(self.settings.timeout_s):
                     await self._card(agent, refresh=True)
-            except Exception as exc:
+            except _FAILURES as exc:
                 self._cards.pop(agent, None)
                 self._checked.pop(agent, None)
                 self._unavailable(agent, exc)
@@ -121,7 +137,7 @@ class A2AClient:
                         raise ValueError("expected a data part")
                     result = MessageToDict(part.data)
                     if not isinstance(result, dict):
-                        raise ValueError("expected an object")
+                        raise TypeError("expected an object")
                     return result
         raise ValueError("empty response")
 
@@ -133,17 +149,22 @@ class A2AClient:
             )
             if result.agent != agent:
                 raise ValueError("response agent mismatch")
+            self._health[agent].healthy = True
+            self._health[agent].reason = None
             return result
-        except Exception as exc:
+        except _FAILURES as exc:
             self._unavailable(agent, exc)
             return SpecialistResponse(agent=agent, answered=False, findings=[])
 
     async def notify_seller_os(self, alert: SellerAlert) -> SellerAlertAck:
         try:
             alert = SellerAlert.model_validate(alert)
-            return SellerAlertAck.model_validate(
+            result = SellerAlertAck.model_validate(
                 await self._send("selleros", alert, alert.summary)
             )
-        except Exception as exc:
+            self._health["selleros"].healthy = True
+            self._health["selleros"].reason = None
+            return result
+        except _FAILURES as exc:
             self._unavailable("selleros", exc)
             return SellerAlertAck(received=False, actions_taken=[])

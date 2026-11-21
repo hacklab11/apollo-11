@@ -227,3 +227,13 @@ def test_empty_static_table(
 ) -> None:
     connection.execute("DELETE FROM app_components")
     assert client.get("/data/app_components", params=WINDOW).json()["rows"] == []
+
+
+def test_new_seller_without_offers_in_window(
+    connection: duckdb.DuckDBPyConnection, client: TestClient
+) -> None:
+    connection.execute("UPDATE offers_hourly SET ts = ts + INTERVAL '1 day'")
+    response = client.get("/data/sellers/new", params=WINDOW)
+    assert response.status_code == 200, response.text
+    assert response.json()["rows"][0]["seller_id"] == "S-01"
+    assert response.json()["rows"][0]["offer_ts"] is None
