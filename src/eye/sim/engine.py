@@ -49,6 +49,7 @@ class Simulator:
         self.selleros_export = SellerOSExport(self.world, settings.sim.seed)
         self.pre_demand_hooks: list[Hook] = []
         self.post_demand_hooks: list[Hook] = []
+        self.pre_store_hooks: list[Hook] = []
         self.store = Store(db_path)
         try:
             with self.store.cursor() as reader:
@@ -115,10 +116,16 @@ class Simulator:
         hour.batches.update(
             self.finance.book(hour.ts, hour.rng, hour.batches.get("orders_hourly", []))
         )
-        marketing(hour.ts, hour.batches, hour.demand.marketing_mult)
+        marketing(
+            hour.ts,
+            hour.batches,
+            hour.demand.marketing_spend_mult or hour.demand.marketing_mult,
+        )
         self.apps.errors(hour.ts, hour.rng, hour.batches)
         noise(hour.ts, hour.rng, hour.batches)
         self.pipeline.partitions(hour.ts, hour.batches)
+        for hook in self.pre_store_hooks:
+            hook(self, hour)
         self.store.append(hour.batches)
         self.now += _HOUR
         self.selleros_export.write(hour.ts)
