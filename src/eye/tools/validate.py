@@ -37,6 +37,19 @@ def _window(
         visited = set()
         latest = None
         with engine._con.cursor() as cur:
+            hourly_tables = {
+                table
+                for tables in engine._registry.source_tables.values()
+                for table in tables
+                if table.endswith("_hourly")
+            }
+            for table in sorted(hourly_tables):
+                quoted = table.replace('"', '""')
+                stamp = cur.execute(f'SELECT max(ts) FROM "{quoted}"').fetchone()[0]
+                if stamp is not None:
+                    latest = max(latest, stamp) if latest is not None else stamp
+            if latest is not None:
+                pending.clear()
             while pending:
                 name = pending.pop()
                 if name in visited:

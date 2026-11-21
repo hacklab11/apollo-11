@@ -104,6 +104,34 @@ def test_validation_defaults_to_simulated_data_clock(
         validate_breakdown(weighted_engine, "orders", "country")
 
 
+def test_daily_metric_default_window_uses_hourly_clock(
+    weighted_engine: MetricEngine,
+) -> None:
+    con = weighted_engine._con
+    con.execute("CREATE TABLE clock_hourly (ts TIMESTAMPTZ)")
+    con.execute("INSERT INTO clock_hourly VALUES ('2020-01-16 12:00:00+00')")
+    con.execute("CREATE TABLE capacity_daily (day DATE, country VARCHAR, num DOUBLE)")
+    con.execute(
+        "INSERT INTO capacity_daily VALUES ('2020-01-02', 'DE', 11), ('2020-01-15', 'DE', 22)"
+    )
+    registry = weighted_engine._registry
+    registry.source_tables["orders"] = ("clock_hourly",)
+    registry.metrics["blocked_units"] = MetricDef(
+        name="blocked_units",
+        description="Daily blocked units",
+        unit="count",
+        domain="supply",
+        kind="sql",
+        dimensions=["country"],
+        sql="SELECT CAST(day AS TIMESTAMPTZ) AS ts, country, num FROM capacity_daily",
+    )
+    registry.source_tables["blocked_units"] = ()
+    registry.has_den["blocked_units"] = False
+    result = validate_breakdown(weighted_engine, "blocked_units", "country")
+    assert result.passed
+    assert result.evidence["n"] == 1
+
+
 @pytest.fixture(scope="module")
 def baseline(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, datetime]:
     settings = Settings()
