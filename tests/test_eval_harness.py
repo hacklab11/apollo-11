@@ -705,6 +705,33 @@ def test_detection_deadline_uses_the_best_report_candidate() -> None:
     assert not results["max_ticks_to_detect"]["passed"]
 
 
+@pytest.mark.parametrize("name,offset", [("S2", 18), ("S4", 70), ("S5", 80)])
+@pytest.mark.parametrize("case", ["on_time", "late", "missing"])
+def test_combined_run_scores_each_subscenario_deadline(
+    name: str, offset: int, case: str
+) -> None:
+    entry = deepcopy(harness.load_oracle()["D4"])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    spec = entry["also"][name]
+    incident = make_incident_s7()
+    hour = offset + (spec["max_ticks_to_detect"] if case == "late" else 0)
+    incident = incident.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS + hour * harness.HOUR,
+            "entry": incident.entry.model_copy(
+                update={"metric": spec["expect"]["entry_metrics_any"][0]}
+            ),
+        }
+    )
+    results = {
+        c["check"]: c
+        for c in harness.evaluate(entry, [] if case == "missing" else [incident], [])
+    }
+    check = results[f"also.{name}.max_ticks_to_detect"]
+    assert check["passed"] == (case == "on_time")
+    assert check["actual"] == (None if case == "missing" else hour - offset + 1)
+
+
 def test_unknown_check_errors() -> None:
     with pytest.raises(ValueError, match="Unknown oracle check"):
         harness.evaluate({"expect": {"typo": True}}, [], [])

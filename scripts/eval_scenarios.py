@@ -631,9 +631,9 @@ def evaluate(
     """Pure checker; choose one coherent incident, never mix unrelated reports."""
     raw = [i.model_dump(mode="json") for i in incidents if i.merged_into is None]
     steps = [t.model_dump(mode="json") for t in trails]
-    selected: list[dict] = []
 
     def group(spec: dict, prefix: str, scenario: str | None = None) -> list[dict]:
+        deadline = spec.get("max_ticks_to_detect")
         spec = spec.get("expect", spec)
         candidates = matching_incidents(entry, raw, steps, spec, scenario)
         sentinel_steps = [t for t in steps if t["actor"] == "sentinel"]
@@ -656,8 +656,6 @@ def evaluate(
         incident, chosen = max(
             choices, key=lambda choice: sum(c["passed"] for c in choice[1])
         )
-        if prefix == "expect." and incident is not None:
-            selected.append(incident)
         for result in chosen:
             if result["check"] == "max_incidents_for_scenario":
                 result.update(
@@ -665,6 +663,33 @@ def evaluate(
                     passed=0 < len(candidates) <= spec["max_incidents_for_scenario"],
                 )
             result["check"] = prefix + result["check"]
+        if deadline is not None:
+            start = (
+                datetime.fromisoformat(entry["start_ts"])
+                if "start_ts" in entry
+                else None
+            )
+            offsets = [
+                int(p.rsplit("@", 1)[1])
+                for p in entry.get("play", [])
+                if p.rsplit("@", 1)[0] == scenario
+                or (scenario is None and p.startswith("S"))
+            ]
+            ticks = (
+                (datetime.fromisoformat(incident["opened_ts"]) - start) // HOUR
+                - min(offsets, default=0)
+                + 1
+                if incident is not None and start
+                else None
+            )
+            chosen.append(
+                {
+                    "check": ("" if prefix == "expect." else prefix)
+                    + "max_ticks_to_detect",
+                    "passed": ticks is not None and 0 < ticks <= deadline,
+                    "actual": ticks,
+                }
+            )
         return chosen
 
     results = group(entry, "expect.")
@@ -716,37 +741,6 @@ def evaluate(
             results.extend(nested)
         else:
             results.extend(group(spec, f"also.{name}.", name))
-    if "max_ticks_to_detect" in entry:
-        start = (
-            datetime.fromisoformat(entry["start_ts"]) if "start_ts" in entry else None
-        )
-        hours = [
-            int(p.rsplit("@", 1)[1])
-            for p in entry["play"]
-            if not p.startswith("clear") and not p.startswith("I")
-        ]
-        offset = min(hours, default=0)
-        ticks = (
-            min(
-                (
-                    (datetime.fromisoformat(i["opened_ts"]) - start) // HOUR
-                    - offset
-                    + 1
-                    for i in selected
-                ),
-                default=None,
-            )
-            if start
-            else None
-        )
-        results.append(
-            {
-                "check": "max_ticks_to_detect",
-                "passed": ticks is not None
-                and 0 < ticks <= entry["max_ticks_to_detect"],
-                "actual": ticks,
-            }
-        )
     return results
 
 
