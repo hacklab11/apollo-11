@@ -651,6 +651,7 @@ def evaluate(
     """Pure checker; choose one coherent incident, never mix unrelated reports."""
     raw = [i.model_dump(mode="json") for i in incidents if i.merged_into is None]
     steps = [t.model_dump(mode="json") for t in trails]
+    fault_report_ids: set[str] = set()
 
     def group(spec: dict, prefix: str, scenario: str | None = None) -> list[dict]:
         deadline = spec.get("max_ticks_to_detect")
@@ -676,6 +677,13 @@ def evaluate(
         incident, chosen = max(
             choices, key=lambda choice: sum(c["passed"] for c in choice[1])
         )
+        is_fault = (
+            scenario.startswith("S")
+            if scenario
+            else any(p.startswith("S") for p in entry.get("play", []))
+        )
+        if incident is not None and is_fault:
+            fault_report_ids.add(incident["id"])
         for result in chosen:
             if result["check"] == "max_incidents_for_scenario":
                 result.update(
@@ -713,6 +721,11 @@ def evaluate(
         return chosen
 
     results = group(entry, "expect.")
+    other_groups = {
+        name: group(spec, f"also.{name}.", name)
+        for name, spec in entry.get("also", {}).items()
+        if name not in {"I1", "I3"}
+    }
     for name, spec in entry.get("also", {}).items():
         if name in {"I1", "I3"}:
             campaign_id = (
@@ -734,12 +747,18 @@ def evaluate(
             other = [
                 i
                 for i in incidents
-                if i.verdict == "INNOCENT"
-                or (i.root_cause and i.root_cause.cause_type == "planned_event")
-                or (i.root_cause is None and campaign_id in i.summary.casefold())
-                or (
-                    start is not None
-                    and start <= i.opened_ts < start + first_fault * HOUR
+                if i.id not in fault_report_ids
+                and (
+                    i.verdict == "INNOCENT"
+                    or (i.root_cause and i.root_cause.cause_type == "planned_event")
+                    or campaign_id
+                    in (
+                        i.root_cause.statement if i.root_cause else i.summary
+                    ).casefold()
+                    or (
+                        start is not None
+                        and start <= i.opened_ts < start + first_fault * HOUR
+                    )
                 )
             ]
             campaign_spec = spec.get("expect", spec)
@@ -755,7 +774,7 @@ def evaluate(
                 result["check"] = f"also.{name}." + result["check"]
             results.extend(nested)
         else:
-            results.extend(group(spec, f"also.{name}.", name))
+            results.extend(other_groups[name])
     return results
 
 

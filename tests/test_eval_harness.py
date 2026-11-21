@@ -792,6 +792,9 @@ def test_campaign_mention_in_non_campaign_root_is_not_attribution(
     good = good.model_copy(
         update={
             "opened_ts": CAMPAIGN_TS + offset * harness.HOUR,
+            "entry": good.entry.model_copy(
+                update={"metric": entry["expect"]["entry_metrics_any"][0]}
+            ),
             "root_cause": good.root_cause.model_copy(
                 update={
                     "cause_type": "release",
@@ -804,6 +807,53 @@ def test_campaign_mention_in_non_campaign_root_is_not_attribution(
     campaign = "I1" if name == "S7" else "I3"
     assert results[f"also.{campaign}.status_any"]["passed"]
     assert results[f"also.{campaign}.status_any"]["actual"] == []
+
+
+@pytest.mark.parametrize("fault", ["S1", "S3"])
+def test_simultaneous_campaign_false_alarm_is_not_a_chosen_fault_report(
+    fault: str,
+) -> None:
+    entry = deepcopy(harness.load_oracle()["D1"])
+    entry.update(deepcopy(harness.load_oracle()[fault]))
+    entry["play"] = ["I1@0", f"{fault}@0"]
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    spec = entry["expect"]
+    good = make_incident_s7()
+    segment = {key: values[0] for key, values in spec["segment_contains"].items()}
+    good = good.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS,
+            "summary": " ".join(spec["must_mention"]),
+            "entry": good.entry.model_copy(
+                update={"metric": spec["entry_metrics_any"][0], "segment": segment}
+            ),
+            "root_cause": good.root_cause.model_copy(
+                update={
+                    "cause_type": spec["cause_type"],
+                    "root_node": spec["root_node_any"][0],
+                    "segment": segment,
+                }
+            ),
+        }
+    )
+    alarm = good.model_copy(
+        update={
+            "id": "campaign-alarm",
+            "summary": "black-friday-2026 traffic surge",
+            "entry": good.entry.model_copy(update={"metric": "sessions"}),
+            "root_cause": good.root_cause.model_copy(
+                update={
+                    "cause_type": "traffic_change",
+                    "root_node": "sessions",
+                    "statement": "black-friday-2026 caused the traffic surge",
+                }
+            ),
+        }
+    )
+    results = {c["check"]: c for c in harness.evaluate(entry, [good, alarm], [])}
+    assert results["expect.cause_type"]["actual"] == [spec["cause_type"]]
+    assert results["also.I1.status_any"]["actual"] == ["open"]
+    assert not results["also.I1.status_any"]["passed"]
 
 
 def test_detection_deadline_uses_the_best_report_candidate() -> None:
