@@ -233,7 +233,10 @@ async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
 
 
 @pytest.mark.asyncio
-async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) -> None:
+@pytest.mark.parametrize("manual", [True, False])
+async def test_start_retries_interrupted_investigation_with_its_trail(
+    tmp_path, manual: bool
+) -> None:
     settings = Settings(sim={"autostart": False})
     decision = SentinelDecision(
         anomaly=make_anomaly(), action="investigate", reason="Outage"
@@ -251,6 +254,7 @@ async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) 
     first_process.close()
 
     async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
+        assert orchestrator.sim.now == incident.entry.ts + HOUR
         await on_step(previous_step.model_copy(update={"id": "stp_retried"}))
         return InvestigationResult(
             investigation_id="inv_fake",
@@ -278,7 +282,11 @@ async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) 
     )
     try:
         await orchestrator.start()
-        await orchestrator.step_once()
+        status = await orchestrator._step(manual=manual)
+        if not manual:
+            assert status.tick == 0 and orchestrator.paused
+            assert status.investigations_running == 1
+            await asyncio.gather(*orchestrator._tasks)
         (final,) = store.all()
         assert final.id == incident.id and final.status == "open"
         assert final.investigation_ids == ["inv_interrupted"]
