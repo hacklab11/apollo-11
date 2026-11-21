@@ -6,7 +6,6 @@ from pathlib import Path
 
 from selleros.data import ScopedData, Selection, Store, ToolOutput
 from selleros.models import (
-    SellerAlert,
     SpecialistRequest,
     SpecialistResponse,
     TrailStep,
@@ -55,35 +54,6 @@ async def answer(store: Store, request: SpecialistRequest) -> SpecialistResponse
                 query,
             )
         )
-
-    async def pause(selection: Selection) -> ToolOutput:
-        allowed = {seller.seller_id for seller in data.sellers}
-        if not selection.seller_ids or not set(selection.seller_ids) <= allowed:
-            raise ValueError("pause requires explicitly scoped seller IDs")
-        ack = await asyncio.to_thread(
-            store.pause,
-            snapshot,
-            SellerAlert(
-                incident_id=request.investigation_id,
-                seller_ids=selection.seller_ids,
-                skus=scope.skus,
-                summary=request.question,
-                recommended_action="pause",
-            ),
-        )
-        return ToolOutput(
-            rows=[ack.model_dump()],
-            summary=f"{len(ack.actions_taken)} repricers paused",
-        )
-
-    tools.append(
-        ToolSpec(
-            "pause_repricer",
-            "Pause no-floor repricers only when explicitly requested.",
-            Selection,
-            pause,
-        )
-    )
 
     async def on_step(step: TrailStep) -> None:
         return None
