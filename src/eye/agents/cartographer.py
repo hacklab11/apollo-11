@@ -357,6 +357,9 @@ class Cartographer:
         engine = MetricEngine(self.engine._con, staged)
         _, end = _window(engine, None, None, [req.name])
         samples = engine.query_metric(req.name, end - timedelta(days=7), end)
+        if not any(p.value is not None for s in samples for p in s.points):
+            await step("dry_run", "0 usable history points")
+            raise ValueError("metric has no usable history")
         await step(
             "dry_run",
             f"{len(dims)} dimensions; {sum(len(s.points) for s in samples)} hourly values",

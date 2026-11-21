@@ -27,7 +27,10 @@ SQL = "SELECT ts, country, category, seller_tier, refunds AS num, units AS den F
 def cartographer() -> Cartographer:
     con = duckdb.connect()
     con.execute(
-        "CREATE TABLE orders_hourly AS SELECT ts, country, 'electronics' AS category, 'small_3P' AS seller_tier, 100.0 AS units, 2.0 AS refunds FROM range(TIMESTAMPTZ '2026-01-01', TIMESTAMPTZ '2026-01-29', INTERVAL 1 HOUR) t(ts), unnest(['DE', 'FR']) c(country)"
+        "CREATE TABLE orders_hourly AS SELECT ts, country, 'electronics' AS category, 'small_3P' AS seller_tier, 100.0::DOUBLE AS units, 2.0::DOUBLE AS refunds FROM range(TIMESTAMPTZ '2026-01-01', TIMESTAMPTZ '2026-01-29', INTERVAL 1 HOUR) t(ts), unnest(['DE', 'FR']) c(country)"
+    )
+    con.execute(
+        "CREATE TABLE partition_status(table_name VARCHAR, country VARCHAR, ts TIMESTAMPTZ, loaded_rows INTEGER, expected_rows INTEGER)"
     )
     metrics = {
         name: MetricDef(
