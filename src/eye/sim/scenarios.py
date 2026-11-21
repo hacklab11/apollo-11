@@ -49,8 +49,8 @@ class LatePartitions:
                 sim.store.append({"orders_hourly": rows})
                 with sim.store.cursor() as con:
                     con.execute(
-                        "UPDATE partition_status SET loaded_rows = expected_rows WHERE table_name = 'orders_hourly' AND country = ? AND ts = ?",
-                        [country, ts],
+                        "UPDATE partition_status SET loaded_rows = LEAST(expected_rows, loaded_rows + ?) WHERE table_name = 'orders_hourly' AND country = ? AND ts = ?",
+                        [len(rows), country, ts],
                     )
                 self._late.remove((due, ts, country, rows))
         if not self.enabled:
@@ -65,7 +65,7 @@ class LatePartitions:
                 r for r in rows if r[1] != country
             ] + selected[:loaded]
             hour.batches["partition_status"] = [
-                (*r[:4], loaded, due)
+                (*r[:4], loaded, max(r[5], due))
                 if r[0] == "orders_hourly" and r[1] == country
                 else r
                 for r in hour.batches["partition_status"]

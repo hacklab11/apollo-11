@@ -324,6 +324,47 @@ def test_s8_scheduled_clear_and_lifecycle_errors(
         assert [o.stock for o, _, _ in offers] == stock
 
 
+def test_s8_and_i2_overlapping_backfills(settings: Settings, tmp_path: Path) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        sim.selleros_export.path = tmp_path / "sellers.json"
+        manager = ScenarioManager(sim)
+        manager.inject("I2")
+        sim.step()
+        manager.inject("S8")
+        start = sim.now
+        due = start + timedelta(hours=6)
+
+        def partition(country: str) -> tuple[int, int, datetime]:
+            with sim.store.cursor() as con:
+                expected, loaded, ready = con.execute(
+                    "SELECT expected_rows, loaded_rows, loaded_at FROM partition_status "
+                    "WHERE table_name = 'orders_hourly' AND country = ? AND ts = ?",
+                    [country, start],
+                ).fetchone()
+                assert con.execute(
+                    "SELECT count(*) FROM orders_hourly WHERE country = ? AND ts = ?",
+                    [country, start],
+                ).fetchone() == (loaded,)
+                return expected, loaded, ready
+
+        sim.step()
+        expected, loaded, ready = partition("FR")
+        partial = round(expected * 0.4)
+        assert 0 < loaded == round(partial * 0.5) < partial < expected
+        assert ready == due
+        manager.clear("I2")
+        sim.step()
+        assert partition("FR") == (expected, partial, due)
+        de_expected, de_loaded, de_ready = partition("DE")
+        assert de_loaded == de_expected
+        assert de_ready == start + timedelta(hours=1)
+        for _ in range(4):
+            sim.step()
+        assert partition("FR") == (expected, partial, due)
+        sim.step()
+        assert partition("FR") == (expected, expected, due)
+
+
 def test_s8_graph_seed() -> None:
     edges = yaml.safe_load(Path("config/causal_seeds.yaml").read_text())
     assert any(
