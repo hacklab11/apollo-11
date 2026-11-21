@@ -104,6 +104,22 @@ def test_validation_defaults_to_simulated_data_clock(
         validate_breakdown(weighted_engine, "orders", "country")
 
 
+@pytest.mark.parametrize(
+    "source", ["missing_hourly", "main.clock_hourly", "memory.main.clock_hourly"]
+)
+def test_global_clock_resolves_only_existing_sources(
+    weighted_engine: MetricEngine, source: str
+) -> None:
+    con = weighted_engine._con
+    con.execute("CREATE TABLE clock_hourly (ts TIMESTAMPTZ)")
+    con.execute("INSERT INTO clock_hourly VALUES ('2020-01-01')")
+    registry = weighted_engine._registry
+    registry.source_tables["aov"] = (source,)
+    result = validate_breakdown(weighted_engine, "orders", "country")
+    assert result.passed
+    assert result.evidence["n"] == 1
+
+
 def test_daily_metric_default_window_uses_hourly_clock(
     weighted_engine: MetricEngine,
 ) -> None:
