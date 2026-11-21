@@ -564,7 +564,7 @@ async def test_data_issue_requires_stale_entry_window(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cause_mode", ["root", "measured", "trigger", "none"])
+@pytest.mark.parametrize("cause_mode", ["root", "measured", "trigger", "none", "pending"])
 async def test_downstream_symptoms(
     world: duckdb.DuckDBPyConnection,
     monkeypatch: pytest.MonkeyPatch,
@@ -595,6 +595,8 @@ async def test_downstream_symptoms(
                 created_by="seed",
             )
         )
+    if cause_mode == "pending":
+        registry.get("search_ctr").status = "pending"
     answer = submission(hypothesis(), "HYPOTHESIS")
     if cause_mode == "measured":
         answer.root_cause.first_change_ts = None

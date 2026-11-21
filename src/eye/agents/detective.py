@@ -322,9 +322,17 @@ class Detective:
                 and edge.status != "rejected"
             } - names
             names |= frontier
-        candidates = (names - {cause.root_node}) & self._registry.metrics.keys()
+        candidates = {
+            node
+            for node in (names - {cause.root_node}) & self._registry.metrics.keys()
+            if self._registry.get(node).status == "active"
+        }
         measured = set(candidates)
-        if cause.first_change_ts is None and cause.root_node in self._registry.metrics:
+        if (
+            cause.first_change_ts is None
+            and cause.root_node in self._registry.metrics
+            and self._registry.get(cause.root_node).status == "active"
+        ):
             measured.add(cause.root_node)
         changes = self._first_changes(anomaly, window, measured)
         cause_ts = cause.first_change_ts or changes.get(cause.root_node)
