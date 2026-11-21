@@ -31,6 +31,7 @@ from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable, RunCallLimitExceeded
 
 HOUR = timedelta(hours=1)
+_REINVESTIGATION_COOLDOWN = 2 * HOUR
 log = logging.getLogger(__name__)
 type StepSink = Callable[[TrailStep], Awaitable[None]]
 type Investigate = Callable[[Anomaly, StepSink], Awaitable[InvestigationResult]]
@@ -440,12 +441,40 @@ class Orchestrator:
         ):
             item = self.incidents.match(decision)
             if item is not None:
-                self.emit("incident_upserted", item)
-                if (
+                fresh = (
                     item.status == "investigating"
                     and item.entry.id == decision.anomaly.id
                     and item.occurrences == 1
+                )
+                related = [
+                    other
+                    for id_ in item.related_incident_ids
+                    if (other := self.incidents.get(id_)) is not None
+                ]
+                last_investigated = max(
+                    [item.entry.ts, *(other.entry.ts for other in related)]
+                )
+                if (
+                    item.status in {"open", "persisting"}
+                    and decision.anomaly.ts - last_investigated
+                    >= _REINVESTIGATION_COOLDOWN
+                    and not any(other.status == "investigating" for other in related)
                 ):
+                    if item.root_cause is not None or item.verdict != "HYPOTHESIS":
+                        previous = item
+                        item = self.incidents._new(decision.anomaly)
+                        item.related_incident_ids.append(previous.id)
+                        previous.related_incident_ids.append(item.id)
+                        self.incidents._save(previous)
+                    # Reserve before dispatch so other matching candidates only attach.
+                    item.status = "investigating"
+                    item.entry = decision.anomaly
+                    item.normal_ticks = 0
+                    item.investigation_ids.append(f"inv_{uuid4().hex}")
+                    self.incidents._save(item)
+                    fresh = True
+                self.emit("incident_upserted", item)
+                if fresh:
                     self._pending.append(item)
 
     def _dispatch(self) -> None:

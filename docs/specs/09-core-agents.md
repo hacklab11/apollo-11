@@ -121,6 +121,25 @@ For a Sentinel decision `investigate`:
 2. Graph: candidate metric is downstream of an open incident's `root_node` and segments overlap → attach.
 3. Else start an investigation; create an incident with status `investigating`.
 
+An explicit `investigate` decision that matches an `open` or `persisting` incident
+requests fresh analysis, even if its previous root was confirmed. The orchestrator
+reuses a root-less `HYPOTHESIS` incident in place; otherwise it opens a linked incident
+so an innocent new change cannot erase the earlier diagnosis or historical exclusions.
+Reserve the target as `investigating` before queueing, with the new anomaly as entry
+and a fresh investigation id. Allow this at most once per two simulated hours,
+measured from the latest entry of the matched incident and its linked incidents
+(including innocent followups). Prefer matching queued/running investigations, then
+the most recent entry; never start a followup while a linked investigation is running.
+Matches inside the cooldown only attach. This bounds repeated decisions for a
+persisting cause without permanently suppressing a new cause. Interrupted investigations
+resume their id. In-place reinvestigations continue accumulating hourly impact while
+pending, without running resolution transitions until the investigation completes.
+Incidents sharing the same entry metric and segment share one hourly impact: the
+latest completed active investigation owns the rate (or the latest pending one if
+none has completed). Older incidents retain accumulated totals and historical
+exclusions, but expose zero current EUR/h. An innocent followup leaves ownership
+with the earlier active incident. Ownership handoffs cannot charge a tick twice.
+
 ### 5.3 Upsert (after an investigation)
 
 - Fill the incident from `InvestigationResult`; set final fingerprint.

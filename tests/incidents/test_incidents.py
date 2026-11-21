@@ -74,6 +74,43 @@ def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
     assert store.excluded_hours(make_incident_s7().entry.ts) == set()
 
 
+@pytest.mark.asyncio
+async def test_upsert_new_investigation_replaces_existing_incident_findings(store):
+    async def narrative(result):
+        return result.entry.metric, result.summary
+
+    store.reporter = narrative
+    first = result("inv_coupon")
+    incident = await store.upsert(first)
+    replacement = result("inv_price", hours=8)
+    replacement.summary = "New price cause"
+    replacement.root_cause = replacement.root_cause.model_copy(
+        update={"cause_type": "price_change", "first_change_ts": replacement.entry.ts}
+    )
+    matched = store.match(
+        SentinelDecision(
+            anomaly=replacement.entry,
+            action="investigate",
+            reason="New cause",
+        )
+    )
+    assert matched.id == incident.id
+    assert matched.entry == first.entry
+    matched.status = "investigating"
+    matched.entry = replacement.entry
+    matched.investigation_ids.append(replacement.investigation_id)
+    store._save(matched)
+    updated = await store.upsert(replacement)
+    assert updated.id == incident.id
+    assert len(store.all()) == 1
+    assert updated.entry == replacement.entry
+    assert updated.root_cause == replacement.root_cause
+    assert "New price cause" in updated.summary
+    assert updated.updated_ts == replacement.entry.ts
+    assert updated.opened_ts == incident.opened_ts
+    assert updated.investigation_ids == ["inv_coupon", "inv_price"]
+
+
 @pytest.mark.parametrize("chain", [False, True])
 def test_merged_incident_exclusion_ends_at_survivor_resolution(
     store: IncidentStore, chain: bool
