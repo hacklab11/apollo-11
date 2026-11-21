@@ -8,6 +8,8 @@ Eye of the System watches a simulated marketplace without waiting for a human to
 
 *Browser screenshot of [mock mode](web/README.md), with fixture data rather than live results.*
 
+[Live API preview after injecting I1 and S7](docs/assets/observatory-live.png): the chart uses simulated orders from Core, with live UI wiring previewed from T22. This partial run did not include LLM verdicts or specialist responses.
+
 ## Run it
 
 ### UI preview (no credentials)
