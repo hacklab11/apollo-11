@@ -26,7 +26,7 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
    ```
 3. **Parallel sessions:** each developer runs 2–3 Devin sessions at the same time, only for cards whose dependencies are merged (§4).
 4. **Review:** the lane owner reviews each PR within 20 minutes: run the "Done when" commands locally, read the diff for scope, merge with squash. A PR that touches files outside its card goes back to Devin with one sentence.
-5. **Conflicts:** `contracts.py`, `pyproject.toml`, `config/settings.yaml` change only in T00. If a later task needs a contract change, the developer makes it by hand on `main` first, then tells running sessions to rebase.
+5. **Conflicts:** `contracts.py`, `pyproject.toml`, `config/settings.yaml` change only in T00. If a later task needs a contract change, the developer makes it by hand on `main` first, then tells running sessions to rebase. This includes adding `S8` and `I3` to `ScenarioId` before T27.
 6. **Live LLM runs:** Devin sessions run unit and replay tests only. Live evals run on a developer laptop at the checkpoints (they cost money and need the shared key).
 
 ## 3. Timeline
@@ -53,7 +53,7 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
 T00 ─┬─ T01 ─┬─ T02 ─┬─ T05
      │       │       └─ T17
      │       ├─ T03
-     │       ├─ T04 (needs T02, T03) ─── T27 (S8, live demo)
+     │       ├─ T04 (needs T02, T03) ─── T27 (S8/I3, live demo)
      │       ├─ T06 ─┬─ T07 ─┬─ T13 (needs T11, T12)
      │       │       │       └─ T14 (needs T08, T11, T15, T16)
      │       │       ├─ T08 ─── T09 ─── T10 (needs T11)
@@ -96,7 +96,7 @@ uv run python scripts/eval_scenarios.py --scenario D6 --mode live
 7. S6 emergent from seller rules → S6 as scripted curves with the same timeline.
 8. Codespaces backup (keep the laptop + tunnel).
 
-Never cut: S8 and run D6 (the live demo), S1–S5, S7, I1, S6 in some form, `add_metric`, SellerOS over A2A, the MCP server, the trail in the UI.
+Never cut: S8, I3 and run D6 (the live demo), S1–S5, S7, I1, S6 in some form, `add_metric`, SellerOS over A2A, the MCP server, the trail in the UI.
 
 ## 7. Risks
 

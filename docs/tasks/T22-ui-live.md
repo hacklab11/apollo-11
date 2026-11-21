@@ -15,7 +15,7 @@ The same UI on the real API and SSE stream.
 1. Live mode is the default; `?mock=1` keeps working.
 2. Fetch functions call the real endpoints; `EventSource('/api/events')` with reconnect.
 3. Event handling from 13 §3.4.
-4. Scenario buttons call inject/clear; clock controls call pause/resume/step.
+4. Scenario buttons (S1..S8, I1..I3) call inject/clear; clock controls call pause/resume/step.
 5. Error states: API down → banner "core not reachable"; empty incidents → "No open incidents. The system is watching N metrics."
 
 ## Done when (checklist in the PR, with screenshots)

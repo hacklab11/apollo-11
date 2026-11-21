@@ -13,7 +13,7 @@ Inject and clear each scenario with its change-log rows, effects, and decoys, so
 
 ## Steps
 1. `ScenarioManager` with `inject(id, at_ts=None)`, `clear(id)`, `active()`, `timeline()` (for the orchestrator), writing `scenario_log`.
-2. Implement each scenario through the hooks from T01–T03 only (no special cases inside demand/market code): S1, S2 (with backdated release and PO history rewrite), S3, S4, S5, S7, I1, I2 (with the 6 h backfill). Make the I2 late-partition hook take countries, loaded share and backfill delay as parameters: S8 (T27) reuses it with both countries, share 0.6 and a 1 h backfill.
+2. Implement each scenario through the hooks from T01–T03 only (no special cases inside demand/market code): S1, S2 (with backdated release and PO history rewrite), S3, S4, S5, S7, I1, I2 (with the 6 h backfill). Make the I2 late-partition hook take countries, loaded share and backfill delay as parameters: S8 (T27) reuses it with both countries, share 0.5 and a 1 h backfill.
 3. Each scenario's decoys from the bible.
 4. Parameters in `config/scenarios.yaml` with a comment per value.
 5. `eye-sim generate --play` now works for these ids.
@@ -35,4 +35,4 @@ One test per scenario, checking the data signature after 3–6 h (no LLM):
 - `clear()` returns metrics to baseline within 3 h (except lagged effects).
 
 ## Out of scope
-S6 (T05). S8 (T27).
+S6 (T05). S8 and I3 (T27).

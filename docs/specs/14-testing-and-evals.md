@@ -22,6 +22,8 @@ uv run python scripts/eval_scenarios.py --all --mode replay
 
 ## 2. Scenario oracle (`tests/oracle/scenarios.yaml`, T23)
 
+Include I3 alone (`INNOCENT`, no alert; `must_mention`: `coupon-day-electronics`, `planned`) and D6 (`I3@0,S8@10`, add `fee_per_order` while open, clear S8 after SellerOS ack, resolved after 3 normal ticks).
+
 Written by P3 from `04-scenarios.md`, one entry per scenario and per combined run (D1–D6):
 
 ```yaml
