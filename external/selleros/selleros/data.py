@@ -142,7 +142,7 @@ class Store:
                 intents = [
                     intent
                     for sku in seller.skus
-                    if sku.sku in alert.skus
+                    if (not alert.skus or sku.sku in alert.skus)
                     and (intent := price_intent(seller, sku)) is not None
                     and intent.verdict == "likely_error"
                     and (intent.seller_id, intent.sku, intent.ts, intent.new)

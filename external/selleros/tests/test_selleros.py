@@ -276,11 +276,46 @@ async def test_revert_manual_price_alert(s8_store: Store) -> None:
     assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
 
 
+@pytest.mark.asyncio
+async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
+    s8_store: Store,
+) -> None:
+    alert = SellerAlert(
+        incident_id="s8",
+        seller_ids=["S-14"],
+        skus=[],
+        summary="manual pricing error",
+        recommended_action="revert manual price",
+    )
+    result = await rpc(s8_store, alert.model_dump())
+    task = result["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    ack = task["artifacts"][0]["parts"][0]["data"]
+    assert ack == {
+        "received": True,
+        "actions_taken": ["reverted manual price for S-14 on E02, E04, H01"],
+    }
+    assert s8_store.paused == set()
+    assert {key[:2] for key in s8_store.reverted} == {
+        ("S-14", "E02"),
+        ("S-14", "E04"),
+        ("S-14", "H01"),
+    }
+    records = [
+        json.loads(line)
+        for line in (s8_store.directory / "actions.jsonl").read_text().splitlines()
+    ]
+    assert len(records) == 1
+    assert records[0]["seller_id"] == "S-14"
+    assert records[0]["skus"] == ["E02", "E04", "H01"]
+    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
+
+
 @pytest.mark.parametrize(
     ("seller_ids", "skus"),
     [
         ([], ["E02"]),
-        (["S-14"], []),
+        (["S-03", "S-07"], []),
         (["S-03", "S-07"], ["E02"]),
         (["S-14"], ["E05", "E06"]),
         (["S-55"], ["E02"]),
