@@ -4,8 +4,11 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import time
 from collections import deque
+from email.utils import parsedate_to_datetime
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +25,52 @@ class BudgetExceeded(Exception):
 
 class LLMUnavailable(AnthropicError):
     """The provider could not complete the request."""
+
+
+_MAX_RETRY_DELAY = 60.0
+
+
+def _retry_delay(response: httpx.Response, fallback: float) -> float:
+    retry = response.headers.get("Retry-After")
+    reset = response.headers.get("X-RateLimit-Reset")
+    try:
+        if retry is not None:
+            try:
+                delay = float(retry)
+            except ValueError:
+                delay = parsedate_to_datetime(retry).timestamp() - time.time()
+        elif reset is not None:
+            stamp = float(reset)
+            delay = (stamp / 1000 if stamp > 1e12 else stamp) - time.time()
+        else:
+            return fallback
+        if isfinite(delay):
+            return min(_MAX_RETRY_DELAY, max(0.0, delay))
+    except (ValueError, TypeError, OverflowError):
+        pass
+    return fallback
+
+
+def _provider_detail(error: Any, key: str) -> str:
+    parts = []
+    if isinstance(error, dict):
+        parts.append(str(error.get("message", "")))
+        metadata = error.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("raw"):
+            raw = metadata["raw"]
+            try:
+                raw = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                pass
+            if isinstance(raw, dict):
+                nested = raw.get("error", raw)
+                raw = nested.get("message", "") if isinstance(nested, dict) else nested
+            parts.append(str(raw))
+    elif isinstance(error, str):
+        parts.append(error)
+    detail = " ".join(" ".join(parts).split()).replace(key, "[REDACTED]")
+    detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [REDACTED]", detail)
+    return detail[:300]
 
 
 def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
@@ -158,6 +207,8 @@ class LLMClient:
         self._calls: deque[float] = deque()
         self.tokens_in = 0
         self.tokens_out = 0
+        self._cooldown_until = 0.0
+        self._cooldown_reason = ""
 
     async def _openai_create(self, request: dict[str, Any]) -> BetaMessage:
         key = os.environ.get(self.settings.api_key_env)
@@ -175,6 +226,7 @@ class LLMClient:
         self, client: httpx.AsyncClient, key: str, payload: dict[str, Any]
     ) -> BetaMessage:
         for attempt in range(3):
+            delay = 0.1 * (2**attempt)
             try:
                 response = await client.post(
                     self.settings.base_url.rstrip("/") + "/chat/completions",
@@ -187,9 +239,14 @@ class LLMClient:
                         "Chat Completions connection failed after retries"
                     ) from None
             else:
-                if response.status_code < 400:
+                try:
+                    raw = response.json()
+                except ValueError:
+                    raw = None
+                error = raw.get("error") if isinstance(raw, dict) else None
+                if response.status_code < 400 and error is None:
                     try:
-                        return _chat_response(response.json(), payload["model"])
+                        return _chat_response(raw, payload["model"])
                     except (
                         ValueError,
                         KeyError,
@@ -200,15 +257,31 @@ class LLMClient:
                         raise LLMUnavailable(
                             "Invalid Chat Completions response"
                         ) from None
-                if response.status_code != 429 and response.status_code < 500:
-                    raise LLMUnavailable(
-                        f"Chat Completions HTTP {response.status_code}"
-                    )
+                status = response.status_code
+                message = f"Chat Completions HTTP {status}"
+                if status < 400:
+                    try:
+                        status = (
+                            int(error.get("code", 502))
+                            if isinstance(error, dict)
+                            else 502
+                        )
+                    except (ValueError, TypeError):
+                        status = 502
+                    message += f" (provider {status})"
+                if detail := _provider_detail(error if error is not None else raw, key):
+                    message += ": " + detail
+                if status != 429 and status < 500:
+                    raise LLMUnavailable(message)
+                delay = _retry_delay(response, delay)
                 if attempt == 2:
-                    raise LLMUnavailable(
-                        f"Chat Completions HTTP {response.status_code} after retries"
-                    )
-            await asyncio.sleep(0.1 * (2**attempt))
+                    if status == 429:
+                        self._cooldown_until = time.monotonic() + _retry_delay(
+                            response, _MAX_RETRY_DELAY
+                        )
+                        self._cooldown_reason = message
+                    raise LLMUnavailable(message + " after retries")
+            await asyncio.sleep(delay)
         raise AssertionError("retry loop exhausted")
 
     def status(self) -> dict[str, int | bool]:
@@ -252,6 +325,13 @@ class LLMClient:
             if response is None:
                 print(json.dumps({"event": "replay_miss", "key": key}))
         if response is None:
+            if self.settings.provider == "openai_compatible":
+                remaining = self._cooldown_until - time.monotonic()
+                if remaining > 0:
+                    raise LLMUnavailable(
+                        f"Chat Completions rate-limit cooldown ({remaining:.0f}s remaining): "
+                        + self._cooldown_reason
+                    )
             if self.status()["budget_paused"]:
                 raise BudgetExceeded("hourly call budget exhausted")
             self._calls.append(time.monotonic())

@@ -220,8 +220,8 @@ async def run_agent(
                     "fallbacks": "default",
                 }
             )
-        except LLMUnavailable:
-            await emit("note", "LLM unavailable after provider retries")
+        except LLMUnavailable as exc:
+            await emit("note", f"LLM unavailable after provider retries: {exc}")
             raise
         except AnthropicError as exc:
             await emit("note", "LLM unavailable after SDK retries")

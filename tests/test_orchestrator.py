@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,7 +19,7 @@ from eye.contracts import (
     SentinelDecision,
 )
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient
+from eye.llm.client import LLMClient, LLMUnavailable
 from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator, StepSink
 
@@ -125,6 +126,45 @@ class Sentinel:
         ]
         self.count = 0
         return decisions
+
+
+@pytest.mark.asyncio
+async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
+    settings = Settings(sim={"autostart": False})
+    seen = []
+
+    class UnavailableSentinel:
+        async def run(self, ts, **kwargs):
+            seen.append(ts)
+            raise LLMUnavailable("Chat Completions HTTP 429: Free model quota exceeded")
+
+    store = IncidentStore(":memory:")
+    core = Orchestrator(
+        settings,
+        Clock(settings.sim.start_ts),
+        UnavailableSentinel(),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+    )
+    try:
+        await core.step_once()
+        await core.step_once()
+        assert seen == [settings.sim.start_ts, settings.sim.start_ts + HOUR]
+        assert store.all() == []
+        failures = [
+            json.loads(record.message)
+            for record in caplog.records
+            if '"event": "sentinel_failed"' in record.message
+        ]
+        assert len(failures) == 2
+        assert all(
+            "HTTP 429: Free model quota exceeded" in failure["detail"]
+            for failure in failures
+        )
+    finally:
+        await core.close()
+        store.close()
 
 
 @pytest.mark.asyncio
