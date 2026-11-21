@@ -94,7 +94,8 @@ async def prepare(client: httpx.AsyncClient, status: Status) -> None:
     midnight = next_hour.replace(hour=0, minute=0, second=0, microsecond=0)
     if status.tick > 9 or next_hour != midnight + status.tick * HOUR:
         raise RuntimeError(
-            "start with a fresh, paused world at midnight or I3 active by 09:00"
+            "start with a fresh, paused world at midnight or I3 active by 09:00; "
+            "stop services, run `uv run python scripts/demo_reset.py`, then restart"
         )
     if not active and status.tick == 0:
         await inject_scenario(client, "I3")
