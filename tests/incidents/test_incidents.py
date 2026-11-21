@@ -121,6 +121,30 @@ def test_broken_merge_chain_excludes_conservatively(
     }
 
 
+@pytest.mark.parametrize("chain", [False, True])
+def test_innocent_survivor_excludes_no_cluster_hours(
+    store: IncidentStore, chain: bool
+) -> None:
+    child = make_incident_s7()
+    start = child.entry.ts.replace(minute=0, second=0, microsecond=0)
+    child.opened_ts = child.entry.ts = start
+    child.status = "open"
+    child.resolved_ts = None
+    child.merged_into = "inc_survivor"
+    survivor = child.model_copy(deep=True)
+    survivor.id = "inc_survivor"
+    survivor.status = "innocent"
+    survivor.merged_into = None
+    if chain:
+        middle = child.model_copy(deep=True)
+        middle.id = "inc_middle"
+        store._save(middle)
+        child.merged_into = middle.id
+    store._save(child)
+    store._save(survivor)
+    assert store.excluded_hours(start + timedelta(hours=10)) == set()
+
+
 @pytest.mark.asyncio
 async def test_exclusions_keep_original_start_after_upsert_and_merge(
     store: IncidentStore,

@@ -98,6 +98,8 @@ class IncidentStore:
                 visited.add(target)
                 survivor = incidents[target]
             else:
+                if survivor.status == "innocent":
+                    continue
                 end = min(survivor.resolved_ts or until, until)
             while hour < end:
                 hours.add(hour)
