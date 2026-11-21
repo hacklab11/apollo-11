@@ -26,7 +26,7 @@ class SKU(BaseModel):
     stock_policy_days: int
     supplier_eta_days: int
     category: str | None = None
-    repricer: dict[str, Any] | None = None
+    repricer: Repricer | None = None
 
 
 class Price(BaseModel):
@@ -41,6 +41,13 @@ class Seller(BaseModel):
     repricer: Repricer
     skus: list[SKU]
     price_history: list[Price]
+
+    def repricer_for(self, sku: SKU) -> Repricer:
+        if sku.repricer is None:
+            return self.repricer
+        return self.repricer.model_copy(
+            update=sku.repricer.model_dump(exclude_unset=True)
+        )
 
 
 class Snapshot(BaseModel):
@@ -61,7 +68,7 @@ class ToolOutput(BaseModel):
 class Store:
     def __init__(self, directory: Path = DATA_DIR) -> None:
         self.directory = directory
-        self.paused: set[str] = set()
+        self.paused: set[tuple[str, str]] = set()
         self.lock = threading.Lock()
 
     def read(self) -> Snapshot:
@@ -74,12 +81,19 @@ class Store:
         with self.lock:
             for seller in snapshot.sellers:
                 if (
-                    seller.customer_of_selleros
-                    and seller.seller_id in alert.seller_ids
-                    and seller.repricer.floor is None
-                    and seller.seller_id not in self.paused
+                    not seller.customer_of_selleros
+                    or seller.seller_id not in alert.seller_ids
                 ):
-                    action = f"paused repricer for {seller.seller_id}"
+                    continue
+                for sku in seller.skus:
+                    key = (seller.seller_id, sku.sku)
+                    if (
+                        (alert.skus and sku.sku not in alert.skus)
+                        or seller.repricer_for(sku).floor is not None
+                        or key in self.paused
+                    ):
+                        continue
+                    action = f"paused repricer for {seller.seller_id} on {sku.sku}"
                     with (self.directory / "actions.jsonl").open(
                         "a", encoding="utf-8"
                     ) as log:
@@ -88,13 +102,14 @@ class Store:
                                 {
                                     "incident_id": alert.incident_id,
                                     "seller_id": seller.seller_id,
+                                    "sku": sku.sku,
                                     "status": "paused",
                                     "action": action,
                                 }
                             )
                             + "\n"
                         )
-                    self.paused.add(seller.seller_id)
+                    self.paused.add(key)
                     actions.append(action)
         return SellerAlertAck(received=True, actions_taken=actions)
 
@@ -142,15 +157,18 @@ class ScopedData:
             )
             base = {"seller_id": seller.seller_id}
             if name == "get_repricer":
-                rows.append(
-                    base
-                    | seller.repricer.model_dump()
-                    | {
-                        "status": "paused"
-                        if seller.seller_id in self.store.paused
-                        else seller.repricer.status,
-                    }
-                )
+                for sku in skus:
+                    repricer = seller.repricer_for(sku)
+                    rows.append(
+                        base
+                        | {"sku": sku.sku}
+                        | repricer.model_dump()
+                        | {
+                            "status": "paused"
+                            if (seller.seller_id, sku.sku) in self.store.paused
+                            else repricer.status,
+                        }
+                    )
             elif name == "get_price_history":
                 recent = [
                     p.model_dump(mode="json")

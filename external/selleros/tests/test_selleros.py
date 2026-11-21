@@ -15,7 +15,7 @@ import pytest
 from anthropic import AsyncAnthropic
 from selleros.agent import answer
 from selleros.client import LLMClient, LlmSettings, configure_client
-from selleros.data import ScopedData, Selection, Store
+from selleros.data import SKU, Repricer, ScopedData, Selection, Store
 from selleros.models import SellerAlert, SpecialistRequest
 from selleros.server import SKILLS, create_app
 
@@ -182,7 +182,7 @@ async def test_alert(store: Store) -> None:
     payload = SellerAlert(
         incident_id="incident",
         seller_ids=["S-03", "S-14", "S-99", "missing"],
-        skus=["H01"],
+        skus=["E02", "H01"],
         summary="below cost",
         recommended_action="pause",
     ).model_dump()
@@ -190,8 +190,11 @@ async def test_alert(store: Store) -> None:
     task = result["result"]["task"]
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
     ack = task["artifacts"][0]["parts"][0]["data"]
-    assert ack == {"received": True, "actions_taken": ["paused repricer for S-03"]}
-    assert store.paused == {"S-03"}
+    assert ack == {
+        "received": True,
+        "actions_taken": ["paused repricer for S-03 on E02"],
+    }
+    assert store.paused == {("S-03", "E02")}
     assert len((store.directory / "actions.jsonl").read_text().splitlines()) == 1
     await rpc(store, payload)
     assert len((store.directory / "actions.jsonl").read_text().splitlines()) == 1
@@ -205,7 +208,9 @@ async def test_question_cannot_pause(store: Store) -> None:
     install_mock(
         [
             message("pause_repricer", {"seller_ids": ["S-03"], "skus": []}),
-            message("submit", {"agent": "selleros", "answered": False, "findings": []}, 1),
+            message(
+                "submit", {"agent": "selleros", "answered": False, "findings": []}, 1
+            ),
         ],
         seen,
     )
@@ -270,6 +275,59 @@ def test_data_scope_history_eta_and_reread(store: Store) -> None:
     content["sellers"][0]["repricer"]["floor"] = 80
     (store.directory / "sellers.json").write_text(json.dumps(content))
     assert store.read().sellers[0].repricer.floor == 80
+
+
+def test_per_sku_repricers_and_alerts(store: Store) -> None:
+    snapshot = store.read()
+    seller = snapshot.sellers[0]
+    seller.skus[0].repricer = Repricer(mode="beat", floor=None)
+    seller.skus.append(
+        SKU(
+            sku="H01",
+            unit_cost=50,
+            stock_policy_days=3,
+            supplier_eta_days=2,
+            repricer=Repricer(mode="match", floor=100),
+        )
+    )
+    protected_seller = snapshot.sellers[3]
+    protected_seller.skus[0].repricer = Repricer(mode="beat", floor=None)
+    data = ScopedData(store, snapshot, Selection(seller_ids=["S-03", "S-14"]), AS_OF)
+    selected = data.query(
+        "get_repricer", Selection(seller_ids=["S-03"], skus=["H01"])
+    ).rows
+    assert len(selected) == 1
+    assert selected[0]["sku"] == "H01"
+    assert selected[0]["mode"] == "match"
+    assert selected[0]["floor"] == 100
+    assert data.query("get_repricer", Selection(skus=["unknown"])).rows == []
+    alert = SellerAlert(
+        incident_id="per-sku",
+        seller_ids=["S-03", "S-14"],
+        skus=["H01"],
+        summary="pause affected repricers",
+        recommended_action="pause",
+    )
+    ack = store.pause(snapshot, alert)
+    assert ack.actions_taken == ["paused repricer for S-14 on H01"]
+    assert store.paused == {("S-14", "H01")}
+    alert.skus = []
+    assert store.pause(snapshot, alert).actions_taken == [
+        "paused repricer for S-03 on E02"
+    ]
+    assert store.pause(snapshot, alert).actions_taken == []
+    rows = data.query("get_repricer", Selection()).rows
+    statuses = {(r["seller_id"], r["sku"]): r["status"] for r in rows}
+    assert statuses == {
+        ("S-03", "E02"): "paused",
+        ("S-03", "H01"): "active",
+        ("S-14", "H01"): "paused",
+    }
+    records = [
+        json.loads(line)
+        for line in (store.directory / "actions.jsonl").read_text().splitlines()
+    ]
+    assert {(r["seller_id"], r["sku"]) for r in records} == store.paused
 
 
 @pytest.mark.asyncio
