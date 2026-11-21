@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import duckdb
+import httpx
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 
@@ -230,6 +231,63 @@ async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
     finally:
         await core.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_daily_quota_stops_sentinel_on_following_ticks(monkeypatch, caplog):
+    settings = Settings(sim={"autostart": False}, llm={"provider": "openai_compatible"})
+    monkeypatch.setenv(settings.llm.api_key_env, "offline-placeholder")
+    scans = []
+
+    def provider(request):
+        return httpx.Response(
+            429,
+            json={"error": {"message": "Rate limit exceeded: free-models-per-day."}},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+        llm = LLMClient(settings.llm, http_client=http)
+
+        class QuotaLimitedSentinel:
+            async def run(self, ts, **kwargs):
+                scans.append(ts)
+                await llm.create(
+                    {
+                        "model": "test",
+                        "max_tokens": 10,
+                        "system": [],
+                        "tools": [],
+                        "messages": [],
+                    }
+                )
+                return []
+
+        store = IncidentStore(":memory:")
+        core = Orchestrator(
+            settings,
+            Clock(settings.sim.start_ts),
+            QuotaLimitedSentinel(),
+            store,
+            llm,
+            lambda *_: 9,
+        )
+        try:
+            first = await core.step_once()
+            second = await core.step_once()
+            assert scans == [settings.sim.start_ts]
+            assert second.tick == 2
+            assert second.llm_stop_reason == first.llm_stop_reason
+            assert "Daily model request quota exhausted" in second.llm_stop_reason
+            assert (
+                sum(
+                    '"event": "llm_daily_quota_exhausted"' in r.message
+                    for r in caplog.records
+                )
+                == 1
+            )
+        finally:
+            await core.close()
+            store.close()
 
 
 @pytest.mark.asyncio

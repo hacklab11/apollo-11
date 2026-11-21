@@ -28,7 +28,7 @@ from eye.contracts import (
     TrailStep,
 )
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient, LLMUnavailable
+from eye.llm.client import LLMClient, LLMUnavailable, RunCallLimitExceeded
 
 HOUR = timedelta(hours=1)
 log = logging.getLogger(__name__)
@@ -91,6 +91,7 @@ class Status(BaseModel):
     agents: dict[str, AgentHealth]
     active_scenarios: list[ScenarioId]
     investigations_running: int
+    llm_stop_reason: str | None = None
 
 
 def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> None:
@@ -104,7 +105,7 @@ def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> No
                 "error": type(exc).__name__,
                 **(
                     {"detail": str(exc)[:500]}
-                    if isinstance(exc, LLMUnavailable)
+                    if isinstance(exc, (LLMUnavailable, RunCallLimitExceeded))
                     else {}
                 ),
             }
@@ -261,6 +262,7 @@ class Orchestrator:
 
     def status(self) -> Status:
         usage = self.llm.status()
+        llm_stop = self.llm.terminal_error()
         running = bool(self._clock and not self._clock.done())
         return Status(
             sim_ts=self.sim_ts,
@@ -281,6 +283,7 @@ class Orchestrator:
                 state.id for state in self.scenario_states() if state.active
             ],
             investigations_running=len(self._tasks),
+            llm_stop_reason=str(llm_stop) if llm_stop else None,
         )
 
     def scenario_states(self) -> list[ScenarioState]:
@@ -357,13 +360,16 @@ class Orchestrator:
             for previous, current in zip(before, self.scenario_states(), strict=True):
                 if previous != current:
                     self.emit("scenario_changed", current)
-            try:
-                decisions = await self.sentinel.run(
-                    ts, open_incidents=self._open_incidents(), on_step=self.record_step
-                )
-            except Exception as exc:  # noqa: BLE001 -- lifecycle must still run
-                _log_error("sentinel_failed", exc)
-                decisions = []
+            decisions = []
+            if self.llm.terminal_error() is None:
+                try:
+                    decisions = await self.sentinel.run(
+                        ts,
+                        open_incidents=self._open_incidents(),
+                        on_step=self.record_step,
+                    )
+                except Exception as exc:  # noqa: BLE001 -- lifecycle must still run
+                    _log_error("sentinel_failed", exc)
 
             for decision in decisions:
                 self.decisions.append(decision)

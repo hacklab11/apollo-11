@@ -27,6 +27,7 @@ from eye.llm.client import (
     BudgetExceeded,
     LLMClient,
     MissingProviderCredentials,
+    RunCallLimitExceeded,
     configure_client,
 )
 from eye.llm.runtime import AgentRefused
@@ -130,7 +131,7 @@ def _reporter(
             n += 1
             try:
                 response = await llm.create(request)
-            except AnthropicError as exc:
+            except (AnthropicError, RunCallLimitExceeded) as exc:
                 await orchestrator.record_step(
                     TrailStep(
                         id=f"stp_{uuid4().hex}",

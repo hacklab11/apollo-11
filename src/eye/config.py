@@ -118,6 +118,7 @@ class LlmSettings(_Section):
     effort: dict[str, Effort] = Field(default_factory=_DEFAULT_EFFORT.copy)
     max_tokens: int = Field(16000, ge=1024, le=64000)
     max_calls_per_hour: int = Field(600, ge=50, le=5000)
+    max_calls_per_run: int = Field(300, ge=1)
 
     @field_validator("models")
     @classmethod

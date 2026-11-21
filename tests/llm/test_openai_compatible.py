@@ -6,13 +6,20 @@ from dataclasses import replace
 import httpx
 import pytest
 from anthropic import AnthropicError
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from eye.config import LlmSettings
-from eye.llm.client import LLMClient, _chat_request, _chat_response, configure_client
-from eye.llm.runtime import AgentRefused, LLMUnavailable, run_agent
+from eye.contracts import SeriesPoint
+from eye.llm.client import (
+    LLMClient,
+    RunCallLimitExceeded,
+    _chat_request,
+    _chat_response,
+    configure_client,
+)
+from eye.llm.runtime import AgentRefused, LLMUnavailable, ToolSpec, run_agent
 
-from .test_runtime import discard, spec
+from .test_runtime import Input, discard, spec
 
 
 def completion(calls=None, *, finish="tool_calls", text=None):
@@ -72,6 +79,59 @@ async def test_final_submit_choice_reaches_chat_completions(transport):
         "type": "function",
         "function": {"name": "submit"},
     }
+
+
+@pytest.mark.asyncio
+async def test_compact_seed_context_and_series_on_wire_only(transport):
+    lags = [{"lag": i, "corr": i / 100, "n": 336 - i} for i in range(97)]
+    numbers = {
+        "best_lag": 96,
+        "corr": 0.96,
+        "n": 240,
+        "evidence": {"lags": lags, "scenario_hours": 0},
+    }
+    context = json.dumps({"seeds": [{"edge": {"lag_hours": 0}, "numbers": numbers}]})
+    points = [
+        SeriesPoint(ts=f"2026-11-{day:02}T00:00:00Z", value=day) for day in range(1, 29)
+    ]
+
+    class Samples(BaseModel):
+        summary: str = "28 points"
+        points: list[SeriesPoint]
+
+    _, requests = transport(
+        [completion([call("query_metric", '{"value":0}')]), final()]
+    )
+    trail = []
+
+    async def collect(step):
+        trail.append(step)
+
+    agent = replace(
+        spec(),
+        tools=[
+            ToolSpec("query_metric", "Query", Input, lambda _: Samples(points=points))
+        ],
+    )
+    await run_agent(agent, context, "inv", collect)
+    sent, notice = requests[0]["messages"][1]["content"].split("\n\n", 1)
+    compact = json.loads(sent)["seeds"][0]["numbers"]
+    assert compact["best_lag"] == numbers["best_lag"]
+    assert compact["evidence"] == {
+        "scenario_hours": 0,
+        "tested_lags": 97,
+        "strongest_at_proposed_lag_plus_minus_6h": lags[6],
+    }
+    assert notice.startswith("Runtime budget:")
+    result = json.loads(requests[1]["messages"][-2]["content"])
+    restored = [
+        dict(zip(result["point_fields"], row, strict=True)) for row in result["points"]
+    ]
+    saved = next(step.output for step in trail if step.tool == "query_metric")
+    assert restored == saved["points"]
+    assert len(requests[1]["messages"][-2]["content"]) < len(
+        Samples(points=points).model_dump_json()
+    )
 
 
 @pytest.fixture
@@ -318,6 +378,56 @@ async def test_cooldown_rejections_do_not_consume_hourly_budget(transport, monke
     assert (await run_agent(spec(), "go", "inv", discard)).value == 9
     assert len(requests) == 4
     assert client.status()["calls_per_hour"] == 50
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [200, 429])
+async def test_daily_rate_limit_stops_the_process(transport, monkeypatch, status):
+    clock = [100.0]
+    monkeypatch.setattr("eye.llm.client.time.monotonic", lambda: clock[0])
+    sleeps = []
+
+    async def sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    response = httpx.Response(
+        status,
+        headers={"Retry-After": "86400"},
+        json={
+            "error": {
+                "code": 429,
+                "message": "Provider returned an error",
+                "metadata": {"raw": "Rate limit exceeded: free-models-per-day."},
+            }
+        },
+    )
+    _, requests = transport([response] * 4)
+    for _ in range(2):
+        with pytest.raises(LLMUnavailable, match="Daily model request quota"):
+            await run_agent(spec(), "go", "inv", discard)
+        clock[0] += 3601
+    assert len(requests) == 1
+    assert not sleeps
+
+
+@pytest.mark.asyncio
+async def test_per_run_cap_includes_failed_requests_and_retries(transport, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("eye.llm.client.time.monotonic", lambda: clock[0])
+
+    async def sleep(delay):
+        clock[0] += delay
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    client, requests = transport([500, 503, final()], max_calls_per_run=2)
+    for _ in range(2):
+        with pytest.raises(RunCallLimitExceeded, match="2 provider requests"):
+            await run_agent(spec(), "go", "inv", discard)
+        clock[0] += 3601
+    assert len(requests) == 2
+    assert client.status()["budget_paused"]
+    assert client.status()["calls_per_hour"] == 0
 
 
 @pytest.mark.asyncio

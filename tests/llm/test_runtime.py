@@ -10,7 +10,12 @@ from jsonschema import Draft202012Validator
 from pydantic import BaseModel, Field
 
 from eye.config import LlmSettings
-from eye.llm.client import LLMClient, budget_status, configure_client
+from eye.llm.client import (
+    LLMClient,
+    RunCallLimitExceeded,
+    budget_status,
+    configure_client,
+)
 from eye.llm.runtime import (
     AgentRefused,
     AgentSpec,
@@ -124,6 +129,15 @@ async def test_anthropic_final_turn_keeps_auto_tool_choice(harness):
     assert len(requests) == 2
     assert all(request["tool_choice"] == {"type": "auto"} for request in requests)
     assert "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_per_run_cap_includes_anthropic_sdk_retries(harness):
+    client, requests = harness([500, final()], max_calls_per_run=1)
+    with pytest.raises(RunCallLimitExceeded, match="1 provider requests"):
+        await run_agent(spec(), "go", "inv", discard)
+    assert len(requests) == 1
+    assert client.status()["budget_paused"]
 
 
 @pytest.mark.asyncio
