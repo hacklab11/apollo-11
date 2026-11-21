@@ -1,7 +1,8 @@
 import os
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
 
@@ -230,6 +231,13 @@ async def scenario(
     )
     assert result.trigger is None or result.trigger in {h.id for h in result.hypotheses}
     assert len({e.group for e in root.evidence_for}) >= 2
+    cited_steps = {step.id: step for step in steps if step.actor == "detective"}
+    assert all(e.step_id in cited_steps for e in root.evidence_for)
+    assert any(
+        evidence.group == "change_log"
+        and cited_steps[evidence.step_id].tool == "list_events"
+        for evidence in root.evidence_for
+    )
     assert sum(row.share for row in result.contributions) == pytest.approx(1, abs=0.02)
     assert [step.n for step in steps] == list(range(1, len(steps) + 1))
     assert any(step.actor == "skeptic" for step in steps)
@@ -381,8 +389,64 @@ async def test_budget_preserves_current_board(
     )
     assert result.verdict == "HYPOTHESIS"
     assert result.stop_reason == "budget"
-    assert result.hypotheses == [
-        root.model_copy(update={"id": f"{result.investigation_id}:{root.id}"})
+    assert len(result.hypotheses) == 1
+    assert result.hypotheses[0].id == f"{result.investigation_id}:{root.id}"
+    assert result.hypotheses[0].statement == root.statement
+
+
+@pytest.mark.asyncio
+async def test_evidence_resolves_to_exact_call_not_latest_tool_name(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    async def run(
+        spec: AgentSpec,
+        _: str,
+        investigation_id: str,
+        emit: Callable[[TrailStep], Awaitable[None]],
+    ) -> _Submission:
+        events = next(tool for tool in spec.tools if tool.name == "list_events")
+        for i, actor in enumerate(("detective", "detective", "skeptic")):
+            args = events.input_model(planned=bool(i))
+            invocation = events.fn(args)
+            output = await invocation if isawaitable(invocation) else invocation
+            await emit(
+                TrailStep(
+                    id=f"call-{i}",
+                    investigation_id=investigation_id,
+                    n=i,
+                    real_ts=START,
+                    actor=actor,
+                    action="tool_call",
+                    tool="list_events",
+                    input=args.model_dump(),
+                    output=output.model_dump(),
+                    output_summary=output.summary,
+                )
+            )
+        root = hypothesis()
+        root.evidence_for = [
+            Evidence(
+                group="change_log",
+                source="list_events",
+                step_id=ref,
+                summary="The ranker release matched the change.",
+            )
+            for ref in ("ref-1", "ref-2", "list_events")
+        ]
+        return submission(root, "HYPOTHESIS")
+
+    monkeypatch.setattr("eye.agents.detective.run_agent", run)
+    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
+        anomaly("s3"), AsyncMock()
+    )
+    assert result.root_cause is not None
+    assert [e.step_id for e in result.root_cause.evidence_for] == [
+        "call-0",
+        "call-1",
+        "",
     ]
 
 

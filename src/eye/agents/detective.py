@@ -2,7 +2,10 @@
 
 import json
 from collections.abc import Awaitable, Callable, Iterable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from inspect import isawaitable
+from itertools import count
 from math import fsum
 from pathlib import Path
 from typing import Literal, cast
@@ -363,18 +366,33 @@ class Detective:
         visited = {anomaly.metric}
         trail_n = turns = 0
         evidence_steps: dict[str, str] = {}
+        references = count(1)
 
         async def emit(step: TrailStep) -> None:
             nonlocal trail_n, turns
             trail_n += 1
             turns += int(step.actor == "detective" and step.action == "llm_call")
             if (
-                step.tool
-                and step.action in {"tool_call", "a2a_call"}
+                step.actor == "detective"
+                and step.action == "tool_call"
                 and step.output is not None
             ):
-                evidence_steps[step.tool] = step.id
+                reference = step.output_summary.partition(": ")[0]
+                if reference.startswith("ref-"):
+                    evidence_steps[reference] = step.id
             await on_step(step.model_copy(update={"n": trail_n}))
+
+        def cite(tool: ToolSpec) -> ToolSpec:
+            async def invoke(args: BaseModel) -> BaseModel:
+                reference = f"ref-{next(references)}"
+                result = tool.fn(args)
+                output = await result if isawaitable(result) else result
+                summary = (
+                    f"{reference}: {output.model_dump(include={'summary'})['summary']}"
+                )
+                return output.model_copy(update={"summary": summary[:300]})
+
+            return replace(tool, fn=invoke)
 
         async def record(
             action: Literal["note", "a2a_call", "decision"],
@@ -604,6 +622,10 @@ class Detective:
             max_steps=self._settings.max_steps,
             max_tokens=self._llm.max_tokens,
         )
+        spec.tools = [
+            cite(tool) if tool.name != "update_hypotheses" else tool
+            for tool in spec.tools
+        ]
         graph = get_graph(_GraphInput())
         cards = await self._a2a.fetch_cards() if self._a2a is not None else {}
         active_incidents = [
@@ -680,6 +702,10 @@ class Detective:
                 "HYPOTHESIS": "error",
             }[answer.verdict]
 
+        for hypothesis in answer.hypotheses:
+            for evidence in [*hypothesis.evidence_for, *hypothesis.evidence_against]:
+                evidence.step_id = evidence_steps.get(evidence.step_id, "")
+
         if answer.trigger is not None:
             candidates = [h for h in answer.hypotheses if h.status != "refuted"]
             if not any(h.id == answer.trigger for h in candidates):
@@ -745,15 +771,6 @@ class Detective:
                         )
                     answer.trigger = trigger
 
-        for hypothesis in [*answer.hypotheses, answer.root_cause]:
-            if hypothesis:
-                for evidence in [
-                    *hypothesis.evidence_for,
-                    *hypothesis.evidence_against,
-                ]:
-                    key = evidence.step_id or evidence.source
-                    if key in evidence_steps:
-                        evidence.step_id = evidence_steps[key]
         answer.contributions = _contributions(answer.contributions, anomaly.delta)
         _publish_hypothesis_ids(
             answer,

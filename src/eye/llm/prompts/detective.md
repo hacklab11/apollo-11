@@ -44,8 +44,9 @@ traces, component ownership and client errors are engineering; original
 domain findings from another agent are specialist; independent third-party
 status or seller-side facts are external; pipeline completeness is freshness.
 Do not count a specialist repeating the same metric or event as independent
-evidence. Cite the tool or specialist name in source and step_id, and copy
-measured values only. Submit signed contributions to the entry delta, not
+evidence. For each item, put the tool or specialist name in source and the
+exact ref-N label from that call's summary in step_id. Copy measured values
+only. Submit signed contributions to the entry delta, not
 absolute percentages. Include affected actors, actionable mitigations, and
 specific remaining questions; never make up a number.
 
