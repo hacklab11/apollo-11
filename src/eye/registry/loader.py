@@ -104,6 +104,8 @@ def load_registry(
             name
             for catalog, schema, table in cur.execute(
                 "SELECT database_name, schema_name, table_name FROM duckdb_tables()"
+                " UNION ALL SELECT database_name, schema_name, view_name FROM duckdb_views()"
+                " WHERE NOT internal"
             ).fetchall()
             for name in (table, f"{schema}.{table}", f"{catalog}.{schema}.{table}")
         }
