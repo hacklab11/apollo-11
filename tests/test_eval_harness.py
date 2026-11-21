@@ -56,24 +56,26 @@ def test_recording_replaces_old_responses_without_touching_replay(
     assert "old response" not in path.read_text()
 
 
+@pytest.mark.parametrize("name", ["S8", "I3", "D6"])
+def test_story_scenarios_are_available_in_simulator(name: str) -> None:
+    entry = harness.load_oracle()[name]
+    assert {
+        command.rsplit("@", 1)[0] for command in entry["play"]
+    } <= harness._TITLES.keys()
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("name", ["S8", "D6"])
-async def test_unavailable_s8_fails_clearly(name: str) -> None:
-    result = await harness.run_scenario(name, harness.load_oracle()[name], object())
+async def test_unavailable_scenarios_fail_clearly() -> None:
+    entry = {**harness.load_oracle()["D6"], "play": ["X1@0", "X2@10"]}
+    result = await harness.run_scenario("D6", entry, object())
     assert result["checks"] == [
         {
             "check": "simulator_available",
             "passed": False,
-            "actual": "scenario S8 not available in the simulator; scenario I3 not available in the simulator",
+            "actual": "scenario X1 not available in the simulator; scenario X2 not available in the simulator",
         }
     ]
     assert result["llm_calls"] == 0
-
-
-@pytest.mark.asyncio
-async def test_unavailable_coupon_day_fails_clearly() -> None:
-    result = await harness.run_scenario("I3", harness.load_oracle()["I3"], object())
-    assert result["checks"][0]["actual"] == "scenario I3 not available in the simulator"
 
 
 def test_story_oracles() -> None:
