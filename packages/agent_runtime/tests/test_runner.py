@@ -2,6 +2,13 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models import check_allow_model_requests
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import DeferredToolResults
+
 from agent_runtime import (
     IDEMPOTENT_METADATA_KEY,
     Budget,
@@ -16,12 +23,6 @@ from agent_runtime import (
     model_chain,
     run_agent,
 )
-from pydantic_ai import Agent
-from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
-from pydantic_ai.models import check_allow_model_requests
-from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolResults
 
 from .conftest import Diagnosis, call, finish, scripted
 

@@ -1,6 +1,7 @@
 import pytest
-from agent_runtime import AgentResult
 from pydantic import ValidationError
+
+from agent_runtime import AgentResult
 
 
 def test_done_requires_result() -> None:

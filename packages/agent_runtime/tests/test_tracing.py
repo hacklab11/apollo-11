@@ -1,6 +1,7 @@
-from agent_runtime import extract_trace_context, inject_trace_context
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
+
+from agent_runtime import extract_trace_context, inject_trace_context
 
 provider = TracerProvider()
 tracer = provider.get_tracer("test")

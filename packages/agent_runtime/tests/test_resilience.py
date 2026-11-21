@@ -2,6 +2,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+
 from agent_runtime import (
     IDEMPOTENCY_KEY_HEADER,
     CircuitBreaker,
@@ -9,7 +11,6 @@ from agent_runtime import (
     RetryPolicy,
     resilient_client,
 )
-from opentelemetry.sdk.trace import TracerProvider
 
 FAST = RetryPolicy(attempts=3, initial_backoff_s=0, max_backoff_s=0)
 
