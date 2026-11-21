@@ -116,6 +116,17 @@ def harness(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_anthropic_final_turn_keeps_auto_tool_choice(harness):
+    _, requests = harness([response([tool("increment", {"value": 2})]), final()])
+    agent = replace(spec(), max_steps=2, force_submit_on_final_turn=True)
+    result = await run_agent(agent, "Calculate", "inv", discard)
+    assert result.value == 9
+    assert len(requests) == 2
+    assert all(request["tool_choice"] == {"type": "auto"} for request in requests)
+    assert "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
+
+
+@pytest.mark.asyncio
 async def test_parallel_tools_trail_and_request(harness):
     client, requests = harness(
         [

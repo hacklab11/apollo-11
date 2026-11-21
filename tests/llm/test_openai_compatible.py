@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 from dataclasses import replace
@@ -41,6 +42,36 @@ def call(name, arguments, id="t1"):
 
 def final():
     return completion([call("submit", '{"value":9,"summary":"Total 9"}')])
+
+
+def test_named_tool_choice_is_preserved():
+    request = {
+        "model": "test",
+        "max_tokens": 10,
+        "system": [{"text": "Submit"}],
+        "messages": [{"role": "user", "content": "Now"}],
+        "tools": [],
+        "tool_choice": {"type": "tool", "name": "submit"},
+    }
+    assert _chat_request(request)["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_final_submit_choice_reaches_chat_completions(transport):
+    _, requests = transport(
+        [completion(text="Still exploring", finish="stop"), final()]
+    )
+    agent = replace(spec(), max_steps=2, force_submit_on_final_turn=True)
+    result = await run_agent(agent, "Calculate", "inv", discard)
+    assert result.value == 9
+    assert requests[0]["tool_choice"] == "auto"
+    assert requests[-1]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit"},
+    }
 
 
 @pytest.fixture
@@ -263,6 +294,57 @@ async def test_key_read_at_call_time(transport, monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-placeholder")
     await run_agent(spec(), "go", "inv", discard)
     assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_submit_does_not_replay_auto_response(transport, tmp_path):
+    path = tmp_path / "cache.jsonl"
+    request = {
+        "model": "test-model",
+        "max_tokens": 10,
+        "system": [{"type": "text", "text": "Submit when done"}],
+        "messages": [{"role": "user", "content": "Investigate"}],
+        "tools": [
+            {
+                "name": "submit",
+                "description": "Final answer",
+                "input_schema": spec().submit_model.model_json_schema(),
+            }
+        ],
+        "tool_choice": {"type": "auto"},
+    }
+    client, _ = transport(
+        [completion(text="Still exploring", finish="stop")],
+        mode="record",
+        cache_path=path,
+    )
+    exploratory = await client.create(request)
+    legacy_identity = {
+        "model": request["model"],
+        "system": "Submit when done",
+        "messages": request["messages"],
+        "tools": ["submit"],
+        "provider": client.settings.provider,
+        "base_url": client.settings.base_url,
+    }
+    legacy_digest = json.dumps(legacy_identity, sort_keys=True, separators=(",", ":"))
+    assert (
+        json.loads(path.read_text())["key"]
+        == hashlib.sha256(legacy_digest.encode()).hexdigest()
+    )
+
+    client, requests = transport([final()], mode="replay", cache_path=path)
+    assert await client.create(request) == exploratory
+    assert not requests
+    forced = await client.create(
+        {**request, "tool_choice": {"type": "tool", "name": "submit"}}
+    )
+    assert [block.type for block in forced.content] == ["tool_use"]
+    assert len(requests) == 1
+    assert requests[0]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit"},
+    }
 
 
 @pytest.mark.asyncio

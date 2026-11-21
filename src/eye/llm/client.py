@@ -67,7 +67,11 @@ def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
         "model": request["model"],
         "max_tokens": request["max_tokens"],
         "messages": messages,
-        "tool_choice": "auto",
+        "tool_choice": (
+            {"type": "function", "function": {"name": request["tool_choice"]["name"]}}
+            if request.get("tool_choice", {}).get("type") == "tool"
+            else "auto"
+        ),
         "tools": [
             {
                 "type": "function",
@@ -219,6 +223,8 @@ class LLMClient:
         }
 
     async def create(self, request: dict[str, Any]) -> BetaMessage:
+        if self.settings.provider == "anthropic" and "tool_choice" in request:
+            request = {**request, "tool_choice": {"type": "auto"}}
         identity = {
             "model": request["model"],
             "system": "".join(b["text"] for b in request["system"]),
@@ -228,6 +234,9 @@ class LLMClient:
         if self.settings.provider != "anthropic":
             identity["provider"] = self.settings.provider
             identity["base_url"] = self.settings.base_url
+        tool_choice = request.get("tool_choice", {"type": "auto"})
+        if tool_choice["type"] != "auto":
+            identity["tool_choice"] = tool_choice
         digest = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         key = hashlib.sha256(digest.encode()).hexdigest()
         path = Path(self.settings.cache_path)
