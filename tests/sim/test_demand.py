@@ -36,9 +36,9 @@ def test_baseline_orders_and_traffic_seasonality(
     """).fetchone()
     assert 8 <= peak_to_trough <= 16
     hours = reader.execute("""
-        SELECT ts, sum(units) FROM orders_hourly GROUP BY ts ORDER BY ts LIMIT 168
+        SELECT ts, sum(units) FROM orders_hourly GROUP BY ts ORDER BY ts LIMIT 672
     """).fetchall()
-    assert len(hours) == 168
+    assert len(hours) == 672
     units = np.array([count for _, count in hours])
     season = np.array(
         [_HOUR_PROFILE[ts.hour] * _WEEKDAY_PROFILE[ts.weekday()] for ts, _ in hours]
@@ -48,7 +48,7 @@ def test_baseline_orders_and_traffic_seasonality(
     residuals = (units - expected) / np.sqrt(expected)
     centered = residuals - np.median(residuals)
     robust_z = centered / (1.4826 * np.median(np.abs(centered)))
-    # A single-week window at 99% allows only one outlier in 168 hours.
+    # Use 28 days at 98%; one week at 99% permits only one outlier in 168 hours.
     assert np.mean(np.abs(robust_z) <= 3) >= 0.98
 
 
