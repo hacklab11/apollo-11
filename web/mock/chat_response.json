@@ -1,0 +1,15 @@
+{
+  "answer": "**inc_s7:** Orders came in 40% below the Black Friday forecast after checkout-web v5.8 broke Place Order on web and Android. iOS was unaffected; roll back to v5.7.",
+  "tool_calls": [
+    {
+      "tool": "get_incident",
+      "input": {
+        "id": "inc_s7"
+      },
+      "summary": "€97,200 GMV lost per hour."
+    }
+  ],
+  "incident_ids": [
+    "inc_s7"
+  ]
+}

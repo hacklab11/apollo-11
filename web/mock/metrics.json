@@ -1,0 +1,197 @@
+[
+  {
+    "name": "orders",
+    "description": "Units ordered per hour.",
+    "unit": "count",
+    "domain": "orders",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "platform",
+      "category",
+      "seller_tier",
+      "channel"
+    ],
+    "higher_is_better": true,
+    "impact_weight": 1.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "sessions",
+    "description": "Marketplace sessions per hour.",
+    "unit": "count",
+    "domain": "traffic",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "platform"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "carts",
+    "description": "Carts started per hour.",
+    "unit": "count",
+    "domain": "orders",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "platform"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "cart_to_checkout_rate",
+    "description": "Share of carts that start checkout.",
+    "unit": "ratio",
+    "domain": "orders",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "platform"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "checkout_conversion",
+    "description": "Orders per cart.",
+    "unit": "ratio",
+    "domain": "orders",
+    "kind": "formula",
+    "expression": "orders / carts",
+    "dimensions": [
+      "country",
+      "platform"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "payment_success_rate",
+    "description": "Share of approved payment attempts.",
+    "unit": "ratio",
+    "domain": "quality",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "platform",
+      "psp"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "client_error_rate",
+    "description": "Client errors per session.",
+    "unit": "ratio",
+    "domain": "quality",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "platform"
+    ],
+    "higher_is_better": false,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "small_seller_gmv_share",
+    "description": "Share of GMV from small sellers.",
+    "unit": "ratio",
+    "domain": "marketplace",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "category"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "price_index_vs_1p",
+    "description": "Relative Buy Box price index versus 1P.",
+    "unit": "index",
+    "domain": "marketplace",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "category"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "buybox_share",
+    "description": "Share of Buy Box GMV by seller tier.",
+    "unit": "ratio",
+    "domain": "marketplace",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "category",
+      "seller_tier"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "in_stock_rate",
+    "description": "Share of offers in stock.",
+    "unit": "ratio",
+    "domain": "supply",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "category",
+      "seller_tier"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  },
+  {
+    "name": "avg_cpc",
+    "description": "Average advertising cost per click.",
+    "unit": "eur",
+    "domain": "ads",
+    "kind": "sql",
+    "expression": null,
+    "dimensions": [
+      "country",
+      "category",
+      "advertiser_id"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "seed",
+    "status": "active"
+  }
+]

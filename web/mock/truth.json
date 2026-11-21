@@ -1,0 +1,32 @@
+[
+  {
+    "id": "scn_i1",
+    "ts": "2026-11-27T00:00:00Z",
+    "scenario_id": "I1",
+    "action": "inject",
+    "params": {
+      "campaign_mult": 1.4
+    }
+  },
+  {
+    "id": "scn_s6",
+    "ts": "2026-11-27T00:00:00Z",
+    "scenario_id": "S6",
+    "action": "inject",
+    "params": {
+      "price_cut_pct": 15
+    }
+  },
+  {
+    "id": "scn_s7",
+    "ts": "2026-11-27T03:00:00Z",
+    "scenario_id": "S7",
+    "action": "inject",
+    "params": {
+      "checkout_ok": {
+        "web": 0.1,
+        "android": 0.1
+      }
+    }
+  }
+]

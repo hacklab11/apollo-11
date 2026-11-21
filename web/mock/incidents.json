@@ -1,0 +1,153 @@
+[
+  {
+    "id": "inc_s7",
+    "fingerprint": "release|cart_to_checkout_rate|platform=web",
+    "title": "Black Friday checkout release broke Place Order",
+    "status": "open",
+    "verdict": "CONFIRMED",
+    "opened_ts": "2026-11-27T03:00:00Z",
+    "updated_ts": "2026-11-27T03:00:00Z",
+    "resolved_ts": null,
+    "last_seen_ts": "2026-11-27T03:00:00Z",
+    "occurrences": 1,
+    "entry": {
+      "id": "anm_s7",
+      "ts": "2026-11-27T03:00:00Z",
+      "metric": "orders",
+      "segment": {},
+      "kind": "point",
+      "actual": 810.0,
+      "expected": 1350.0,
+      "z": -9.0,
+      "delta": -540.0,
+      "delta_pct": -0.4,
+      "window_hours": 1,
+      "total_z": null,
+      "share_now": null,
+      "share_expected": null,
+      "impact_eur_per_hour": 97200.0,
+      "completeness": 1.0,
+      "priority": 0.99
+    },
+    "summary": "Checkout-web v5.8 broke Place Order on web and Android; native iOS was unaffected. Orders fell 40% below the Black Friday forecast, costing €97,200 in GMV per hour. PSP-2's approval rate held steady, so its latency warning does not explain the drop.",
+    "impact_eur_per_hour": 97200.0,
+    "impact_eur_total": 97200.0,
+    "affected_actors": [
+      "web",
+      "android"
+    ],
+    "contributions": [
+      {
+        "factor": "cart_to_checkout_rate",
+        "kind": "rate",
+        "delta": -486.0,
+        "share": 0.9
+      },
+      {
+        "factor": "unexplained",
+        "kind": "residual",
+        "delta": -54.0,
+        "share": 0.1
+      }
+    ],
+    "root_cause": null,
+    "hypotheses": [],
+    "investigation_ids": [
+      "inv_s7"
+    ],
+    "open_questions": [
+      "How quickly will Android clients pick up the reverted bundle?"
+    ],
+    "suggested_actions": [
+      "Roll back checkout-web to v5.7 and verify web and Android checkout."
+    ],
+    "related_incident_ids": [],
+    "merged_into": null,
+    "notifications": [],
+    "normal_ticks": 0
+  },
+  {
+    "id": "inc_s6",
+    "fingerprint": "price_change|price_index_vs_1p|category=electronics",
+    "title": "Black Friday repricer loop squeezed small electronics sellers",
+    "status": "open",
+    "verdict": "MIXED",
+    "opened_ts": "2026-11-27T13:00:00Z",
+    "updated_ts": "2026-11-27T13:00:00Z",
+    "resolved_ts": null,
+    "last_seen_ts": "2026-11-27T13:00:00Z",
+    "occurrences": 1,
+    "entry": {
+      "id": "anm_s6",
+      "ts": "2026-11-27T13:00:00Z",
+      "metric": "small_seller_gmv_share",
+      "segment": {
+        "category": "electronics"
+      },
+      "kind": "divergent_segment",
+      "actual": 0.18,
+      "expected": 0.3,
+      "z": -4.4,
+      "delta": -0.12,
+      "delta_pct": -0.4,
+      "window_hours": 6,
+      "total_z": 0.9,
+      "share_now": 0.18,
+      "share_expected": 0.3,
+      "impact_eur_per_hour": 4200.0,
+      "completeness": 1.0,
+      "priority": 0.85
+    },
+    "summary": "A 15% 1P price cut set off a repricer loop: lower prices won the Buy Box, then small sellers sold out and bids rose. Small-seller GMV share fell from 30% to 18% despite planned Black Friday demand. S-99 took 3 Buy Boxes; SellerOS confirmed 3 sellers had no price floor and was notified.",
+    "impact_eur_per_hour": 4200.0,
+    "impact_eur_total": 4200.0,
+    "affected_actors": [
+      "S-03",
+      "S-07",
+      "S-12"
+    ],
+    "contributions": [
+      {
+        "factor": "repricer loop",
+        "kind": "rate",
+        "delta": -0.105,
+        "share": 0.875
+      },
+      {
+        "factor": "stockouts",
+        "kind": "mix",
+        "delta": -0.035,
+        "share": 0.292
+      },
+      {
+        "factor": "Black Friday campaign",
+        "kind": "planned",
+        "delta": 0.02,
+        "share": -0.167
+      }
+    ],
+    "root_cause": null,
+    "hypotheses": [],
+    "investigation_ids": [
+      "inv_s6"
+    ],
+    "open_questions": [
+      "Are small sellers at risk of churn?",
+      "Will S-99 refunds rise?"
+    ],
+    "suggested_actions": [
+      "Set repricer floors and prioritize restock capacity for affected sellers."
+    ],
+    "related_incident_ids": [],
+    "merged_into": null,
+    "notifications": [
+      {
+        "to": "selleros",
+        "ts": "2026-11-27T13:00:00+00:00",
+        "ok": true,
+        "task_id": "task_mock_s6"
+      }
+    ],
+    "normal_ticks": 0
+  }
+]

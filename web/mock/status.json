@@ -1,0 +1,34 @@
+{
+  "sim_ts": "2026-11-27T14:00:00Z",
+  "tick": 14,
+  "running": true,
+  "paused": false,
+  "llm_mode": "replay",
+  "llm_calls": 12,
+  "tokens_in": 29800,
+  "tokens_out": 3100,
+  "agents": {
+    "growth": {
+      "ok": true,
+      "url": "http://localhost:8200/growth"
+    },
+    "marketplace": {
+      "ok": true,
+      "url": "http://localhost:8200/marketplace"
+    },
+    "discovery": {
+      "ok": true,
+      "url": "http://localhost:8200/discovery"
+    },
+    "selleros": {
+      "ok": true,
+      "url": "http://localhost:8300"
+    }
+  },
+  "active_scenarios": [
+    "S6",
+    "S7",
+    "I1"
+  ],
+  "investigations_running": 0
+}

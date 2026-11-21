@@ -1,0 +1,201 @@
+{
+  "id": "inc_s7",
+  "fingerprint": "release|cart_to_checkout_rate|platform=web",
+  "title": "Black Friday checkout release broke Place Order",
+  "status": "open",
+  "verdict": "CONFIRMED",
+  "opened_ts": "2026-11-27T03:00:00Z",
+  "updated_ts": "2026-11-27T03:00:00Z",
+  "resolved_ts": null,
+  "last_seen_ts": "2026-11-27T03:00:00Z",
+  "occurrences": 1,
+  "entry": {
+    "id": "anm_s7",
+    "ts": "2026-11-27T03:00:00Z",
+    "metric": "orders",
+    "segment": {},
+    "kind": "point",
+    "actual": 810.0,
+    "expected": 1350.0,
+    "z": -9.0,
+    "delta": -540.0,
+    "delta_pct": -0.4,
+    "window_hours": 1,
+    "total_z": null,
+    "share_now": null,
+    "share_expected": null,
+    "impact_eur_per_hour": 97200.0,
+    "completeness": 1.0,
+    "priority": 0.99
+  },
+  "summary": "Checkout-web v5.8 broke Place Order on web and Android; native iOS was unaffected. Orders fell 40% below the Black Friday forecast, costing €97,200 in GMV per hour. PSP-2's approval rate held steady, so its latency warning does not explain the drop.",
+  "impact_eur_per_hour": 97200.0,
+  "impact_eur_total": 97200.0,
+  "affected_actors": [
+    "web",
+    "android"
+  ],
+  "contributions": [
+    {
+      "factor": "cart_to_checkout_rate",
+      "kind": "rate",
+      "delta": -486.0,
+      "share": 0.9
+    },
+    {
+      "factor": "unexplained",
+      "kind": "residual",
+      "delta": -54.0,
+      "share": 0.1
+    }
+  ],
+  "root_cause": {
+    "id": "hyp_s7_release",
+    "statement": "Checkout-web v5.8 broke Place Order on web and Android; native iOS was unaffected.",
+    "cause_type": "release",
+    "root_node": "cart_to_checkout_rate",
+    "segment": {
+      "platform": "web"
+    },
+    "first_change_ts": "2026-11-27T03:00:00Z",
+    "explained_share": 0.9,
+    "status": "supported",
+    "evidence_for": [
+      {
+        "group": "data",
+        "source": "drill_down",
+        "summary": "Cart-to-checkout rate fell 85% on web and Android; iOS changed by 1%.",
+        "numbers": {
+          "affected_drop_pct": 85.0,
+          "ios_drop_pct": 1.0
+        },
+        "step_id": "stp_s7_03"
+      },
+      {
+        "group": "change_log",
+        "source": "list_events",
+        "summary": "Checkout-web v5.8 shipped at 03:00 UTC, the first hour of the drop.",
+        "numbers": {
+          "version": "v5.8"
+        },
+        "step_id": "stp_s7_04"
+      },
+      {
+        "group": "engineering",
+        "source": "discovery",
+        "summary": "TypeError affected 80% of carts on the bundle shared by web and Android.",
+        "numbers": {
+          "affected_carts_pct": 80.0
+        },
+        "step_id": "stp_s7_05"
+      }
+    ],
+    "evidence_against": []
+  },
+  "hypotheses": [
+    {
+      "id": "hyp_s7_release",
+      "statement": "Checkout-web v5.8 broke Place Order on web and Android; native iOS was unaffected.",
+      "cause_type": "release",
+      "root_node": "cart_to_checkout_rate",
+      "segment": {
+        "platform": "web"
+      },
+      "first_change_ts": "2026-11-27T03:00:00Z",
+      "explained_share": 0.9,
+      "status": "supported",
+      "evidence_for": [
+        {
+          "group": "data",
+          "source": "drill_down",
+          "summary": "Cart-to-checkout rate fell 85% on web and Android; iOS changed by 1%.",
+          "numbers": {
+            "affected_drop_pct": 85.0,
+            "ios_drop_pct": 1.0
+          },
+          "step_id": "stp_s7_03"
+        },
+        {
+          "group": "change_log",
+          "source": "list_events",
+          "summary": "Checkout-web v5.8 shipped at 03:00 UTC, the first hour of the drop.",
+          "numbers": {
+            "version": "v5.8"
+          },
+          "step_id": "stp_s7_04"
+        },
+        {
+          "group": "engineering",
+          "source": "discovery",
+          "summary": "TypeError affected 80% of carts on the bundle shared by web and Android.",
+          "numbers": {
+            "affected_carts_pct": 80.0
+          },
+          "step_id": "stp_s7_05"
+        }
+      ],
+      "evidence_against": []
+    },
+    {
+      "id": "hyp_s7_psp",
+      "statement": "PSP-2 latency caused the checkout outage.",
+      "cause_type": "unknown",
+      "root_node": "payment_success_rate",
+      "segment": {
+        "psp": "PSP-2"
+      },
+      "first_change_ts": "2026-11-27T02:00:00Z",
+      "explained_share": 0.0,
+      "status": "refuted",
+      "evidence_for": [],
+      "evidence_against": [
+        {
+          "group": "data",
+          "source": "query_metric",
+          "summary": "PSP-2 still approved 98% of attempts; the missing attempts never reached it.",
+          "numbers": {
+            "success_rate": 0.98
+          },
+          "step_id": "stp_s7_06"
+        }
+      ]
+    },
+    {
+      "id": "hyp_s7_android",
+      "statement": "The v9.14 Android rollout broke the native app.",
+      "cause_type": "release",
+      "root_node": "cart_to_checkout_rate",
+      "segment": {
+        "platform": "android"
+      },
+      "first_change_ts": "2026-11-27T00:00:00Z",
+      "explained_share": 0.0,
+      "status": "refuted",
+      "evidence_for": [],
+      "evidence_against": [
+        {
+          "group": "data",
+          "source": "drill_down",
+          "summary": "Checkout fell 85% on web too, where the Android release does not run.",
+          "numbers": {
+            "web_drop_pct": 85.0
+          },
+          "step_id": "stp_s7_03"
+        }
+      ]
+    }
+  ],
+  "investigation_ids": [
+    "inv_s7"
+  ],
+  "open_questions": [
+    "How quickly will Android clients pick up the reverted bundle?"
+  ],
+  "suggested_actions": [
+    "Roll back checkout-web to v5.7 and verify web and Android checkout."
+  ],
+  "related_incident_ids": [],
+  "merged_into": null,
+  "notifications": [],
+  "normal_ticks": 0
+}
