@@ -2,7 +2,7 @@
 
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -574,3 +574,40 @@ class Cartographer:
         self._competing(updated, [])
         for edge in updated:
             self.graph.add_edge(edge)
+
+
+def _runtime(
+    clean_hours: Sequence[datetime],
+    on_step: Callable[[TrailStep], Awaitable[None]],
+) -> Cartographer:
+    owner = getattr(on_step, "__self__", None)
+    engine = getattr(getattr(owner, "invalidate", None), "__self__", None)
+    graph = getattr(getattr(owner, "sentinel", None), "_graph", None)
+    if not isinstance(engine, MetricEngine) or not isinstance(graph, GraphStore):
+        raise ValueError("Cartographer requires the orchestrator's engine and graph")
+    _, end = _window(engine, None, None, list(engine._registry.metrics))
+    clean = set(clean_hours)
+    hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
+    return Cartographer(
+        engine,
+        graph,
+        llm=owner.settings.llm,
+        scenario_hours=[hour for hour in hours if hour not in clean],
+    )
+
+
+async def add_metric(
+    req: AddMetricRequest,
+    clean_hours: Sequence[datetime],
+    on_step: Callable[[TrailStep], Awaitable[None]],
+) -> AddMetricResult:
+    """T18 callback, using its bound trail sink to locate the shared runtime."""
+    return await _runtime(clean_hours, on_step).add_metric(req, on_step=on_step)
+
+
+async def refine_causal_seeds(
+    clean_hours: Sequence[datetime],
+    on_step: Callable[[TrailStep], Awaitable[None]],
+) -> None:
+    """Refine the graph through T18's module-level callback interface."""
+    await _runtime(clean_hours, on_step).refine_causal_seeds(on_step=on_step)

@@ -2,21 +2,26 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
 import pytest
 
+from eye.agents import cartographer as cartographer_module
 from eye.agents.cartographer import (
     Cartographer,
     SeedDecision,
     SeedSubmission,
     Submission,
 )
-from eye.config import LlmSettings
+from eye.agents.sentinel import Sentinel
+from eye.config import LlmSettings, Settings
 from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
 from eye.graph.store import GraphStore
+from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient
+from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.tools.sqlguard import check
@@ -452,3 +457,51 @@ async def test_pending_seed_does_not_abort_other_refinement(
     monkeypatch.setattr("eye.agents.cartographer.run_agent", submit)
     await cartographer.refine_causal_seeds()
     assert all(e.evidence["refined"] for e in cartographer.graph.edges())
+
+
+@pytest.mark.asyncio
+async def test_t18_callbacks_use_shared_engine_and_clean_hours(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    engine = cartographer.engine
+    end = engine._con.execute(
+        "SELECT max(ts) + INTERVAL 1 HOUR FROM orders_hourly"
+    ).fetchone()[0]
+    settings = Settings(sim={"start_ts": end, "autostart": False})
+    store = IncidentStore(":memory:")
+    orchestrator = Orchestrator(
+        settings,
+        SimpleNamespace(now=end),
+        Sentinel(engine._con, engine._registry, graph=cartographer.graph),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: (0.0, 1.0),
+        add_metric=cartographer_module.add_metric,
+        refine=cartographer_module.refine_causal_seeds,
+        invalidate=engine.invalidate,
+    )
+    monkeypatch.setattr(
+        "eye.agents.cartographer.run_agent",
+        AsyncMock(return_value=Submission(edges=[], notes="", unit="ratio")),
+    )
+    try:
+        runtime = cartographer_module._runtime(
+            orchestrator.clean_hours()[1:], orchestrator.record_step
+        )
+        assert runtime.engine is engine
+        assert runtime.graph is cartographer.graph
+        assert orchestrator.clean_hours()[0] in runtime.scenario_hours
+        await orchestrator.refine(orchestrator.clean_hours(), orchestrator.record_step)
+        result = await orchestrator.register_metric(
+            AddMetricRequest(
+                name="new_ratio", description="ratio", expression="refunds / orders"
+            )
+        )
+        assert result.metric.name == "new_ratio"
+        assert engine.metric_window(
+            "new_ratio", end.replace(day=1), end
+        ) == pytest.approx(0.02)
+        assert cartographer.graph.metric("new_ratio").added_by == "user"
+    finally:
+        await orchestrator.close()
+        store.close()
