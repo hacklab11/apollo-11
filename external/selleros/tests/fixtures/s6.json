@@ -1,0 +1,10 @@
+{
+  "generated_for_seed": 42,
+  "sellers": [
+    {"seller_id":"S-03","customer_of_selleros":true,"repricer":{"mode":"beat","floor":null,"status":"active"},"skus":[{"sku":"E02","unit_cost":96,"stock_policy_days":3,"supplier_eta_days":4}],"price_history":[{"ts":"2026-12-25T00:00:00Z","sku":"E02","price":131.5},{"ts":"2026-12-25T12:00:00Z","sku":"E02","price":90}]},
+    {"seller_id":"S-07","customer_of_selleros":true,"repricer":{"mode":"beat","floor":null,"status":"active"},"skus":[{"sku":"E02","unit_cost":95,"stock_policy_days":3,"supplier_eta_days":2}],"price_history":[{"ts":"2026-12-25T12:00:00Z","sku":"E02","price":89}]},
+    {"seller_id":"S-12","customer_of_selleros":true,"repricer":{"mode":"beat","floor":null,"status":"active"},"skus":[{"sku":"E02","unit_cost":94,"stock_policy_days":3,"supplier_eta_days":2}],"price_history":[{"ts":"2026-12-25T12:00:00Z","sku":"E02","price":88}]},
+    {"seller_id":"S-14","customer_of_selleros":true,"repricer":{"mode":"beat","floor":100,"status":"active"},"skus":[{"sku":"H01","unit_cost":50,"stock_policy_days":3,"supplier_eta_days":2}],"price_history":[{"ts":"2026-12-25T12:00:00Z","sku":"H01","price":110}]},
+    {"seller_id":"S-99","customer_of_selleros":false,"repricer":{"mode":"beat","floor":null,"status":"active"},"skus":[{"sku":"E02","unit_cost":100,"stock_policy_days":3,"supplier_eta_days":2}],"price_history":[{"ts":"2026-12-25T12:00:00Z","sku":"E02","price":80}]}
+  ]
+}
