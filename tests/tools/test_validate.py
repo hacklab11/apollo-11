@@ -224,6 +224,51 @@ def test_identity_empty_mismatch_and_exclusion() -> None:
         validate_identity(engine, "lhs = rhs", end, engine.start)
 
 
+def test_identity_checks_single_dimension_slices() -> None:
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+
+    class SliceEngine(MetricEngine):
+        def __init__(self) -> None:
+            self._registry = SimpleNamespace(
+                get=lambda name: SimpleNamespace(dimensions=["country", "platform"])
+            )
+
+        def query_metric(
+            self,
+            name: str,
+            a: datetime,
+            b: datetime,
+            segment: dict | None = None,
+            group_by: list[str] = (),
+        ) -> list[Series]:
+            if group_by:
+                dim = group_by[0]
+                return [
+                    Series(metric=name, segment={dim: value}, points=[])
+                    for value in (
+                        {"country": ["DE", "FR"], "platform": ["web", "ios"]}[dim]
+                    )
+                ]
+            segment = segment or {}
+            value = 4 / 2 ** len(segment)
+            if name == "lhs" and segment == {"country": "DE"}:
+                value = 3
+            return [
+                Series(
+                    metric=name,
+                    segment=segment,
+                    points=[SeriesPoint(ts=start, value=value)],
+                )
+            ]
+
+    result = validate_identity(
+        SliceEngine(), "lhs = rhs", start, start + timedelta(hours=1)
+    )
+    assert not result.passed
+    failed = [g["segment"] for g in result.evidence["groups"] if not g["passed"]]
+    assert failed == [{"country": "DE"}]
+
+
 def test_shift_share_entering_exiting_and_zero_denominator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

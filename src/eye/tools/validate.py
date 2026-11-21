@@ -118,6 +118,12 @@ def validate_identity(
             if dims
             else []
         )
+        if len(dims) > 1:
+            selections += [
+                {dim: value}
+                for dim, choices in zip(dims, values, strict=True)
+                for value in choices
+            ]
     else:
         selections += [s for s in segments if s]
     residuals, groups, skipped = [], [], 0
