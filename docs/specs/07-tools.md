@@ -1,6 +1,6 @@
 # 07 Deterministic tools
 
-Code: `src/eye/tools/`. Tasks: T07 (stats, drill, context), T08 (decompose, validate).
+Code: `packages/data/src/eye/tools/`. Tasks: T07 (stats, drill, context), T08 (decompose, validate).
 Rule: tools compute; agents decide. Every tool is a plain Python function with pydantic input and output, so the LLM runtime (`08-agent-runtime.md`) can expose it as a Claude tool with a JSON schema.
 Every tool output has a `summary: str` field (≤ 300 chars, with the key numbers). The trail shows this text.
 

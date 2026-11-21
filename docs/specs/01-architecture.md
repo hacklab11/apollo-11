@@ -8,7 +8,7 @@ Read first: `00-overview.md`. Contracts: `02-contracts.md`.
 |---|---|---|---|---|
 | `core` | `uv run eye-core` | 8000 | simulator, DuckDB, registry, graph, tools, core agents, incidents, public API, SSE, static UI, data API | Anthropic API, specialists (A2A), SellerOS (A2A) |
 | `specialists` | `uv run eye-specialists` | 8200 | 3 A2A agents: Growth, Marketplace, Discovery | core data API (HTTP), Anthropic API |
-| `selleros` | `uv run --project external/selleros selleros` | 8300 | 1 A2A agent + its own data file | Anthropic API only. It never calls core. |
+| `selleros` | `uv run --project packages/selleros selleros` | 8300 | 1 A2A agent + its own data file | Anthropic API only. It never calls core. |
 | `mcp` | `uv run eye-mcp` | 8100 | MCP server (streamable HTTP, path `/mcp`) | core public API (HTTP) |
 
 `scripts/dev.sh` starts all four. Deployment with one public URL: `16-deployment.md`. `scripts/reset.sh` deletes `data/` and starts again from the seed.
@@ -17,93 +17,33 @@ Why separate processes: A2A and MCP must be real network protocols for the demo.
 
 ## 2. Repository layout
 
+This is a uv workspace; all Eye members contribute to the implicit `eye`
+namespace without an `eye/__init__.py`. Every member has its own `pyproject.toml`.
+
 ```
 apollo-11/
-  AGENTS.md                      # rules for Devin and other agents
-  pyproject.toml                 # package "eye", Python >=3.13
-  config/
-    settings.yaml                # all runtime config (section 5)
-    metrics.yaml                 # metric registry (05-metric-registry.md)
-    identities.yaml              # formula relations
-    causal_seeds.yaml            # candidate causal edges for bootstrap
-    scenarios.yaml               # scenario parameters (04-scenarios.md)
-  src/eye/
-    config.py                    # load + validate settings.yaml
-    contracts.py                 # all pydantic models (02-contracts.md)
-    sim/
-      world.py                   # entities, seeds
-      demand.py                  # sessions, search, feed, conversion
-      market.py                  # offers, repricers, Buy Box, stock, POs, capacity
-      ads.py                     # auction, pacing, marketing
-      finance.py                 # fees, margin, discounts, refunds
-      pipeline.py                # partition_status, late data
-      apps.py                    # app versions, client errors, checkout/PSP hooks
-      changelog.py               # change_log + external_status
-      selleros_export.py         # writes external/selleros/data/sellers.json
-      cli.py                     # eye-sim generate | export | stats
-      scenarios.py               # inject / clear / effects
-      engine.py                  # step(), backfill(), clock
-      store.py                   # DuckDB schema + writes
-    registry/
-      loader.py                  # metrics.yaml, identities.yaml
-      engine.py                  # query_metric
-    graph/
-      store.py                   # networkx graph + graph.json
-      bootstrap.py               # identities → formula edges, dims → breakdown edges
-    tools/
-      stats.py                   # baseline_compare, scan_anomalies, scan_divergent_segments
-      drill.py                   # drill_down, decompose
-      validate.py                # validate_identity, validate_breakdown, lagged_correlation
-      context.py                 # check_freshness, list_events, planned_effect_check
-      identity.py                # identity string parser
-      models.py                  # tool input/output models (with summary)
-      sqlguard.py                # SELECT-only check for user SQL
-    llm/
-      runtime.py                 # agent loop, tool registry, trail, record/replay
-      prompts/*.md               # one system prompt per agent
-    agents/
-      cartographer.py
-      sentinel.py
-      detective.py
-      skeptic.py
-      reporter.py
-    incidents/store.py
-    a2a_client.py
-    orchestrator.py              # tick loop
-    main.py                      # eye-core entry point
-    api/
-      app.py                     # FastAPI: public API, static web/
-      events.py                  # event bus + SSE
-      data_api.py                # /data/* for specialists
-      chat.py                    # /api/chat via MCP client
-    mcp_server.py
-    specialists/
-      app.py                     # one process, 3 A2A agents
-      growth.py
-      marketplace.py
-      discovery.py
-      tools.py                   # HTTP client for /data/*
-  external/selleros/             # separate uv project; must not import eye
-    pyproject.toml
-    selleros/app.py
-    selleros/data.py
-    data/                        # generated seller-side data (gitignored)
-  web/
-    index.html
-    app.js
-    styles.css
-  scripts/
-    dev.sh
-    reset.sh
-    demo_run.py                  # scripted demo timeline
-    eval_scenarios.py            # scenario oracle checks
-  tests/
-    fixtures/web/                # JSON/JSONL API response fixtures (13-api-and-ui.md)
-    oracle/scenarios.yaml        # expected results per scenario
-    ...
-  docs/domain-notes/             # P3's notes, pasted into prompts
-  Dockerfile, docker-compose.yml, Caddyfile, .devcontainer/   # 16-deployment.md
-  data/                          # gitignored: world.duckdb, ops.duckdb, graph.json, llm_cache.jsonl
+  pyproject.toml                 # non-packaged workspace aggregator, Python >=3.13
+  packages/
+    contracts/src/eye/           # contracts.py, config.py
+    data/src/eye/                # schema.py, registry/, graph/, tools/
+    llm/src/eye/llm/             # interim runtime, client, prompts/*.md
+    agents/src/eye/agents/       # Sentinel, Detective, Skeptic, Reporter, Cartographer
+    orchestrator/src/eye/        # orchestrator.py, incidents/, api/, a2a_client.py,
+                                # datasource.py, main.py (eye-core)
+    specialists/src/eye/specialists/ # eye-specialists A2A service
+    mcp/src/eye/mcp_server.py    # eye-mcp service
+    selleros/                    # independent selleros package; no Eye imports
+      pyproject.toml
+      selleros/                  # server.py, agent.py, data.py, runtime, models
+      tests/
+      data/                      # generated private seller data (gitignored)
+  sim/src/eye/sim/               # simulator, eye-sim CLI, SellerOS export
+  config/                       # settings, metrics, identities, causal seeds, scenarios
+  web/                          # observatory static assets
+  scripts/                      # stack launcher, reset, demo and eval scripts
+  tests/                        # Eye tests; SellerOS tests also run from the root
+  docs/
+  data/                         # generated world, incidents, graph and recordings
 ```
 
 ## 3. Data flow per tick

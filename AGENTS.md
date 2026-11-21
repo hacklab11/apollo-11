@@ -13,20 +13,22 @@ Three specialist agents and one external agent (SellerOS) over A2A. An MCP serve
 1. `docs/README.md` (index)
 2. Your task card in `docs/tasks/`
 3. The specs your card lists under "Read first"
-4. `docs/specs/02-contracts.md` — all shared data shapes. Use `src/eye/contracts.py`; do not redefine models.
+4. `docs/specs/02-contracts.md` — all shared data shapes. Use `packages/contracts/src/eye/contracts.py`; do not redefine models.
 
 ## Rules
 
 - Do only your task card. Change only the files under "Files you own". If you must change another file, explain why in the PR.
-- Do not change `src/eye/contracts.py`, `pyproject.toml`, or `config/settings.yaml` unless your card is T00 or the card says so.
+- Do not change `packages/contracts/src/eye/contracts.py`, `pyproject.toml`, or `config/settings.yaml` unless your card is T00 or the card says so.
 - If the spec is unclear: choose the reversible option, write it under "Assumptions" in the PR, continue. Do not stop to ask.
 - If the spec is wrong (it contradicts itself or the data): write it in the PR under "Spec issues". Do not silently do something else.
 - Smallest correct change. No extra features, no speculative config, no new dependencies unless the card allows it.
 - Tools compute, agents decide: numbers come from deterministic code, never from LLM text.
 - Never put secrets in code, tests, fixtures, logs, or commits. `ANTHROPIC_API_KEY` comes from the environment.
-- Never commit `data/`, `.env`, or `external/selleros/data/`.
+- Never commit `data/`, `.env`, or `packages/selleros/data/`.
 - No agent tool may read the `scenario_log` table (ground truth).
 - Bind servers to `127.0.0.1`.
+
+Production cannot import `eye.sim`; contracts/config are foundational; data/LLM stay below agents and orchestration; agents/specialists stay below orchestration. SellerOS is independent; import-linter documents temporary wave 3 exceptions.
 
 ## Stack
 
@@ -40,6 +42,7 @@ Three specialist agents and one external agent (SellerOS) over A2A. An MCP serve
 ```bash
 uv sync                                   # install
 uv run ruff check . && uv run ruff format --check .
+uv run lint-imports
 uv run pytest -m "not live" -q            # must pass before every PR
 uv run eye-sim generate --days 28 --seed 42
 ./scripts/dev.sh                          # run all processes locally

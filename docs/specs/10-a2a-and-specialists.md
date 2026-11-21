@@ -1,6 +1,6 @@
 # 10 A2A layer and the three specialists
 
-Code: `src/eye/a2a_client.py`, `src/eye/specialists/`, `src/eye/api/data_api.py`. Tasks: T15 (data API + A2A client), T16 (specialists).
+Code: `packages/orchestrator/src/eye/a2a_client.py`, `packages/specialists/src/eye/specialists/`, `packages/orchestrator/src/eye/api/data_api.py`. Tasks: T15 (data API + A2A client), T16 (specialists).
 Package: `a2a-sdk` 1.3.1. Read its official docs and README first. The 1.x API differs from the 0.x examples on the internet. Do not guess class names. If a name in this spec does not exist in 1.3.1, use the 1.3.1 equivalent and note it in the PR.
 
 ## 1. Protocol use

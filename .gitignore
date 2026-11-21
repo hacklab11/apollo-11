@@ -1,5 +1,7 @@
 /data/
 /.env
-/external/selleros/data/
+/packages/selleros/data/
 .venv/
 __pycache__/
+
+.import_linter_cache/

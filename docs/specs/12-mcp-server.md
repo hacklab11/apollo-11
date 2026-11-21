@@ -1,6 +1,6 @@
 # 12 MCP server
 
-Code: `src/eye/mcp_server.py`. Task: T19.
+Code: `packages/mcp/src/eye/mcp_server.py`. Task: T19.
 Package: `mcp` 2.3.0. Read the official Python SDK docs for the 2.x server API (decorators, streamable HTTP app). Do not copy 1.x examples without checking.
 
 ## 1. Design

@@ -1,6 +1,6 @@
 # 02 Contracts
 
-All shared data shapes. Implement them in `src/eye/contracts.py` with pydantic v2.
+All shared data shapes. Implement them in `packages/contracts/src/eye/contracts.py` with pydantic v2.
 Every component, test fixture, API, MCP tool, and A2A message uses these models.
 Change a contract only in task T00 or with agreement from both developers. Then update this file first.
 

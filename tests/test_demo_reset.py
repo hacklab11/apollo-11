@@ -30,13 +30,13 @@ def test_reset_removes_runtime_and_preserves_caches(
         "data/ops.duckdb.wal",
         "data/graph.json",
         "data/graph.json.tmp",
-        "external/selleros/data/sellers.json",
-        "external/selleros/data/actions.jsonl",
-        "external/selleros/data/nested/state.json",
+        "packages/selleros/data/sellers.json",
+        "packages/selleros/data/actions.jsonl",
+        "packages/selleros/data/nested/state.json",
     ]
     kept = [
         "recordings/core.jsonl",
-        "external/selleros/data/llm_cache.jsonl",
+        "packages/selleros/data/llm_cache.jsonl",
         "data/llm_cache.jsonl",
         "data/unrelated.txt",
     ]

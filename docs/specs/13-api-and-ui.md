@@ -1,6 +1,6 @@
 # 13 Public API, chat, and web UI
 
-Code: `src/eye/api/app.py`, `src/eye/api/chat.py`, `web/`. Tasks: T18 (API), T20 (chat), T21 (UI), T22 (UI live).
+Code: `packages/orchestrator/src/eye/api/app.py`, `packages/orchestrator/src/eye/api/chat.py`, `web/`. Tasks: T18 (API), T20 (chat), T21 (UI), T22 (UI live).
 The UI always calls the live API. No build step, no framework.
 
 ## 1. Public API (core, port 8000)

@@ -1,6 +1,6 @@
 # 08 Agent runtime
 
-Code: `src/eye/llm/runtime.py`, prompts in `src/eye/llm/prompts/`. Task: T11.
+Code: `packages/llm/src/eye/llm/runtime.py`, prompts in `packages/llm/src/eye/llm/prompts/`. Task: T11.
 All LLM agents in core, the specialists, SellerOS, and the chat use this runtime (SellerOS has its own copy, because it must not import `eye`; T17 copies the file).
 
 ## 1. API
@@ -76,7 +76,7 @@ Config `llm.mode`:
 
 ## 5. Prompt files
 
-One Markdown file per agent in `src/eye/llm/prompts/`. Structure:
+One Markdown file per agent in `packages/llm/src/eye/llm/prompts/`. Structure:
 
 ```
 # Role
