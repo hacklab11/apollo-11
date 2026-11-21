@@ -49,6 +49,8 @@ _SCHEMA = {
     "partition_status": """table_name VARCHAR, country VARCHAR, ts TIMESTAMPTZ, expected_rows BIGINT,
                            loaded_rows BIGINT, loaded_at TIMESTAMPTZ""",
     "scenario_log": "id VARCHAR, ts TIMESTAMPTZ, scenario_id VARCHAR, action VARCHAR, params JSON",
+    "seller_actions": """action_key VARCHAR PRIMARY KEY, ts TIMESTAMPTZ, ordinal BIGINT,
+                         seller_id VARCHAR, sku VARCHAR, kind VARCHAR, price DOUBLE""",
 }
 TABLES = tuple(_SCHEMA)
 

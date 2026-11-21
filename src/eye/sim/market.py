@@ -6,6 +6,8 @@ from math import ceil
 
 from numpy.random import Generator
 
+from eye.sim.seller_actions import SellerAction
+
 from eye.sim.store import Batches, Row
 from eye.sim.world import HYPED_SKUS, Offer, World
 
@@ -70,6 +72,27 @@ class Market:
             else min(7.0, (ts - self._sales_start).total_seconds() / 86400)
         )
         return (sum(qty for _, qty in history) + self.baseline[key] * (7 - days)) / 7
+
+    def apply_seller_actions(self, actions: list[SellerAction]) -> list[SellerAction]:
+        applied = []
+        for action in actions:
+            offer = next(
+                (
+                    offer
+                    for offer in self.world.offers.get(action.sku, [])
+                    if offer.seller_id == action.seller_id
+                ),
+                None,
+            )
+            if offer is None:
+                continue
+            if action.kind == "set_price":
+                assert action.price is not None
+                offer.price = action.price
+            # A seller's manual override, like S8's, disables automatic repricing.
+            offer.repricer_mode = "fixed"
+            applied.append(action)
+        return applied
 
     def run_repricers(self) -> None:
         for sku, offers in self.world.offers.items():
