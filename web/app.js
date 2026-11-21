@@ -279,15 +279,16 @@ function renderGraph() {
           style: {
             label: "data(displayLabel)",
             "font-family": "DM Sans, sans-serif",
-            "font-size": 10,
+            "font-size": 11,
             "text-wrap": "wrap",
-            "text-max-width": 78,
-            "text-valign": "bottom",
-            "text-margin-y": 6,
-            color: "#354b56",
-            width: 22,
-            height: 22,
-            "background-color": "#a8b2b8",
+            "text-max-width": 96,
+            "text-valign": "center",
+            "text-halign": "center",
+            color: "#172f39",
+            shape: "roundrectangle",
+            width: 112,
+            height: 42,
+            "background-color": "#e1e7e9",
             "border-width": 2,
             "border-color": "#a8b2b8",
             "transition-property": "background-color, border-color",
@@ -296,7 +297,7 @@ function renderGraph() {
         },
         {
           selector: 'node[state="watch"]',
-          style: { "background-color": "#d49b3a", "border-color": "#996717" },
+          style: { "background-color": "#f3cf83", "border-color": "#996717" },
         },
         {
           selector: 'node[state="anomaly"]',
@@ -308,7 +309,11 @@ function renderGraph() {
         },
         {
           selector: 'node[state="incident"]',
-          style: { "background-color": "#b7323e", "border-color": "#b7323e" },
+          style: {
+            "background-color": "#b7323e",
+            "border-color": "#b7323e",
+            color: "#ffffff",
+          },
         },
         {
           selector: 'node[state="resolved"]',
@@ -399,12 +404,12 @@ function renderGraph() {
   state.cy.json({ elements: graphElements() });
   state.cy
     .layout({
-      name: "cose",
+      name: "grid",
       animate: false,
-      randomize: false,
-      nodeRepulsion: () => 17000,
-      idealEdgeLength: () => 85,
-      padding: 35,
+      cols: 2,
+      avoidOverlap: true,
+      nodeDimensionsIncludeLabels: true,
+      padding: 20,
     })
     .run();
   state.cy.nodes().unselect();
@@ -605,8 +610,9 @@ function renderIncidents() {
         .join("")
     : `<p class="empty">No ${escapeHtml(state.filter)} incidents in this mock dataset.</p>`;
   if (focusedIncident) {
-    [...document.querySelectorAll('[data-incident]')]
-      .find((button) => button.dataset.incident === focusedIncident)?.focus();
+    [...document.querySelectorAll("[data-incident]")]
+      .find((button) => button.dataset.incident === focusedIncident)
+      ?.focus();
   }
 }
 

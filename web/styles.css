@@ -339,7 +339,7 @@ main {
   padding-bottom: 16px;
 }
 #graph {
-  height: 390px;
+  height: 460px;
   width: 100%;
   background: radial-gradient(#cfd9d9 0.6px, transparent 0.6px);
   background-size: 13px 13px;
@@ -923,7 +923,7 @@ dialog pre {
 }
 @media (min-width: 1550px) {
   #graph {
-    height: 450px;
+    height: 480px;
   }
   .chart-wrap {
     height: 210px;
@@ -981,7 +981,7 @@ dialog pre {
     grid-column: auto;
   }
   .graph-panel #graph {
-    height: 350px;
+    height: 460px;
   }
   .workspace-heading h2 {
     font-size: 21px;
