@@ -661,20 +661,49 @@ def evaluate(
     results = group(entry, "expect.")
     for name, spec in entry.get("also", {}).items():
         if name in {"I1", "I3"}:
+            campaign_id = (
+                "black-friday-2026" if name == "I1" else "coupon-day-electronics"
+            )
+            start = (
+                datetime.fromisoformat(entry["start_ts"])
+                if "start_ts" in entry
+                else None
+            )
+            first_fault = min(
+                (
+                    int(p.rsplit("@", 1)[1])
+                    for p in entry.get("play", [])
+                    if p.startswith("S")
+                ),
+                default=0,
+            )
             other = [
                 i
                 for i in incidents
                 if i.verdict == "INNOCENT"
                 or (i.root_cause and i.root_cause.cause_type == "planned_event")
                 or (
-                    not i.root_cause
-                    and ("black-friday-2026" if name == "I1" else "coupon")
-                    in i.summary.casefold()
+                    campaign_id
+                    in (
+                        i.root_cause.statement if i.root_cause else i.summary
+                    ).casefold()
+                )
+                or (
+                    start is not None
+                    and start <= i.opened_ts < start + first_fault * HOUR
                 )
             ]
-            nested = evaluate({"expect": spec.get("expect", spec)}, other, trails)
+            campaign_spec = spec.get("expect", spec)
+            nested = _checks(
+                campaign_spec, [i.model_dump(mode="json") for i in other], steps
+            )
             for result in nested:
-                result["check"] = result["check"].replace("expect.", f"also.{name}.", 1)
+                if result["check"] in {"status_any", "verdict_any"} and other:
+                    result["passed"] = all(
+                        value in campaign_spec[result["check"]]
+                        for value in result["actual"]
+                    )
+                result["check"] = f"also.{name}." + result["check"]
             results.extend(nested)
         else:
             results.extend(group(spec, f"also.{name}.", name))

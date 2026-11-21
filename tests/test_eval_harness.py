@@ -656,6 +656,36 @@ def test_duplicate_incident_fails() -> None:
     }
 
 
+@pytest.mark.parametrize("name", ["S7", "D5"])
+def test_campaign_false_alarm_before_checkout_is_not_dropped(name: str) -> None:
+    entry = deepcopy(harness.load_oracle()[name])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    good = make_incident_s7()
+    early = good.model_copy(
+        update={
+            "id": "campaign-alert",
+            "opened_ts": CAMPAIGN_TS,
+            "summary": "black-friday-2026 campaign traffic rose",
+            "entry": good.entry.model_copy(update={"metric": "sessions"}),
+            "root_cause": good.root_cause.model_copy(
+                update={
+                    "cause_type": "traffic_change",
+                    "statement": "black-friday-2026 campaign drove traffic",
+                }
+            ),
+            "status": "open",
+        }
+    )
+    cleared = early.model_copy(
+        update={"id": "cleared", "status": "innocent", "verdict": "INNOCENT"}
+    )
+    results = {
+        c["check"]: c for c in harness.evaluate(entry, [good, cleared, early], [])
+    }
+    assert not results["also.I1.status_any"]["passed"]
+    assert "open" in results["also.I1.status_any"]["actual"]
+
+
 def test_unknown_check_errors() -> None:
     with pytest.raises(ValueError, match="Unknown oracle check"):
         harness.evaluate({"expect": {"typo": True}}, [], [])
