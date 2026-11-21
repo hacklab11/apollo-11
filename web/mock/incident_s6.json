@@ -21,7 +21,7 @@
     "expected": 0.3,
     "z": -4.4,
     "delta": -0.12,
-    "delta_pct": -40.0,
+    "delta_pct": -0.4,
     "window_hours": 6,
     "total_z": 0.9,
     "share_now": 0.18,

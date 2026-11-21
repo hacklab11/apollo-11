@@ -92,6 +92,9 @@ def test_orders_chart_matches_s7_anomaly(repo_root: Path) -> None:
     assert point.value == incident.entry.actual
     assert point.expected == incident.entry.expected
     assert point.value < point.lower < point.expected < point.upper
+    assert incident.entry.delta_pct == pytest.approx(
+        incident.entry.delta / incident.entry.expected
+    )
 
 
 def test_graph_edges_reference_mock_metrics(repo_root: Path) -> None:

@@ -19,7 +19,7 @@
     "expected": 1350.0,
     "z": -9.0,
     "delta": -540.0,
-    "delta_pct": -40.0,
+    "delta_pct": -0.4,
     "window_hours": 1,
     "total_z": null,
     "share_now": null,
