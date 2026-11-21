@@ -157,8 +157,8 @@ def create_server(
         ] = 20,
     ) -> CallToolResult:
         """Return incidents with id, title, status, verdict, impact in EUR and
-        opened/updated times. Use it to find what is wrong now; then call
-        get_incident with an id for the evidence."""
+        opened/updated times, newest first. Use it to find what is wrong now;
+        then call get_incident with an id for the evidence."""
         if not 1 <= limit <= MAX_INCIDENTS:
             raise ToolError(f"limit must be between 1 and {MAX_INCIDENTS}")
         params = {"status": status} if status is not None else None
@@ -167,7 +167,9 @@ def create_server(
         )
         shown = [
             IncidentSummary.model_validate(item, from_attributes=True)
-            for item in incidents[:limit]
+            for item in sorted(
+                incidents, key=lambda item: item.opened_ts, reverse=True
+            )[:limit]
         ]
         impact = sum(item.impact_eur_per_hour for item in shown)
         return _result(

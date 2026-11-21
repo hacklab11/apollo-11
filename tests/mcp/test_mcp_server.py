@@ -92,9 +92,16 @@ async def test_list_incidents_returns_valid_json(
             "list_incidents", {"status": "open", "limit": 5}
         )
     incidents = TypeAdapter(list[IncidentSummary]).validate_python(payload(result))
-    assert [incident.id for incident in incidents] == ["inc_s7", "inc_s6"]
+    assert [incident.id for incident in incidents] == ["inc_s6", "inc_s7"]
     assert text(result).startswith("2 of 2 incidents with status open")
     assert calls == [("/api/incidents", {"status": "open"})]
+
+
+@pytest.mark.asyncio
+async def test_list_incidents_limit_keeps_newest(server: MCPServer) -> None:
+    async with Client(server) as client:
+        result = await client.call_tool("list_incidents", {"limit": 1})
+    assert [incident["id"] for incident in payload(result)] == ["inc_s6"]
 
 
 @pytest.mark.asyncio
