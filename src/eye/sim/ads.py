@@ -41,6 +41,7 @@ class Ads:
     version: str = "pacing-svc v4.0"
     pacing_exempt: set[str] = field(default_factory=set)
     cpc_mult: dict[str, float] = field(default_factory=dict)
+    impression_mult: dict[str, float] = field(default_factory=dict)
     spent: dict[str, float] = field(default_factory=dict)
     bids: dict[str, float] = field(default_factory=dict)
     served_impressions: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -143,7 +144,11 @@ class Ads:
                 for c, country in enumerate(COUNTRIES):
                     segments = searches[c * 3 : c * 3 + 3, k]
                     impressions = (
-                        round(float(segments.sum()) * _IMPRESSION_FACTOR)
+                        round(
+                            float(segments.sum())
+                            * _IMPRESSION_FACTOR
+                            * self.impression_mult.get(aid, 1.0)
+                        )
                         if rank < 2
                         else 0
                     )

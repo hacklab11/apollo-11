@@ -39,9 +39,11 @@ class ScenarioManager:
         self._checkout_version = sim.apps.versions["checkout-web"]
         self._pacing_exempt = sim.ads.pacing_exempt.copy()
         self._cpc_mult = sim.ads.cpc_mult.copy()
+        self._impression_mult = sim.ads.impression_mult.copy()
         self._ads_version = sim.ads.version
         self._po_mult = sim.market.po_quantity_mult.copy()
         self._po_version = sim.market.po_version.copy()
+        self._replenishment_mult = sim.market.replenishment_mult.copy()
         sim.pre_demand_hooks.append(self._before)
         sim.pre_store_hooks.append(self._before_store)
 
@@ -154,16 +156,16 @@ class ScenarioManager:
                 for po in sim.market.pos
             ]
             for sku in (f"H{i:02d}" for i in range(1, 7)):
-                offer = next(o for o in sim.world.offers[sku] if o.seller_id == "1P")
-                offer.stock = round(
-                    sim.market.average_sales(offer, ts) * p["stock_days"]
-                )
+                for offer in sim.world.offers[sku]:
+                    offer.stock = round(
+                        sim.market.average_sales(offer, ts) * p["stock_days"]
+                    )
             # T05 has no first-party offer in the catalog; supplier history is independent.
             batches["purchase_orders"] = [
                 (
                     f"PO-decoy-{ts.isoformat()}",
                     "T05",
-                    "SUP-4",
+                    sim.world.skus["T05"].supplier_id,
                     ts - timedelta(hours=48),
                     10,
                     ts,
@@ -252,9 +254,11 @@ class ScenarioManager:
         sim = self.sim
         sim.ads.pacing_exempt = self._pacing_exempt.copy()
         sim.ads.cpc_mult = self._cpc_mult.copy()
+        sim.ads.impression_mult = self._impression_mult.copy()
         sim.ads.version = self._ads_version
         sim.market.po_quantity_mult = self._po_mult.copy()
         sim.market.po_version = self._po_version.copy()
+        sim.market.replenishment_mult = self._replenishment_mult.copy()
         sim.finance.platform_discount = self._discounts.copy()
 
     def _before(self, sim: Simulator, hour: Hour) -> None:
@@ -267,14 +271,17 @@ class ScenarioManager:
             if id == "S1":
                 sim.ads.pacing_exempt.add(p["advertiser"])
                 sim.ads.cpc_mult["electronics"] = p["cpc_mult"]
+                sim.ads.impression_mult[p["advertiser"]] = p["impression_mult"]
                 sim.ads.version = "pacing-svc v4.1"
             elif id == "S2":
                 for sku in sim.world.skus:
                     if sku.startswith("H"):
                         sim.market.po_quantity_mult[sku] = p["po_mult"]
                         sim.market.po_version[sku] = "purchasing v2.3"
+                        sim.market.replenishment_mult[sku] = p["po_mult"]
             elif id == "S3":
                 hour.demand.relevance["DE"] = p["relevance"]
+                hour.demand.isolate_relevance = True
             elif id == "S4":
                 hour.demand.exposure_power = p["exposure_power"]
                 hour.demand.unavailable_weight = p["unavailable_weight"]
@@ -294,7 +301,7 @@ class ScenarioManager:
                     }
                 )
             elif id == "I1":
-                hour.demand.campaign_mult *= p["campaign_mult"]
+                hour.demand.coupled_volume_mult *= p["campaign_mult"]
             elif id == "S7":
                 hour.demand.checkout_ok.update(
                     dict.fromkeys(("web", "android"), p["checkout_ok"])

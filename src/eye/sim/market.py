@@ -36,6 +36,7 @@ class Market:
         self.pos: list[Row] = []
         self.po_quantity_mult: dict[str, float] = {}
         self.po_version: dict[str, str] = {}
+        self.replenishment_mult: dict[str, float] = {}
         self._po_number = 0
         self._sales_start: datetime | None = None
         for sku, offers in world.offers.items():
@@ -164,6 +165,7 @@ class Market:
                             if o.seller_id == offer.seller_id
                         )
                         qty = min(wanted, max(0, capacity - self.used[offer.seller_id]))
+                        qty = round(qty * self.replenishment_mult.get(sku, 1.0))
                         self.blocked[offer.seller_id] += wanted - qty
                         self.used[offer.seller_id] += qty
                         if qty:

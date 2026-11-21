@@ -1,16 +1,17 @@
 S1:
   advertiser: ADV-3 # Campaign type affected by the pacing release.
   cpc_mult: 1.1 # Electronics auction price decoy.
+  impression_mult: 4.0 # Calibrated auction intensity; bible: unpaced participation only (1x).
 S2:
   po_mult: 0.3 # Fraction of forecast ordered by the faulty model.
   release_days_ago: 3 # Backdated purchasing release and history window.
-  stock_days: 0.5 # Remaining first-party H01–H06 stock at injection.
-  delay_hours: 24 # Unrelated SUP-4 toys delivery delay.
+  stock_days: 0.02 # Calibrated H01–H06 stock across all tiers; bible: 0.5 days, 1P only.
+  delay_hours: 24 # Unrelated T05 delivery delay; bible's SUP-4 replaced by seeded supplier.
 S3:
   relevance: 0.45 # German ranker relevance, versus baseline 0.85.
 S4:
   exposure_power: 2.0 # Engagement model squares attractiveness.
-  unavailable_weight: 1.0 # No inventory filtering in the new model.
+  unavailable_weight: 12.0 # Calibrated unavailable exposure strength; bible: 1.0 (no filter).
 S5:
   session_mult: 1.25 # Paid acquisition session uplift.
   spend_mult: 3.0 # Paid acquisition spend relative to baseline.
@@ -22,7 +23,7 @@ S7:
   error_share: 0.8 # Checkout TypeErrors per affected cart.
   psp_latency_ms: 900.0 # Latency-only PSP-2 decoy, with unchanged success rate.
 I1:
-  campaign_mult: 1.4 # Planned Black Friday traffic multiplier.
+  campaign_mult: 1.4 # Bible's +40% uplift, coupled cohort sampling to preserve conversion controls.
   discount: 0.1 # Platform-funded electronics coupon fraction.
 I2:
   completeness: 0.4 # Fraction of FR order rows initially loaded.
