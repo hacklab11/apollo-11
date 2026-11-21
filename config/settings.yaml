@@ -1,0 +1,57 @@
+sim:
+  seed: 42
+  history_days: 28
+  start_ts: "2026-11-27T00:00:00Z"
+  seconds_per_sim_hour: 5
+  autostart: true
+
+orchestrator:
+  max_concurrent_investigations: 2
+  pause_sim_during_investigation: true
+
+sentinel:
+  top_k: 10
+  z_threshold: 3.0
+  divergence_pp: 3.0
+  min_completeness: 0.9
+
+detective:
+  max_steps: 15
+  confirm_share: 0.7
+  min_independent_evidence: 2
+
+reporter:
+  resolve_after_ticks: 3
+  resolve_z: 2.0
+
+llm:
+  mode: live
+  cache_path: data/llm_cache.jsonl
+  models:
+    default: claude-opus-5-5
+  effort:
+    sentinel: low
+    detective: high
+    skeptic: medium
+    reporter: medium
+    cartographer: high
+    specialists: medium
+    chat: medium
+  max_tokens: 16000
+  max_calls_per_hour: 600
+
+demo:
+  show_truth: false
+
+a2a:
+  growth_url: http://localhost:8200/growth
+  marketplace_url: http://localhost:8200/marketplace
+  discovery_url: http://localhost:8200/discovery
+  selleros_url: http://localhost:8300
+  timeout_s: 60
+
+ports:
+  core: 8000
+  mcp: 8100
+  specialists: 8200
+  selleros: 8300
