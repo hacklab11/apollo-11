@@ -55,6 +55,11 @@ _RELEVANCE = 0.85
 @dataclass
 class DemandModifiers:
     campaign_mult: float = 1.0
+    exposure_power: float = 1.0
+    unavailable_weight: float = 0.05
+    exposure_mult: dict[str, float] = field(default_factory=dict)
+    extra_session_conversion: float = 1.0
+    marketing_spend_mult: dict[Country, float] = field(default_factory=dict)
     marketing_mult: dict[Country, float] = field(default_factory=dict)
     relevance: dict[Country, float] = field(default_factory=dict)
     checkout_ok: dict[Platform, float] = field(default_factory=dict)
@@ -117,7 +122,12 @@ def generate_demand(
         (np.array([sku.ref_price for sku in skus]) / prices) ** 1.5, 0.5, 2.0
     )
 
-    exposure = attractiveness * popularity * np.where(available, 1.0, 0.05)
+    exposure = (
+        attractiveness**modifiers.exposure_power
+        * popularity
+        * np.where(available, 1.0, modifiers.unavailable_weight)
+        * np.array([modifiers.exposure_mult.get(s.sku, 1.0) for s in skus])
+    )
     impressions = rng.multinomial(12 * channels[:, 1], exposure / exposure.sum())
     feed_clicks = rng.binomial(impressions, 0.04 * attractiveness)
 
@@ -134,7 +144,18 @@ def generate_demand(
                 result_clicks[segment, k] += extra
         search = _retry_unavailable(rng, landed, in_stock)
         feed = _retry_unavailable(rng, feed_clicks[:, mask], in_stock)
-        probability = 0.12 * price_factor[mask]
+        conversion = np.array(
+            [
+                (
+                    1
+                    + (modifiers.marketing_mult.get(country, 1.0) - 1)
+                    * modifiers.extra_session_conversion
+                )
+                / modifiers.marketing_mult.get(country, 1.0)
+                for country, _ in _SEGMENTS
+            ]
+        )[:, None]
+        probability = 0.12 * price_factor[mask] * conversion
         carts[:, 0, mask] = rng.binomial(search, probability * relevance_factor)
         carts[:, 1, mask] = rng.binomial(feed, probability)
     if available.any():

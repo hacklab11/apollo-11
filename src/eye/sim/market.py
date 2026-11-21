@@ -34,6 +34,8 @@ class Market:
         self.blocked: dict[str, int] = defaultdict(int)
         self.week: tuple[int, int] | None = None
         self.pos: list[Row] = []
+        self.po_quantity_mult: dict[str, float] = {}
+        self.po_version: dict[str, str] = {}
         self._po_number = 0
         self._sales_start: datetime | None = None
         for sku, offers in world.offers.items():
@@ -133,6 +135,7 @@ class Market:
                 if offer.seller_id == "1P" and ts.hour == 2:
                     open_qty = sum(po[4] for po in self.pos if po[1] == sku)
                     qty = max(0, ceil(daily * 10 - offer.stock - open_qty))
+                    qty = round(qty * self.po_quantity_mult.get(sku, 1.0))
                     if qty:
                         self._po_number += 1
                         eta = ts + timedelta(hours=48)
@@ -146,7 +149,7 @@ class Market:
                             eta,
                             arrival,
                             qty,
-                            "purchasing v2.2",
+                            self.po_version.get(sku, "purchasing v2.2"),
                         )
                         self.pos.append(po)
                         changed_pos.append((*po[:6], None, 0, po[8]))

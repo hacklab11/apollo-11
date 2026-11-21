@@ -39,6 +39,7 @@ def _eligible_skus(world: World) -> dict[str, list[Sku]]:
 @dataclass
 class Ads:
     version: str = "pacing-svc v4.0"
+    pacing_exempt: set[str] = field(default_factory=set)
     spent: dict[str, float] = field(default_factory=dict)
     bids: dict[str, float] = field(default_factory=dict)
     served_impressions: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -112,7 +113,11 @@ class Ads:
                 bool(eligible_skus[adv.advertiser_id])
                 and spent < adv.daily_budget
                 and rng.random()
-                < np.clip(1 - (spent / adv.daily_budget - planned) * 5, 0, 1)
+                < (
+                    1.0
+                    if adv.advertiser_id in self.pacing_exempt
+                    else np.clip(1 - (spent / adv.daily_budget - planned) * 5, 0, 1)
+                )
             )
         facts = batches.setdefault("ads_hourly", [])
         for k, category in enumerate(CATEGORIES):
