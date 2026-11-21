@@ -46,7 +46,12 @@ class Ads:
     recovered_hours: dict[str, int] = field(default_factory=dict)
     day: date | None = None
 
+    def _initialize_bids(self, world: World) -> None:
+        for adv in world.advertisers.values():
+            self.bids.setdefault(adv.advertiser_id, adv.base_bid)
+
     def calibrate_budgets(self, ts: datetime, world: World) -> None:
+        self._initialize_bids(world)
         eligible = _eligible_skus(world)
         for category, share in zip(CATEGORIES, CATEGORY_SHARES, strict=True):
             advertisers = [
@@ -88,9 +93,10 @@ class Ads:
         landed: dict[tuple[int, str], int] = {}
         participants: dict[str, bool] = {}
         eligible_skus = _eligible_skus(world)
+        self._initialize_bids(world)
         for adv in world.advertisers.values():
             hours = self.out_of_stock_hours.get(adv.seller_id, 0)
-            bid = self.bids.get(adv.advertiser_id, adv.base_bid)
+            bid = self.bids[adv.advertiser_id]
             if hours > 6:
                 bid = adv.base_bid * min(2.5, 1.25 ** ((hours - 1) // 6))
             elif self.recovered_hours.get(adv.seller_id, 0) >= 24:

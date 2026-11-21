@@ -174,6 +174,21 @@ def test_auction_with_no_in_stock_advertisers() -> None:
     assert all(row[5:8] == (0, 0, 0.0) for row in batches["ads_hourly"])
 
 
+def test_budget_calibration_on_fresh_ads() -> None:
+    ts = datetime(2026, 1, 1, tzinfo=UTC)
+    world = build_world(42, joined_ts=ts)
+    ads = Ads()
+    ads.calibrate_budgets(ts, world)
+    assert ads.bids == {
+        adv.advertiser_id: adv.base_bid for adv in world.advertisers.values()
+    }
+    assert all(adv.daily_budget > 0 for adv in world.advertisers.values())
+    ads.bids["ADV-1"] *= 2
+    current_bid = ads.bids["ADV-1"]
+    ads.calibrate_budgets(ts, world)
+    assert ads.bids["ADV-1"] == current_bid
+
+
 def test_budget_calibration_uses_eligible_competitors() -> None:
     ts = datetime(2026, 1, 1, tzinfo=UTC)
     world = build_world(42, joined_ts=ts)
