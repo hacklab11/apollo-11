@@ -19,7 +19,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 import httpx
 import yaml
 
-from eye.a2a_client import A2AClient, AgentCardInfo, _FAILURES
+from eye.a2a_client import _FAILURES, A2AClient, AgentCardInfo
 from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
@@ -29,8 +29,8 @@ from eye.contracts import (
     AddMetricRequest,
     Incident,
     SellerAlertAck,
-    SpecialistResponse,
     SpecialistRequest,
+    SpecialistResponse,
     TrailStep,
 )
 from eye.graph.bootstrap import load_or_bootstrap
@@ -43,7 +43,8 @@ from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
 from eye.sim.scenarios import _TITLES, ScenarioManager
-from eye.specialists.app import SPECIALISTS, answer as answer_specialist
+from eye.specialists.app import SPECIALISTS
+from eye.specialists.app import answer as answer_specialist
 from eye.specialists.tools import DataClient
 from eye.tools.stats import expected
 
@@ -200,7 +201,7 @@ class EvalA2AClient(A2AClient):
             for name, card in (await self.exchange("fetch_cards", {})).items()
         }
 
-    async def ask(self, agent: str, request: Any) -> SpecialistResponse:
+    async def ask(self, agent: str, request: SpecialistRequest) -> SpecialistResponse:
         return SpecialistResponse.model_validate(
             await self.exchange("ask", {"agent": agent, "request": request})
         )
