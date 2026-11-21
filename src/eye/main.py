@@ -1,7 +1,6 @@
 """Build and run the core service."""
 
 import json
-import logging
 import time
 from collections.abc import Sequence
 from contextlib import ExitStack, closing
@@ -22,7 +21,12 @@ from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, TrailStep
 from eye.datasource import open_source
 from eye.incidents.store import IncidentStore
-from eye.llm.client import BudgetExceeded, LLMClient, configure_client
+from eye.llm.client import (
+    BudgetExceeded,
+    LLMClient,
+    MissingProviderCredentials,
+    configure_client,
+)
 from eye.llm.runtime import AgentRefused
 from eye.orchestrator import Orchestrator, StepSink
 from eye.registry.engine import MetricEngine
@@ -48,20 +52,23 @@ async def _refine_causal_seeds(
 
         try:
             await cart.refine_causal_seeds(clean_hours, record_step)
-        except (AnthropicError, BudgetExceeded, AgentRefused, TypeError) as exc:
-            if isinstance(exc, TypeError) and (
-                "Could not resolve authentication method" not in str(exc)
-            ):
-                raise
-            logging.getLogger(__name__).warning(
+        except (AnthropicError, BudgetExceeded, AgentRefused) as exc:
+            missing = (
+                exc.env_var if isinstance(exc, MissingProviderCredentials) else None
+            )
+            detail = f"set {missing}" if missing else type(exc).__name__
+            print(
                 json.dumps(
                     {
                         "ts": datetime.now(UTC).isoformat(),
+                        "level": "warning",
                         "component": "cartographer",
                         "event": "refinement_unavailable",
                         "error": type(exc).__name__,
+                        **({"missing_env": missing} if missing else {}),
                     }
-                )
+                ),
+                flush=True,
             )
             await on_step(
                 TrailStep(
@@ -72,7 +79,7 @@ async def _refine_causal_seeds(
                     actor="cartographer",
                     action="note",
                     output_summary=(
-                        f"Seed refinement unavailable: {type(exc).__name__}; "
+                        f"Seed refinement unavailable: {detail}; "
                         "seeds unchanged; retry on next startup"
                     ),
                 )
