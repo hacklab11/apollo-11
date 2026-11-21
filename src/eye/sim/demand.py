@@ -51,6 +51,7 @@ _HOUR_PROFILE = (
 )
 _WEEKDAY_PROFILE = (1.00, 0.98, 0.97, 1.00, 1.05, 1.15, 1.20)
 _RELEVANCE = 0.85
+_BASE_PSP_LATENCY_MS = 200.0
 
 
 @dataclass
@@ -340,7 +341,7 @@ def _generate_demand(
                 psp,
                 int(psp_attempt_totals[i, j]),
                 int(psp_success_totals[i, j]),
-                modifiers.psp_latency.get(psp),
+                modifiers.psp_latency.get(psp, _BASE_PSP_LATENCY_MS),
             )
             for j, psp in enumerate(PSPS)
         )
