@@ -6,7 +6,6 @@ from datetime import datetime
 from pathlib import Path
 
 import duckdb
-
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 

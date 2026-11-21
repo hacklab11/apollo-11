@@ -92,7 +92,9 @@ class Graph:
 
 
 @pytest.fixture
-def service() -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
+def service(
+    request: pytest.FixtureRequest,
+) -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
     settings = Settings(sim={"autostart": False, "seconds_per_sim_hour": 0.5})
     sim = World(settings.sim.start_ts)
     metric = make_metrics()[1].model_copy(
@@ -129,6 +131,9 @@ def service() -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
             """INSERT INTO scenario_log VALUES ('scn_s7', ?, 'S7', 'inject', '{"enabled":true}')""",
             [sim.now],
         )
+        mode = getattr(request, "param", None)
+        if mode:
+            connection.execute("DROP TABLE scenario_log")
         sample = make_incident_s7()
         incidents._save(sample)
         for step in make_trail_s7():
@@ -140,8 +145,8 @@ def service() -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
             incidents,
             LLMClient(settings.llm),
             lambda *_: 9,
-            scenarios=sim,
-            scenario_titles={"S7": "Outage"},
+            scenarios=None if mode == "no_scenarios" else sim,
+            scenario_titles={} if mode == "no_scenarios" else {"S7": "Outage"},
             add_metric=add,
         )
         yield (
@@ -155,6 +160,21 @@ def service() -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
             settings,
             orchestrator,
         )
+
+
+@pytest.mark.parametrize("service", ["no_scenarios", "no_truth_table"], indirect=True)
+def test_optional_scenario_apis(
+    service: tuple[FastAPI, Settings, Orchestrator],
+) -> None:
+    app, settings, orchestrator = service
+    settings.demo.show_truth = True
+    with TestClient(app) as client:
+        assert client.get("/api/demo/truth").status_code == 404
+        if orchestrator.scenarios is None:
+            assert client.get("/api/scenarios").json() == []
+            assert client.get("/api/status").json()["active_scenarios"] == []
+            assert client.post("/api/scenarios/S7/inject").status_code == 404
+            assert client.post("/api/scenarios/S7/clear").status_code == 404
 
 
 def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
