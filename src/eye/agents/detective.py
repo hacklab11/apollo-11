@@ -277,28 +277,11 @@ class Detective:
         self._llm = llm or LlmSettings()
         self._skeptic = Skeptic(con, registry, freshness=self._freshness, llm=self._llm)
 
-    def _symptoms(
-        self, anomaly: Anomaly, window: _Window, cause: Hypothesis | None
-    ) -> list[Symptom]:
-        if cause is None:
-            return []
-        names = frontier = {cause.root_node}
-        edges = self._graph.view().edges
-        while frontier:
-            frontier = {
-                edge.dst
-                for edge in edges
-                if edge.src in frontier
-                and edge.type != "breakdown"
-                and edge.status != "rejected"
-            } - names
-            names |= frontier
-        candidates = (names - {cause.root_node}) & self._registry.metrics.keys()
-        measured = set(candidates)
-        if cause.first_change_ts is None and cause.root_node in self._registry.metrics:
-            measured.add(cause.root_node)
+    def _first_changes(
+        self, anomaly: Anomaly, window: _Window, nodes: Iterable[str]
+    ) -> dict[str, datetime | None]:
         scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
-        for node in sorted(measured):
+        for node in sorted(nodes):
             dims = self._registry.get(node).dimensions
             segment = tuple(
                 sorted(
@@ -321,6 +304,29 @@ class Detective:
                 registry=self._registry,
             )
             changes.update(result.changes)
+        return changes
+
+    def _symptoms(
+        self, anomaly: Anomaly, window: _Window, cause: Hypothesis | None
+    ) -> list[Symptom]:
+        if cause is None:
+            return []
+        names = frontier = {cause.root_node}
+        edges = self._graph.view().edges
+        while frontier:
+            frontier = {
+                edge.dst
+                for edge in edges
+                if edge.src in frontier
+                and edge.type != "breakdown"
+                and edge.status != "rejected"
+            } - names
+            names |= frontier
+        candidates = (names - {cause.root_node}) & self._registry.metrics.keys()
+        measured = set(candidates)
+        if cause.first_change_ts is None and cause.root_node in self._registry.metrics:
+            measured.add(cause.root_node)
+        changes = self._first_changes(anomaly, window, measured)
         cause_ts = cause.first_change_ts or changes.get(cause.root_node)
         if cause_ts is None:
             return []
@@ -352,32 +358,11 @@ class Detective:
             for node in cycle
             if self._registry.get(node).status == "active"
         }
-        changes: dict[str, datetime] = {}
-        scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
-        for node in sorted(active):
-            dims = self._registry.get(node).dimensions
-            segment = tuple(
-                sorted(
-                    (dim, value)
-                    for dim, value in anomaly.segment.items()
-                    if dim in dims
-                )
-            )
-            scoped.setdefault(segment, []).append(node)
-        for segment, names in scoped.items():
-            result = first_change(
-                FirstChangeInput(
-                    metrics=names,
-                    segment=dict(segment),
-                    start=window.lookback,
-                    end=window.end,
-                ),
-                con=self._con,
-                registry=self._registry,
-            )
-            changes.update(
-                {node: ts for node, ts in result.changes.items() if ts is not None}
-            )
+        changes = {
+            node: ts
+            for node, ts in self._first_changes(anomaly, window, active).items()
+            if ts is not None
+        }
         corroborated = {
             hyp.root_node
             for hyp in hypotheses
