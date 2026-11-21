@@ -83,6 +83,24 @@ def test_product_terms_share_the_target_weight(store: GraphStore) -> None:
     assert store.impact_weight("per_order") == 1.0
 
 
+def test_ecosystem_floor_reaches_its_causes(store: GraphStore) -> None:
+    seed = {"type_": "causal_hypothesis", "status": "hypothesis", "confidence": 0.5}
+    store.add_metric(_metric("listing_fee"))
+    store.add_edge(_edge("listing_fee", "seller_hhi", **seed))
+    assert store.impact_weight("listing_fee") == pytest.approx(0.25 * 0.3)
+
+
+def test_rejected_product_term_loses_weight(store: GraphStore) -> None:
+    store.add_metric(_metric("orders"))
+    store.add_metric(_metric("per_order"))
+    identity = "per_order = contribution_margin / orders"
+    for src in ("contribution_margin", "orders"):
+        store.add_edge(_edge(src, "per_order", identity=identity))
+    store.set_edge_status("edg_formula_orders_per_order", "rejected", {})
+    assert store.impact_weight("orders") == 0.0
+    assert store.impact_weight("per_order") == 1.0
+
+
 def test_rejected_edges_carry_no_weight(store: GraphStore) -> None:
     edge_id = "edg_formula_cost_contribution_margin"
     store.set_edge_status(edge_id, "rejected", {"why": "residual"})

@@ -188,7 +188,11 @@ class GraphStore:
         (`cm = cpo * orders` as well as `cpo = cm / orders`), so all its terms share the
         largest weight among them; a sum component gets its mean share of the target.
         """
-        weights = {name: 0.0 for name in self._graph}
+        # Floors seed the walk so causes of ecosystem metrics inherit their weight.
+        weights = {
+            name: ECOSYSTEM_FLOOR if name in ECOSYSTEM_METRICS else 0.0
+            for name in self._graph
+        }
         if TOP_METRIC in weights:
             weights[TOP_METRIC] = 1.0
         live = [e for e in self.edges() if e.status != "rejected" and e.src != e.dst]
@@ -197,10 +201,7 @@ class GraphStore:
             if edge.type == "formula" and edge.identity:
                 parsed = parse_identity(edge.identity)
                 if parsed.kind == "product":
-                    products[edge.identity] = {
-                        parsed.target,
-                        *(t.name for t in parsed.terms),
-                    }
+                    products.setdefault(edge.identity, {edge.dst}).add(edge.src)
         for _ in range(MAX_WEIGHT_PASSES):
             changed = False
             for name, weight in _passes(weights, live, products):
@@ -210,8 +211,6 @@ class GraphStore:
             if not changed:
                 break
         for name, weight in weights.items():
-            if name in ECOSYSTEM_METRICS:
-                weight = max(weight, ECOSYSTEM_FLOOR)
             self._graph.nodes[name]["metric"].impact_weight = round(weight, 6)
 
     def _find(self, edge_id: str) -> Edge | None:
