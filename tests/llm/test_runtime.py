@@ -6,6 +6,7 @@ from pathlib import Path
 import httpx2
 import pytest
 from anthropic import AsyncAnthropic
+from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
 from eye.config import LlmSettings
@@ -161,6 +162,29 @@ async def test_parallel_tools_trail_and_request(harness):
 
 async def discard(step):
     pass
+
+
+@pytest.mark.asyncio
+async def test_mapping_schema_and_submit(harness):
+    class MappingOutput(BaseModel):
+        numbers: dict[str, float]
+        summary: str
+
+    payload = {"numbers": {"sales": 12.5}, "summary": "Sales 12.5"}
+    _, requests = harness([response([tool("submit", payload)])])
+    result = await run_agent(
+        replace(spec(), submit_model=MappingOutput), "go", "inv", discard
+    )
+    assert result.numbers == {"sales": 12.5}
+    definition = next(t for t in requests[0]["tools"] if t["name"] == "submit")
+    schema = definition["input_schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["numbers"]["additionalProperties"] == {"type": "number"}
+    Draft202012Validator(schema).validate(payload)
+    with pytest.raises(Exception, match="not of type 'number'"):
+        Draft202012Validator(schema).validate(
+            {"numbers": {"sales": "invalid"}, "summary": "Invalid"}
+        )
 
 
 @pytest.mark.asyncio

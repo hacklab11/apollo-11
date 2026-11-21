@@ -47,7 +47,7 @@ def _schema(model: type[BaseModel]) -> dict[str, Any]:
 
     def close(node: Any) -> None:
         if isinstance(node, dict):
-            if node.get("type") == "object":
+            if node.get("type") == "object" and "additionalProperties" not in node:
                 node["additionalProperties"] = False
             for value in node.values():
                 close(value)
