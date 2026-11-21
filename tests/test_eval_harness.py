@@ -708,6 +708,33 @@ def test_i2_requires_real_deferral_evidence_even_without_incident() -> None:
     assert not all(c["passed"] for c in harness.evaluate(entry, [], [wrong]))
 
 
+@pytest.mark.parametrize(
+    "verdict,country,passed",
+    [
+        ("DATA_ISSUE", "FR", True),
+        ("CONFIRMED", "FR", False),
+        ("DATA_ISSUE", "DE", False),
+    ],
+)
+def test_resolved_data_issue_supplies_matching_deferral_evidence(
+    verdict: str, country: str, passed: bool
+) -> None:
+    incident = make_incident_s7()
+    incident = incident.model_copy(
+        update={
+            "status": "resolved",
+            "verdict": verdict,
+            "entry": incident.entry.model_copy(
+                update={"segment": {"country": country}}
+            ),
+        }
+    )
+    results = harness.evaluate(
+        {"expect": {"deferral_required": {"country": "FR"}}}, [incident], []
+    )
+    assert results[0]["passed"] == passed
+
+
 def test_duplicate_incident_fails() -> None:
     incident = make_incident_s7()
     duplicate = incident.model_copy(update={"id": "duplicate"})

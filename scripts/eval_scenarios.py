@@ -393,7 +393,7 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 and t["output"].get("anomaly", {}).get("completeness", 1) < 0.9
             ]
             ok = bool(actual) or any(
-                i["status"] == "deferred"
+                (i["status"] == "deferred" or i["verdict"] == "DATA_ISSUE")
                 and wanted.items() <= i["entry"]["segment"].items()
                 for i in items
             )
