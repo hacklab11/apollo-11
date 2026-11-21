@@ -69,15 +69,12 @@ async def request(
     return response.raise_for_status()
 
 
-async def set_scenario(
-    client: httpx.AsyncClient,
-    scenario: Literal["I3", "S8"],
-    action: Literal["inject", "clear"] = "inject",
+async def inject_scenario(
+    client: httpx.AsyncClient, scenario: Literal["I3", "S8"]
 ) -> ScenarioState:
-    response = await request(client, "POST", f"/api/scenarios/{scenario}/{action}")
+    response = await request(client, "POST", f"/api/scenarios/{scenario}/inject")
     state = ScenarioState.model_validate_json(response.content)
-    timestamp = state.injected_ts if action == "inject" else state.cleared_ts
-    say(f"  {state.id} active={state.active} at {timestamp}")
+    say(f"  {state.id} active={state.active} at {state.injected_ts}")
     return state
 
 
@@ -89,11 +86,10 @@ async def step(client: httpx.AsyncClient, seconds: float) -> Status:
 
 async def prepare(client: httpx.AsyncClient, status: Status) -> None:
     response = await request(client, "GET", "/api/scenarios")
-    active = {
-        item.id: item
-        for item in SCENARIOS.validate_json(response.content)
-        if item.active
-    }
+    scenarios = SCENARIOS.validate_json(response.content)
+    if not {"I3", "S8"}.issubset(item.id for item in scenarios):
+        raise RuntimeError("D6 requires the simulator data source (data.source: sim)")
+    active = {item.id: item for item in scenarios if item.active}
     next_hour = status.sim_ts if status.tick == 0 else status.sim_ts + HOUR
     midnight = next_hour.replace(hour=0, minute=0, second=0, microsecond=0)
     if status.tick > 9 or next_hour != midnight + status.tick * HOUR:
@@ -101,7 +97,7 @@ async def prepare(client: httpx.AsyncClient, status: Status) -> None:
             "start with a fresh, paused world at midnight or I3 active by 09:00"
         )
     if not active and status.tick == 0:
-        await set_scenario(client, "I3")
+        await inject_scenario(client, "I3")
     elif set(active) != {"I3"} or active["I3"].injected_ts != midnight:
         raise RuntimeError("D6 needs only I3 active since midnight")
     for _ in range(status.tick, 9):
@@ -191,7 +187,7 @@ async def demo(client: httpx.AsyncClient, seconds: float) -> None:
         "partly loaded. Show why the monitor waits."
     ):
         status = await step(client, seconds)
-        state = await set_scenario(client, "S8")
+        state = await inject_scenario(client, "S8")
         injected = state.injected_ts
         if injected is None or injected != status.sim_ts + HOUR or injected.hour != 10:
             raise RuntimeError("S8 did not start at 10:00")
@@ -276,19 +272,12 @@ async def demo(client: httpx.AsyncClient, seconds: float) -> None:
             raise RuntimeError(
                 "the S8 incident did not show confirmation and a SellerOS price-revert acknowledgement"
             )
-        cleared = (await set_scenario(client, "S8", "clear")).cleared_ts
-        if cleared is None:
-            raise RuntimeError("S8 did not clear")
         async for current in incident_updates(client, incident.id, seconds):
             say(
                 f"  {current.id}: {current.status}; normal ticks={current.normal_ticks}; occurrences={current.occurrences}."
             )
             if current.status == "resolved":
-                if (
-                    current.resolved_ts is None
-                    or current.resolved_ts < cleared + (NORMAL_TICKS - 1) * HOUR
-                    or current.normal_ticks < NORMAL_TICKS
-                ):
+                if current.resolved_ts is None or current.normal_ticks < NORMAL_TICKS:
                     raise RuntimeError(
                         "the S8 incident resolved before three normal recovery ticks"
                     )
