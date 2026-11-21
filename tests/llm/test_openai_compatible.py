@@ -86,6 +86,8 @@ def transport(monkeypatch):
             assert request.headers["Authorization"] == "Bearer offline-placeholder"
             requests.append(json.loads(request.content))
             item = script.pop(0)
+            if isinstance(item, httpx.Response):
+                return item
             if isinstance(item, Exception):
                 raise item
             if isinstance(item, int):
@@ -223,6 +225,100 @@ async def test_retry_success(transport):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers,delay",
+    [
+        ({"Retry-After": "7"}, 7),
+        ({"Retry-After": "86400"}, 60),
+        ({"X-RateLimit-Reset": "1700000009"}, 9),
+        ({"X-RateLimit-Reset": "1700000009000"}, 9),
+        ({"Retry-After": "Tue, 14 Nov 2023 22:13:29 GMT"}, 9),
+        ({"Retry-After": "bad"}, 0.1),
+    ],
+)
+async def test_retry_honors_bounded_provider_delay(
+    transport, monkeypatch, headers, delay
+):
+    monkeypatch.setattr("eye.llm.client.time.time", lambda: 1700000000)
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    transport(
+        [
+            httpx.Response(
+                429,
+                headers=headers,
+                json={"error": {"message": "Free model quota exceeded"}},
+            ),
+            final(),
+        ]
+    )
+    assert (await run_agent(spec(), "go", "inv", discard)).value == 9
+    assert sleeps == [delay]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status,body",
+    [
+        (429, {"error": {"message": "Free model quota exceeded"}}),
+        (200, {"error": {"code": 429, "message": "Free model quota exceeded"}}),
+    ],
+)
+async def test_rate_limit_diagnostic_and_cooldown(transport, monkeypatch, status, body):
+    clock = [100.0]
+    monkeypatch.setattr("eye.llm.client.time.monotonic", lambda: clock[0])
+
+    async def sleep(seconds):
+        clock[0] += seconds
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    _, requests = transport(
+        [httpx.Response(status, json=body) for _ in range(3)] + [final()]
+    )
+    steps = []
+
+    async def collect(step):
+        steps.append(step)
+
+    with pytest.raises(LLMUnavailable, match="Free model quota exceeded"):
+        await run_agent(spec(), "go", "inv", collect)
+    assert len(requests) == 3
+    assert "429" in steps[-1].output_summary
+    with pytest.raises(LLMUnavailable, match="cooldown"):
+        await run_agent(spec(), "go", "inv", discard)
+    assert len(requests) == 3
+    clock[0] += 61
+    assert (await run_agent(spec(), "go", "inv", discard)).value == 9
+
+
+@pytest.mark.asyncio
+async def test_provider_error_envelope_retries_and_redacts(transport, monkeypatch):
+    async def sleep(seconds):
+        pass
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    error = {
+        "error": {
+            "code": 502,
+            "message": "Provider returned error offline-placeholder",
+            "metadata": {"raw": '{"error":{"message":"Upstream overloaded"}}'},
+        }
+    }
+    _, requests = transport([error] * 3)
+    with pytest.raises(LLMUnavailable) as caught:
+        await run_agent(spec(), "go", "inv", discard)
+    assert len(requests) == 3
+    assert "HTTP 200" in str(caught.value)
+    assert "502" in str(caught.value)
+    assert "Upstream overloaded" in str(caught.value)
+    assert "offline-placeholder" not in str(caught.value)
+
+
+@pytest.mark.asyncio
 async def test_provider_failure_matches_narrative_error_handler(transport):
     transport([401])
     steps = []
@@ -235,7 +331,10 @@ async def test_provider_failure_matches_narrative_error_handler(transport):
     assert isinstance(error.value, LLMUnavailable)
     assert str(error.value) == "Chat Completions HTTP 401"
     assert steps[-1].action == "note"
-    assert steps[-1].output_summary == "LLM unavailable after provider retries"
+    assert (
+        steps[-1].output_summary
+        == "LLM unavailable after provider retries: Chat Completions HTTP 401"
+    )
 
 
 @pytest.mark.asyncio
