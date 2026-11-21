@@ -10,7 +10,7 @@ The [live observatory](web/README.md) is served by Core. [Earlier API preview](d
 
 ### Local stack and rehearsal
 
-From a fresh checkout of `main` on a machine with [uv](https://docs.astral.sh/uv/getting-started/installation/):
+From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):
 
 ```sh
 uv python install 3.13
