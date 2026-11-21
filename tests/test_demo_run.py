@@ -182,12 +182,19 @@ async def test_demo_i3_hypothesis_does_not_swallow_s8(tmp_path, monkeypatch):
                             "S8 investigate decisions were swallowed by the I3 incident; "
                             f"investigated hours: {[a.ts.hour for a in investigations]}"
                         )
-                        assert incident.id == coupon.id
+                        preserved = store.get(coupon.id)
+                        assert preserved.root_cause == coupon.root_cause
+                        assert preserved.entry == coupon.entry
+                        assert incident.id != coupon.id
                         assert incident.summary == "S8 price typo"
                         assert incident.entry.ts >= injected
                         assert incident.updated_ts >= injected
                         assert incident.root_cause.first_change_ts == injected
-                        assert len(set(incident.investigation_ids)) >= 2
+                        assert len(incident.investigation_ids) == 1
+                        assert set(incident.investigation_ids).isdisjoint(
+                            coupon.investigation_ids
+                        )
+                        assert coupon.id in incident.related_incident_ids
                         assert llm.terminal_error() is None
                         assert len(provider_calls) <= 19
                 finally:

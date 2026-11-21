@@ -160,7 +160,11 @@ class IncidentStore:
         entry = decision.anomaly
         provisional = fingerprint(entry.metric, entry.segment)
         incidents = self.all()
-        active = [item for item in incidents if self._active(item)]
+        active = sorted(
+            (item for item in incidents if self._active(item)),
+            key=lambda item: (item.status == "investigating", item.entry.ts, item.id),
+            reverse=True,
+        )
         exact = [
             item
             for item in active

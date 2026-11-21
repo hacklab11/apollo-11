@@ -123,12 +123,17 @@ For a Sentinel decision `investigate`:
 
 An explicit `investigate` decision that matches an `open` or `persisting` incident
 requests fresh analysis, even if its previous root was confirmed. The orchestrator
-reserves that incident as `investigating` before queueing, replaces its entry with
-the new anomaly, and appends a fresh investigation id. Allow this at most once per
-two simulated hours, measured from the latest investigated entry timestamp; matches
-inside that cooldown only attach. This bounds repeated decisions for a persisting
-cause without letting an old diagnosis permanently suppress a new cause. Queued or
-running investigations only attach, and interrupted investigations resume their id.
+reuses a root-less `HYPOTHESIS` incident in place; otherwise it opens a linked incident
+so an innocent new change cannot erase the earlier diagnosis or historical exclusions.
+Reserve the target as `investigating` before queueing, with the new anomaly as entry
+and a fresh investigation id. Allow this at most once per two simulated hours,
+measured from the latest entry of the matched incident and its linked incidents
+(including innocent followups). Prefer matching queued/running investigations, then
+the most recent entry; never start a followup while a linked investigation is running.
+Matches inside the cooldown only attach. This bounds repeated decisions for a
+persisting cause without permanently suppressing a new cause. Interrupted investigations
+resume their id. In-place reinvestigations continue accumulating hourly impact while
+pending, without running resolution transitions until the investigation completes.
 
 ### 5.3 Upsert (after an investigation)
 

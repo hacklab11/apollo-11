@@ -446,10 +446,26 @@ class Orchestrator:
                     and item.entry.id == decision.anomaly.id
                     and item.occurrences == 1
                 )
+                related = [
+                    other
+                    for id_ in item.related_incident_ids
+                    if (other := self.incidents.get(id_)) is not None
+                ]
+                last_investigated = max(
+                    [item.entry.ts, *(other.entry.ts for other in related)]
+                )
                 if (
                     item.status in {"open", "persisting"}
-                    and decision.anomaly.ts - item.entry.ts >= _REINVESTIGATION_COOLDOWN
+                    and decision.anomaly.ts - last_investigated
+                    >= _REINVESTIGATION_COOLDOWN
+                    and not any(other.status == "investigating" for other in related)
                 ):
+                    if item.root_cause is not None or item.verdict != "HYPOTHESIS":
+                        previous = item
+                        item = self.incidents._new(decision.anomaly)
+                        item.related_incident_ids.append(previous.id)
+                        previous.related_incident_ids.append(item.id)
+                        self.incidents._save(previous)
                     # Reserve before dispatch so other matching candidates only attach.
                     item.status = "investigating"
                     item.entry = decision.anomaly

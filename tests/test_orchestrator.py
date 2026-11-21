@@ -263,20 +263,18 @@ async def test_automatic_reinvestigation_accounts_inflight_impact() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("verdict", ["HYPOTHESIS", "CONFIRMED"])
 @pytest.mark.parametrize("status", ["open", "persisting"])
 @pytest.mark.parametrize("failure", [False, True])
 async def test_reinvestigation_reserves_incident_and_replaces_findings(
-    verdict: str, status: str, failure: bool
+    status: str, failure: bool
 ) -> None:
     settings = Settings(sim={"autostart": False})
     store = IncidentStore(":memory:")
     previous = make_incident_s7()
     previous.status = status
-    previous.verdict = verdict
+    previous.verdict = "HYPOTHESIS"
     previous.investigation_ids = ["inv_previous"]
-    if verdict == "HYPOTHESIS":
-        previous.root_cause = None
+    previous.root_cause = None
     store._save(previous)
     started, release = asyncio.Event(), asyncio.Event()
     seen = []
@@ -384,7 +382,13 @@ async def test_reinvestigation_reserves_incident_and_replaces_findings(
             )
         )
         assert len(core._pending) == 1
-        assert len(store.get(previous.id).investigation_ids) == 3
+        queued = core._pending[0]
+        if failure:
+            assert queued.id == previous.id
+            assert len(store.get(previous.id).investigation_ids) == 3
+        else:
+            assert queued.id != previous.id
+            assert len(store.get(previous.id).investigation_ids) == 2
     finally:
         release.set()
         await core.close()
@@ -421,6 +425,120 @@ async def test_innocent_incident_does_not_block_new_investigation() -> None:
         assert core._pending[0].id != old.id
         assert store.get(old.id).status == "innocent"
     finally:
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous_verdict", ["CONFIRMED", "HYPOTHESIS"])
+@pytest.mark.parametrize("new_verdict", ["INNOCENT", "CONFIRMED", "HYPOTHESIS"])
+async def test_followup_preserves_established_history_and_cooldown(
+    previous_verdict: str, new_verdict: str
+) -> None:
+    settings = Settings(sim={"autostart": False})
+    store = IncidentStore(":memory:")
+    old = make_incident_s7()
+    old.status, old.verdict = "open", previous_verdict
+    old.investigation_ids = ["inv_established"]
+    store._save(old)
+    entry = old.entry.model_copy(update={"id": "new", "ts": old.entry.ts + 2 * HOUR})
+    excluded = store.excluded_hours(entry.ts)
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def investigate(anomaly, on_step):
+        started.set()
+        await release.wait()
+        root = (
+            None
+            if new_verdict == "INNOCENT"
+            else old.root_cause.model_copy(
+                update={
+                    "id": "hyp_new",
+                    "cause_type": "price_change",
+                    "first_change_ts": entry.ts,
+                }
+            )
+        )
+        return InvestigationResult(
+            investigation_id="scripted",
+            entry=anomaly,
+            verdict=new_verdict,
+            summary="New change",
+            root_cause=root,
+            hypotheses=[root] if root else [],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=1,
+            stop_reason="innocent" if new_verdict == "INNOCENT" else "confirmed",
+        )
+
+    core = Orchestrator(
+        settings,
+        Clock(entry.ts),
+        Sentinel(0),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    try:
+        decision = SentinelDecision(
+            anomaly=entry, action="investigate", reason="New cause"
+        )
+        core._match(decision)
+        core._match(decision)
+        assert len(core._pending) == 1
+        queued = core._pending[0]
+        assert queued.id != old.id
+        assert store.get(old.id).status == "open"
+        assert queued.related_incident_ids == [old.id]
+        core._dispatch()
+        await asyncio.wait_for(started.wait(), 2)
+        core._match(decision)
+        assert len(core._tasks) == 1 and not core._pending
+        # Related investigations also suppress duplicates after the cooldown expires.
+        core._match(
+            decision.model_copy(
+                update={
+                    "anomaly": old.entry.model_copy(
+                        update={"id": "later", "ts": entry.ts + 3 * HOUR}
+                    )
+                }
+            )
+        )
+        assert len(core._tasks) == 1 and not core._pending
+        release.set()
+        await asyncio.gather(*core._tasks)
+        preserved = store.get(old.id)
+        assert preserved.verdict == previous_verdict
+        assert preserved.root_cause == old.root_cause
+        assert preserved.entry == old.entry
+        assert excluded <= store.excluded_hours(entry.ts)
+        followups = [item for item in store.all() if item.id != old.id]
+        assert len(followups) == 1 and followups[0].verdict == new_verdict
+        core._match(
+            decision.model_copy(
+                update={
+                    "anomaly": entry.model_copy(
+                        update={"id": "next_hour", "ts": entry.ts + HOUR}
+                    )
+                }
+            )
+        )
+        assert not core._pending
+        core._match(
+            decision.model_copy(
+                update={
+                    "anomaly": entry.model_copy(
+                        update={"id": "cooldown_done", "ts": entry.ts + 2 * HOUR}
+                    )
+                }
+            )
+        )
+        assert len(core._pending) == 1
+    finally:
+        release.set()
         await core.close()
         store.close()
 
