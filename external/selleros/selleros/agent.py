@@ -41,7 +41,13 @@ async def answer(store: Store, request: SpecialistRequest) -> SpecialistResponse
         )
     data = ScopedData(store, snapshot, scope, request.window_end_ts)
     tools = []
-    for name in ("get_repricer", "get_costs", "get_price_history", "get_supplier_eta"):
+    for name in (
+        "get_repricer",
+        "get_costs",
+        "get_price_history",
+        "get_supplier_eta",
+        "price_intent_check",
+    ):
 
         def query(selection: Selection, name: str = name) -> ToolOutput:
             return data.query(name, selection)
@@ -49,7 +55,7 @@ async def answer(store: Store, request: SpecialistRequest) -> SpecialistResponse
         tools.append(
             ToolSpec(
                 name,
-                f"Read scoped seller data: {name}. Costs include deterministic margin per unit.",
+                f"Read scoped seller data: {name}. Costs include deterministic margin per unit. Price intent includes the last change, unit cost and computed verdict.",
                 Selection,
                 query,
             )

@@ -199,6 +199,11 @@ class TrailStep(BaseModel):
     tokens_out: int = 0
 
 
+class Symptom(BaseModel):
+    node: str
+    first_change_ts: datetime
+
+
 class InvestigationResult(BaseModel):
     investigation_id: str
     entry: Anomaly
@@ -206,6 +211,7 @@ class InvestigationResult(BaseModel):
     summary: str
     root_cause: Hypothesis | None
     hypotheses: list[Hypothesis]
+    symptoms: list[Symptom] = Field(default_factory=list)
     contributions: list[Contribution]
     loop: list[str] | None = None
     trigger: str | None = None
@@ -236,6 +242,7 @@ class Incident(BaseModel):
     contributions: list[Contribution]
     root_cause: Hypothesis | None
     hypotheses: list[Hypothesis]
+    symptoms: list[Symptom] = Field(default_factory=list)
     investigation_ids: list[str]
     open_questions: list[str]
     suggested_actions: list[str]

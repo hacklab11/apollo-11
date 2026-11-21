@@ -1,3 +1,4 @@
+import json
 import os
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
@@ -560,3 +561,74 @@ async def test_data_issue_requires_stale_entry_window(
     )
     assert result.verdict == "DATA_ISSUE"
     assert result.stop_reason == "data_issue"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cause_mode", ["root", "measured", "trigger", "none", "pending", "scoped"]
+)
+async def test_downstream_symptoms(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    cause_mode: str,
+) -> None:
+    seed(world, "s3")
+    world.execute(
+        "UPDATE orders_hourly SET units = 128, gmv = 2560 WHERE ts = ? AND country = 'DE'",
+        [START],
+    )
+    registry = load_registry(world)
+    graph = make_graph(registry, "s3")
+    for src, dst in [
+        ("search_conversion", "orders"),
+        ("orders", "gmv"),
+        ("search_relevance", "search_ctr"),
+        ("search_relevance", "searches"),
+    ]:
+        graph.add_edge(
+            Edge(
+                id=f"{src}:{dst}",
+                src=src,
+                dst=dst,
+                type="causal_hypothesis",
+                status="hypothesis",
+                confidence=0.5,
+                evidence={},
+                created_by="seed",
+            )
+        )
+    if cause_mode == "pending":
+        registry.get("search_ctr").status = "pending"
+    answer = submission(hypothesis(), "HYPOTHESIS")
+    if cause_mode == "scoped":
+        world.execute(
+            "UPDATE orders_hourly SET units = 128, gmv = 2560 WHERE country = 'DE' AND platform = 'web'"
+        )
+        answer.root_cause.segment = {"country": "DE", "platform": "web"}
+    if cause_mode == "measured":
+        answer.root_cause.first_change_ts = None
+    if cause_mode in {"trigger", "none"}:
+        answer.root_cause = None
+        answer.trigger = "H1" if cause_mode == "trigger" else None
+    monkeypatch.setattr(
+        "eye.agents.detective.run_agent", AsyncMock(return_value=answer)
+    )
+    steps: list[TrailStep] = []
+
+    async def trail(step: TrailStep) -> None:
+        steps.append(step)
+
+    entry = anomaly("s3").model_copy(update={"ts": END})
+    result = await Detective(world, registry, graph).investigate(entry, trail)
+    symptoms = [item.model_dump(mode="json") for item in result.symptoms]
+    print("symptoms=" + json.dumps(symptoms, sort_keys=True))
+    expected = (
+        []
+        if cause_mode in {"none", "scoped"}
+        else ["gmv", "orders", "search_conversion"]
+    )
+    assert [item.node for item in result.symptoms] == expected
+    assert all(item.first_change_ts == START + HOUR for item in result.symptoms)
+    assert bool(expected) == any(
+        step.action == "note" and step.tool == "first_change" for step in steps
+    )
