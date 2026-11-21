@@ -60,7 +60,9 @@ def _world(
             "FROM seller_actions ORDER BY ts, ordinal"
         ).fetchall():
             seller_actions.setdefault(ts, []).append(
-                SellerAction(key=key, seller_id=seller_id, sku=sku, kind=kind, price=price)
+                SellerAction(
+                    key=key, seller_id=seller_id, sku=sku, kind=kind, price=price
+                )
             )
         if not exists:
             with closing(Simulator(settings, db_path=path)) as sim:
@@ -89,6 +91,7 @@ def _world(
                             sim.step(seller_actions=seller_actions.get(sim.now, []))
                     finally:
                         sim.store = scratch_store
+                sim.selleros_export.write(start)
                 scenarios = (
                     scenario_module.ScenarioManager(sim) if scenario_module else None
                 )

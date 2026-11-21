@@ -76,8 +76,12 @@ class JournalSellerActionFeed:
                         key=key,
                         seller_id=record.seller_id,
                         sku=record.sku,
-                        kind="set_price" if record.status == "reverted" else "pause_repricer",
-                        price=record.restore_price if record.status == "reverted" else None,
+                        kind="set_price"
+                        if record.status == "reverted"
+                        else "pause_repricer",
+                        price=record.restore_price
+                        if record.status == "reverted"
+                        else None,
                     )
                 )
             self._seen.update(action.key for action in actions)

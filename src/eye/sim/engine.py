@@ -15,7 +15,11 @@ from eye.sim.demand import BASE_PSP_LATENCY_MS, PSPS, DemandModifiers, generate_
 from eye.sim.finance import Finance
 from eye.sim.market import Market
 from eye.sim.pipeline import Pipeline
-from eye.sim.seller_actions import JournalSellerActionFeed, SellerAction, SellerActionFeed
+from eye.sim.seller_actions import (
+    JournalSellerActionFeed,
+    SellerAction,
+    SellerActionFeed,
+)
 from eye.sim.selleros_export import SellerOSExport
 from eye.sim.store import WORLD_DB, Batches, Store
 from eye.sim.world import build_world
@@ -94,8 +98,14 @@ class Simulator:
         for hook in self.pre_demand_hooks:
             hook(self, hour)
         if seller_actions is None:
-            self._journal_feed.path = self.selleros_export.path.with_name("actions.jsonl")
-            feed = self.seller_action_feed if self.seller_action_feed is not None else self._journal_feed
+            self._journal_feed.path = self.selleros_export.path.with_name(
+                "actions.jsonl"
+            )
+            feed = (
+                self.seller_action_feed
+                if self.seller_action_feed is not None
+                else self._journal_feed
+            )
             seller_actions = feed.pending() if hour.ts >= self._start else []
         actions = list(
             {
@@ -112,7 +122,15 @@ class Simulator:
                 )
         if actions:
             hour.batches["seller_actions"] = [
-                (action.key, hour.ts, index, action.seller_id, action.sku, action.kind, action.price)
+                (
+                    action.key,
+                    hour.ts,
+                    index,
+                    action.seller_id,
+                    action.sku,
+                    action.kind,
+                    action.price,
+                )
                 for index, action in enumerate(actions)
             ]
         for psp_index, psp in enumerate(PSPS):

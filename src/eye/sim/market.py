@@ -7,7 +7,6 @@ from math import ceil
 from numpy.random import Generator
 
 from eye.sim.seller_actions import SellerAction
-
 from eye.sim.store import Batches, Row
 from eye.sim.world import HYPED_SKUS, Offer, World
 
