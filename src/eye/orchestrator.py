@@ -36,6 +36,7 @@ type Investigate = Callable[[Anomaly, StepSink], Awaitable[InvestigationResult]]
 type AddMetric = Callable[
     [AddMetricRequest, Sequence[datetime], StepSink], Awaitable[AddMetricResult]
 ]
+type Refine = Callable[[Sequence[datetime], StepSink], Awaitable[None]]
 type EventType = Literal[
     "tick",
     "anomaly",
@@ -120,6 +121,7 @@ class Orchestrator:
         a2a: A2AClient | None = None,
         investigate: Investigate | None = None,
         add_metric: AddMetric | None = None,
+        refine: Refine | None = None,
         invalidate: Callable[[], None] = lambda: None,
         record_scenario: Callable[[ScenarioId, datetime, bool], None] = lambda *_: None,
     ) -> None:
@@ -134,6 +136,7 @@ class Orchestrator:
         self.a2a = a2a
         self.investigate = investigate
         self.add_metric = add_metric
+        self.refine = refine
         self.invalidate = invalidate
         self.record_scenario = record_scenario
         self.events = EventBus()
@@ -184,6 +187,8 @@ class Orchestrator:
             self.emit("agent_status", {"name": name, **self._agents[name].model_dump()})
 
     async def start(self) -> None:
+        if self.refine is not None:
+            await self.refine(self.clean_hours(), self.record_step)
         await self.refresh_agents()
         if self.settings.sim.autostart:
             self.resume()
@@ -410,6 +415,10 @@ class Orchestrator:
         assert self.investigate is not None
         entry = item.entry
         investigation_id = f"inv_{uuid4().hex}"
+        current = self.incidents.get(item.id)
+        assert current is not None
+        current.investigation_ids.append(investigation_id)
+        self.incidents._save(current)
         self.emit(
             "investigation_started",
             {
