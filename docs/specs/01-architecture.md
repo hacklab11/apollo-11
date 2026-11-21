@@ -92,13 +92,13 @@ apollo-11/
     index.html
     app.js
     styles.css
-    mock/*.json                  # mock API responses (13-api-and-ui.md)
   scripts/
     dev.sh
     reset.sh
     demo_run.py                  # scripted demo timeline
     eval_scenarios.py            # scenario oracle checks
   tests/
+    fixtures/web/                # JSON/JSONL API response fixtures (13-api-and-ui.md)
     oracle/scenarios.yaml        # expected results per scenario
     ...
   docs/domain-notes/             # P3's notes, pasted into prompts

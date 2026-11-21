@@ -1,7 +1,7 @@
 # 02 Contracts
 
 All shared data shapes. Implement them in `src/eye/contracts.py` with pydantic v2.
-Every component, mock file, API, MCP tool, and A2A message uses these models.
+Every component, test fixture, API, MCP tool, and A2A message uses these models.
 Change a contract only in task T00 or with agreement from both developers. Then update this file first.
 
 Conventions:
@@ -322,7 +322,7 @@ class ScenarioState(BaseModel):
     cleared_ts: datetime | None
 ```
 
-## 11. Mock files
+## 11. Response fixtures
 
-`web/mock/` holds one JSON file per API response in `13-api-and-ui.md`, valid against these models.
-Task T00 generates them from small factory functions in `tests/factories.py`, so the mocks stay valid when contracts change.
+`tests/fixtures/web/` holds JSON response fixtures for the API in `13-api-and-ui.md`, valid against these models, plus the `events.jsonl` stream fixture.
+`scripts/make_mocks.py` generates them from factory functions in `tests/factories.py`; `tests/test_contracts.py` validates them when contracts change. The UI always calls the live API and does not load these test fixtures.
