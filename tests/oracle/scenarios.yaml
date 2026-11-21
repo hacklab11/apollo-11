@@ -126,6 +126,7 @@ S7: &S7
 S8:
   play: [I3@0, S8@10]
   run_hours: 20
+  on_incident_open: add_metric(fee_per_order)
   expect:
     <<: *S8_expect
     verdict_any: [HYPOTHESIS, CONFIRMED]

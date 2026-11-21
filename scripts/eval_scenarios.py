@@ -24,10 +24,11 @@ from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
 from eye.api.app import create_app
-from eye.config import load_settings
+from eye.config import LlmSettings, load_settings
 from eye.contracts import (
     AddMetricRequest,
     Incident,
+    ScenarioState,
     SellerAlertAck,
     SpecialistRequest,
     SpecialistResponse,
@@ -63,13 +64,30 @@ GROUP BY ts, country, platform, category, seller_tier, channel""",
 }
 
 
-def request_identity(request: dict) -> dict:
-    return {
+def request_identity(request: dict, settings: LlmSettings | None = None) -> dict:
+    identity = {
         "model": request["model"],
         "system": "".join(b["text"] for b in request["system"]),
         "tools": [t["name"] for t in request["tools"]],
         "messages": request["messages"],
     }
+    if settings is not None and settings.provider != "anthropic":
+        identity["provider"] = settings.provider
+        identity["base_url"] = settings.base_url
+    return identity
+
+
+def override_llm(
+    settings: LlmSettings, provider: str | None, model: str | None
+) -> None:
+    if provider is not None:
+        settings.provider = provider
+        if provider == "openai_compatible":
+            settings.base_url = "https://openrouter.ai/api/v1"
+            settings.api_key_env = "OPENROUTER_API_KEY"
+            model = model or "nvidia/nemotron-3-ultra-550b-a55b:free"
+    if model is not None:
+        settings.models = {"default": model}
 
 
 def digest(value: Any) -> str:
@@ -89,6 +107,23 @@ def append_json(path: Path, value: dict) -> None:
         output.write(json.dumps(value, sort_keys=True) + "\n")
 
 
+def scenario_audit(state: ScenarioState, params: dict) -> TrailStep:
+    return TrailStep(
+        id=f"eval:scenario:{state.id}:{state.injected_ts.isoformat()}",
+        investigation_id="eval:scenarios",
+        n=1,
+        real_ts=state.injected_ts,
+        actor="orchestrator",
+        action="decision",
+        output_summary=f"Injected {state.id}",
+        output={
+            "scenario_id": state.id,
+            "inject_ts": state.injected_ts.isoformat(),
+            "scenario_seller": params.get("seller_id"),
+        },
+    )
+
+
 class EvalLLMClient(LLMClient):
     """Preserve request identities and prohibit replay's live fallback."""
 
@@ -101,7 +136,7 @@ class EvalLLMClient(LLMClient):
         self.replayed_calls = 0
 
     async def create(self, request: dict) -> Any:
-        identity = request_identity(request)
+        identity = request_identity(request, self.settings)
         key = digest(identity)
         if self.trace is not None:
             append_json(self.trace, {"key": key, "identity": identity})
@@ -455,7 +490,12 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
             actual = [
                 t["output"]["verdict"]
                 for t in trails
-                if t.get("output") and "verdict" in t["output"]
+                if t["actor"] == "orchestrator"
+                and t["action"] == "decision"
+                and t["investigation_id"]
+                in {inv for i in items for inv in i["investigation_ids"]}
+                and t.get("output")
+                and "verdict" in t["output"]
             ]
             remaining = iter(actual)
             ok = all(any(value == verdict for value in remaining) for verdict in wanted)
@@ -657,7 +697,11 @@ def evaluate(
         deadline = spec.get("max_ticks_to_detect")
         spec = spec.get("expect", spec)
         candidates = matching_incidents(entry, raw, steps, spec, scenario)
-        sentinel_steps = [t for t in steps if t["actor"] == "sentinel"]
+        sentinel_steps = [
+            t
+            for t in steps
+            if t["actor"] == "sentinel" or t["investigation_id"] == "eval:scenarios"
+        ]
         choices = [
             (
                 i,
@@ -731,19 +775,6 @@ def evaluate(
             campaign_id = (
                 "black-friday-2026" if name == "I1" else "coupon-day-electronics"
             )
-            start = (
-                datetime.fromisoformat(entry["start_ts"])
-                if "start_ts" in entry
-                else None
-            )
-            first_fault = min(
-                (
-                    int(p.rsplit("@", 1)[1])
-                    for p in entry.get("play", [])
-                    if p.startswith("S")
-                ),
-                default=0,
-            )
             other = [
                 i
                 for i in incidents
@@ -755,10 +786,6 @@ def evaluate(
                     in (
                         i.root_cause.statement if i.root_cause else i.summary
                     ).casefold()
-                    or (
-                        start is not None
-                        and start <= i.opened_ts < start + first_fault * HOUR
-                    )
                 )
             ]
             campaign_spec = spec.get("expect", spec)
@@ -803,6 +830,9 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "trails": [],
         }
     settings = load_settings(ROOT / "config/settings.yaml")
+    override_llm(
+        settings.llm, getattr(args, "provider", None), getattr(args, "model", None)
+    )
     settings.sim.seed = args.seed
     settings.sim.autostart = False
     settings.orchestrator.max_concurrent_investigations = 1
@@ -962,15 +992,22 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
         actions = ConditionalActions(entry, DEMO_METRICS)
+        scenario_audits: list[TrailStep] = []
         try:
             for hour in range(entry["run_hours"]):
                 for command in entry["play"]:
                     action, at = command.rsplit("@", 1)
                     if int(at) == hour:
                         clear = action.startswith("clear(")
-                        await core.set_scenario(
+                        state = await core.set_scenario(
                             action[6:-1] if clear else action, active=not clear
                         )
+                        if not clear:
+                            scenario_audits.append(
+                                scenario_audit(
+                                    state, core.scenarios.params.get(action, {})
+                                )
+                            )
                 await core.step_once()
                 for decision in core.decisions:
                     if decision.anomaly.ts == core.sim_ts:
@@ -993,7 +1030,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             await core.close()
             await world_http.aclose()
         incidents = store.all()
-        trails = stored_trails(store)
+        trails = stored_trails(store) + scenario_audits
         checks = evaluate(entry, incidents, trails)
         replay_misses = llm.replay_misses + a2a.replay_misses
         if replay_misses:
@@ -1028,6 +1065,8 @@ async def main() -> int:
     selection.add_argument("--scenario")
     selection.add_argument("--all", action="store_true")
     parser.add_argument("--mode", choices=["live", "replay"], default="replay")
+    parser.add_argument("--provider", choices=["anthropic", "openai_compatible"])
+    parser.add_argument("--model")
     parser.add_argument("--record", type=Path)
     parser.add_argument("--record-dir", type=Path)
     parser.add_argument("--seed", type=int, default=42)

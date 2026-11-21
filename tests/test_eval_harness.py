@@ -43,6 +43,132 @@ def test_oracle_ids() -> None:
     assert next(iter(oracle)) == "D6"
 
 
+@pytest.mark.parametrize("include_audit", [True, False])
+def test_scenario_audit_supplies_injection_and_seller_evidence(
+    include_audit: bool,
+    tmp_path: Path,
+) -> None:
+    incident = make_incident_s7()
+    root = incident.root_cause.model_copy(update={"first_change_ts": CAMPAIGN_TS})
+    incident = incident.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS,
+            "summary": "Price mistake for S-42",
+            "root_cause": root,
+        }
+    )
+    state = harness.ScenarioState(
+        id="S8",
+        title="Price typo",
+        active=True,
+        injected_ts=CAMPAIGN_TS,
+        cleared_ts=None,
+    )
+    audit = harness.scenario_audit(state, {"seller_id": "S-42"})
+    defer = TrailStep(
+        id="partial",
+        investigation_id="sentinel:partial",
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="sentinel",
+        action="decision",
+        output_summary="Partial hour",
+        output={
+            "action": "defer",
+            "anomaly": {"ts": CAMPAIGN_TS.isoformat(), "completeness": 0.5},
+        },
+    )
+    entry = {
+        "play": ["S8@0"],
+        "expect": {
+            "first_change_at_inject": "S8",
+            "first_hour_deferred": "S8",
+            "first_hour_completeness": {"scenario": "S8", "value": 0.5},
+            "must_mention_scenario_seller": "S8",
+        },
+    }
+    scenario_audits = [audit] if include_audit else []
+    with harness.closing(harness.IncidentStore(tmp_path / "ops.duckdb")) as store:
+        store.add_step(defer)
+        results = harness.evaluate(
+            entry, [incident], harness.stored_trails(store) + scenario_audits
+        )
+        assert store.trail("eval:scenarios") == []
+        assert harness.stored_trails(store) == [defer]
+    assert all(c["passed"] == include_audit for c in results)
+
+
+@pytest.mark.parametrize(
+    "provider,model,expected_provider,expected_model",
+    [
+        (None, None, "anthropic", "original"),
+        (
+            "openai_compatible",
+            None,
+            "openai_compatible",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+        ),
+        ("openai_compatible", "custom/model", "openai_compatible", "custom/model"),
+        (None, "custom/model", "anthropic", "custom/model"),
+    ],
+)
+def test_provider_and_model_overrides(
+    provider: str | None, model: str | None, expected_provider: str, expected_model: str
+) -> None:
+    settings = LlmSettings(models={"default": "original", "sentinel": "original"})
+    harness.override_llm(settings, provider, model)
+    assert settings.provider == expected_provider
+    assert settings.model_for("sentinel") == expected_model
+    if provider == "openai_compatible":
+        assert settings.base_url == "https://openrouter.ai/api/v1"
+        assert settings.api_key_env == "OPENROUTER_API_KEY"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_recording_replays_with_matching_provider_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def respond(request: harness.httpx.Request) -> harness.httpx.Response:
+        calls.append(request)
+        return harness.httpx.Response(
+            200,
+            json={
+                "id": "offline",
+                "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    settings = LlmSettings(mode="record", cache_path=tmp_path / "fixture.jsonl")
+    harness.override_llm(settings, "openai_compatible", None)
+    request = {
+        "model": settings.model_for("sentinel"),
+        "max_tokens": 1024,
+        "system": [],
+        "tools": [],
+        "messages": [],
+    }
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test")
+    client = harness.EvalLLMClient(settings)
+    async with harness.httpx.AsyncClient(
+        transport=harness.httpx.MockTransport(respond)
+    ) as http:
+        client._http_client = http
+        expected = await client.create(request)
+    entry = harness.json.loads(settings.cache_path.read_text())
+    assert entry["key"] == harness.digest(harness.request_identity(request, settings))
+    assert entry["key"] != harness.digest(harness.request_identity(request))
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    settings.mode = "replay"
+    replay = harness.EvalLLMClient(settings)
+    assert await replay.create(request) == expected
+    assert replay.replay_misses == 0
+    assert replay.replayed_calls == 1
+    assert len(calls) == 1
+
+
 def test_recording_replaces_old_responses_without_touching_replay(
     tmp_path: Path,
 ) -> None:
@@ -355,6 +481,88 @@ def test_demo_sql_matches_documented_cartographer_example() -> None:
 SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
 GROUP BY ts, country, platform, category, seller_tier, channel"""
     )
+
+
+@pytest.mark.asyncio
+async def test_s8_registers_its_expected_demo_metric_on_open() -> None:
+    entry = deepcopy(harness.load_oracle()["S8"])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    actions = harness.ConditionalActions(entry, harness.DEMO_METRICS)
+    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    await actions.poll(core, [demo_incident()], [])
+    core.register_metric.assert_awaited_once_with(
+        harness.DEMO_METRICS[entry["expect"]["metric_attached"]["metric"]]
+    )
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_verdict_sequence_uses_only_matching_investigation_snapshots(
+    confirmed: bool,
+) -> None:
+    incident = make_incident_s7()
+    step = TrailStep(
+        id="health",
+        investigation_id="sentinel",
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="sentinel",
+        action="tool_call",
+        tool="check_freshness",
+        output_summary="Fresh",
+        output={"verdict": "ok"},
+    )
+    hypothesis = step.model_copy(
+        update={
+            "id": "hypothesis",
+            "investigation_id": incident.investigation_ids[0],
+            "actor": "orchestrator",
+            "action": "decision",
+            "tool": None,
+            "output": {"verdict": "HYPOTHESIS"},
+        }
+    )
+    confirmation = hypothesis.model_copy(
+        update={
+            "id": "confirmation",
+            "output": {"verdict": "CONFIRMED"},
+            "investigation_id": incident.investigation_ids[0]
+            if confirmed
+            else "unrelated",
+        }
+    )
+    result = harness.evaluate(
+        {"expect": {"verdict_sequence": ["HYPOTHESIS", "CONFIRMED"]}},
+        [incident],
+        [step, hypothesis, confirmation],
+    )[0]
+    assert result["passed"] == confirmed
+    assert result["actual"] == (
+        ["HYPOTHESIS", "CONFIRMED"] if confirmed else ["HYPOTHESIS"]
+    )
+
+
+@pytest.mark.parametrize("name", ["S8", "D6"])
+def test_early_unrelated_alert_is_not_attributed_to_coupon_day(name: str) -> None:
+    entry = deepcopy(harness.load_oracle()[name])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    incident = make_incident_s7()
+    incident = incident.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS,
+            "root_cause": None,
+            "hypotheses": [],
+            "summary": "Toys ad revenue share changed",
+            "entry": incident.entry.model_copy(
+                update={"metric": "ad_revenue", "segment": {"category": "toys"}}
+            ),
+        }
+    )
+    checks = {c["check"]: c for c in harness.evaluate(entry, [incident], [])}
+    assert checks["also.I3.status_any"] == {
+        "check": "also.I3.status_any",
+        "passed": True,
+        "actual": [],
+    }
 
 
 def test_mentions_report_only_found_and_missing_tokens() -> None:
