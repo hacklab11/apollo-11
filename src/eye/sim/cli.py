@@ -61,7 +61,14 @@ def _generate(
                     for scenario in schedule.get(index, ()):
                         inject(sim, scenario)
                     sim.step()
-        destination.replace(WORLD_DB)
+        # Replace only simulator tables while DuckDB holds the destination's writer lock.
+        with duckdb.connect(str(WORLD_DB)) as con:
+            con.execute("ATTACH ? AS generated (READ_ONLY)", [str(destination)])
+            statements = [
+                f"CREATE OR REPLACE TABLE {table} AS FROM generated.{table}"
+                for table in TABLES
+            ]
+            con.execute(";".join(["BEGIN", *statements, "COMMIT"]))
     print(
         json.dumps(
             {
@@ -75,7 +82,10 @@ def _generate(
 
 def _stats(con: duckdb.DuckDBPyConnection) -> None:
     start, end = con.execute("SELECT min(ts), max(ts) FROM traffic_hourly").fetchone()
-    counts = {table: con.table(table).count("*").fetchone()[0] for table in TABLES}
+    counts = {
+        table: con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        for table in TABLES
+    }
     print(
         json.dumps(
             {
