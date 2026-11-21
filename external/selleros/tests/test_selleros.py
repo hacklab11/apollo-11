@@ -148,7 +148,6 @@ async def test_card(store: Store) -> None:
     [
         ("S-14", "E02", "manual", "likely_error"),
         ("S-14", "E04", "manual", "likely_error"),
-        ("S-14", "E05", "manual", "intended"),
         ("S-03", "E02", "repricer", "intended"),
         ("S-07", "E02", "repricer", "intended"),
     ],
@@ -185,10 +184,13 @@ def test_price_intent_s8(
 def test_price_intent_scope_and_missing_history(s8_store: Store) -> None:
     snapshot = s8_store.read()
     data = ScopedData(s8_store, snapshot, Selection(skus=["E02"]), AS_OF)
-    assert data.query("price_intent_check", Selection(skus=["H01"])).rows == []
+    assert data.query("price_intent_check", Selection(skus=["E04"])).rows == []
     assert data.query("price_intent_check", Selection(seller_ids=["S-55"])).rows == []
     data = ScopedData(s8_store, snapshot, Selection(seller_ids=["S-14"]), AS_OF)
-    assert data.query("price_intent_check", Selection(skus=["E06"])).rows == []
+    data.sellers[0].price_history = [
+        p for p in data.sellers[0].price_history if p.sku != "E04"
+    ]
+    assert data.query("price_intent_check", Selection(skus=["E04"])).rows == []
     before = ScopedData(
         s8_store, snapshot, Selection(skus=["E02"]), datetime(2026, 12, 25, tzinfo=UTC)
     )
@@ -196,6 +198,32 @@ def test_price_intent_scope_and_missing_history(s8_store: Store) -> None:
     assert rows[0]["new"] == 99
     assert rows[0]["old"] is None
     assert rows[0]["verdict"] == "intended"
+
+
+@pytest.mark.parametrize("price", [60, 70])
+def test_manual_price_at_or_above_cost_is_intended(
+    s8_store: Store, price: float
+) -> None:
+    snapshot = s8_store.read()
+    for point in snapshot.sellers[0].price_history:
+        if point.sku == "E02" and point.source == "manual":
+            point.price = price
+    data = ScopedData(s8_store, snapshot, Selection(seller_ids=["S-14"]), AS_OF)
+    rows = data.query("price_intent_check", Selection(skus=["E02"])).rows
+    assert rows[0]["source"] == "manual"
+    assert rows[0]["verdict"] == "intended"
+    ack = s8_store.receive_alert(
+        snapshot,
+        SellerAlert(
+            incident_id="s8",
+            seller_ids=["S-14"],
+            skus=[],
+            summary="manual pricing error",
+            recommended_action="revert manual price",
+        ),
+    )
+    assert ack.actions_taken == ["reverted manual price for S-14 on E04"]
+    assert s8_store.paused == set()
 
 
 @pytest.mark.asyncio
@@ -211,7 +239,7 @@ async def test_price_intent_tool_roundtrip(s8_store: Store) -> None:
                     "answered": True,
                     "findings": [
                         {
-                            "claim": "S-14 manual E02 price is likely_error",
+                            "claim": "S-14 manual E02 price was not intended: it was a mistake",
                             "numbers": {
                                 "old": 99,
                                 "new": 9.9,
@@ -230,18 +258,19 @@ async def test_price_intent_tool_roundtrip(s8_store: Store) -> None:
         ],
         seen,
     )
-    result = await rpc(
-        s8_store, request("price_intent_check S-14 E02").model_dump(mode="json")
-    )
+    req = request("Was the price change for S-14 E02 intended?")
+    req.context = "A planned Electronics coupon day offers 10% platform-funded coupons."
+    result = await rpc(s8_store, req.model_dump(mode="json"))
     task = result["result"]["task"]
     assert task["status"]["state"] == "TASK_STATE_COMPLETED"
     assert (
-        "likely_error"
+        "not intended: it was a mistake"
         in task["artifacts"][0]["parts"][0]["data"]["findings"][0]["claim"]
     )
     evidence = json.loads(seen[1]["messages"][-1]["content"][0]["content"])
     assert evidence["rows"][0]["verdict"] == "likely_error"
     assert evidence["rows"][0]["unit_cost"] == 60
+    assert "not intended: it was a mistake" in seen[0]["system"][0]["text"]
     assert s8_store.paused == set()
     assert not (s8_store.directory / "actions.jsonl").exists()
 
@@ -293,13 +322,12 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
     ack = task["artifacts"][0]["parts"][0]["data"]
     assert ack == {
         "received": True,
-        "actions_taken": ["reverted manual price for S-14 on E02, E04, H01"],
+        "actions_taken": ["reverted manual price for S-14 on E02, E04"],
     }
     assert s8_store.paused == set()
     assert {key[:2] for key in s8_store.reverted} == {
         ("S-14", "E02"),
         ("S-14", "E04"),
-        ("S-14", "H01"),
     }
     records = [
         json.loads(line)
@@ -307,7 +335,7 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
     ]
     assert len(records) == 1
     assert records[0]["seller_id"] == "S-14"
-    assert records[0]["skus"] == ["E02", "E04", "H01"]
+    assert records[0]["skus"] == ["E02", "E04"]
     assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
 
 
@@ -317,7 +345,7 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
         ([], ["E02"]),
         (["S-03", "S-07"], []),
         (["S-03", "S-07"], ["E02"]),
-        (["S-14"], ["E05", "E06"]),
+        (["S-14"], ["unknown"]),
         (["S-55"], ["E02"]),
     ],
 )

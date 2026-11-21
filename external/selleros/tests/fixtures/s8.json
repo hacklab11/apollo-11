@@ -7,18 +7,13 @@
       "repricer": {"mode": "fixed", "floor": null, "status": "active"},
       "skus": [
         {"sku": "E02", "unit_cost": 60, "stock_policy_days": 3, "supplier_eta_days": 2},
-        {"sku": "E04", "unit_cost": 120, "stock_policy_days": 3, "supplier_eta_days": 2},
-        {"sku": "E05", "unit_cost": 60, "stock_policy_days": 3, "supplier_eta_days": 2},
-        {"sku": "E06", "unit_cost": 60, "stock_policy_days": 3, "supplier_eta_days": 2},
-        {"sku": "H01", "unit_cost": 50, "stock_policy_days": 3, "supplier_eta_days": 2}
+        {"sku": "E04", "unit_cost": 120, "stock_policy_days": 3, "supplier_eta_days": 2}
       ],
       "price_history": [
         {"ts": "2026-12-25T00:00:00Z", "sku": "E02", "price": 99, "source": "repricer"},
         {"ts": "2026-12-25T00:00:00Z", "sku": "E04", "price": 199, "source": "repricer"},
         {"ts": "2026-12-25T10:00:00Z", "sku": "E04", "price": 19.9, "source": "manual"},
-        {"ts": "2026-12-25T10:00:00Z", "sku": "E02", "price": 9.9, "source": "manual"},
-        {"ts": "2026-12-25T10:00:00Z", "sku": "E05", "price": 60, "source": "manual"},
-        {"ts": "2026-12-25T10:00:00Z", "sku": "H01", "price": 5, "source": "manual"}
+        {"ts": "2026-12-25T10:00:00Z", "sku": "E02", "price": 9.9, "source": "manual"}
       ]
     },
     {
