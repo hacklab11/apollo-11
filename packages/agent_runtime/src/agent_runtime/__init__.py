@@ -19,6 +19,7 @@ from agent_runtime.kill_switch import InMemoryKillSwitch, KillSwitch, RunScope
 from agent_runtime.limits import ModelPrice, PriceTable, RunLimits
 from agent_runtime.models import model_chain
 from agent_runtime.resilience import (
+    IDEMPOTENCY_KEY_HEADER,
     CircuitBreaker,
     ResilientTransport,
     RetryPolicy,
@@ -36,6 +37,7 @@ from agent_runtime.runner import RunOutcome, end_state_outputs, run_agent
 from agent_runtime.tracing import extract_trace_context, inject_trace_context
 
 __all__ = [
+    "IDEMPOTENCY_KEY_HEADER",
     "IDEMPOTENT_METADATA_KEY",
     "AgentResult",
     "Budget",

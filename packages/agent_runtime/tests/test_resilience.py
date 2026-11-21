@@ -1,6 +1,9 @@
+from collections.abc import AsyncIterator
+
 import httpx
 import pytest
 from agent_runtime import (
+    IDEMPOTENCY_KEY_HEADER,
     CircuitBreaker,
     CircuitOpenError,
     RetryPolicy,
@@ -115,3 +118,55 @@ async def test_injects_traceparent_on_every_request() -> None:
             await client.get("http://agent.local/")
     trace_id = format(span.get_span_context().trace_id, "032x")
     assert seen[0].headers["traceparent"].split("-")[1] == trace_id
+
+
+async def test_does_not_retry_non_idempotent_post() -> None:
+    seen: list[httpx.Request] = []
+    async with resilient_client(
+        policy=FAST, transport=flaky([502, 200], seen)
+    ) as client:
+        response = await client.post("http://selleros.local/refunds", json={"order": 1})
+    assert response.status_code == 502
+    assert len(seen) == 1
+
+
+async def test_retries_post_with_idempotency_key() -> None:
+    seen: list[httpx.Request] = []
+    async with resilient_client(
+        policy=FAST, transport=flaky([502, 200], seen)
+    ) as client:
+        response = await client.post(
+            "http://selleros.local/refunds",
+            json={"order": 1},
+            headers={IDEMPOTENCY_KEY_HEADER: "run-1:abc"},
+        )
+    assert response.status_code == 200
+    assert [r.content for r in seen] == [b'{"order":1}', b'{"order":1}']
+
+
+async def test_does_not_retry_streamed_upload() -> None:
+    seen: list[httpx.Request] = []
+
+    async def body() -> AsyncIterator[bytes]:
+        yield b"chunk"
+
+    async with resilient_client(
+        policy=FAST, transport=flaky([503, 200], seen)
+    ) as client:
+        response = await client.put("http://data.local/blob", content=body())
+    assert response.status_code == 503
+    assert len(seen) == 1
+
+
+def test_half_open_admits_a_single_probe() -> None:
+    now = [0.0]
+    breaker = CircuitBreaker(
+        failure_threshold=1, reset_after_s=10, clock=lambda: now[0]
+    )
+    breaker.record_failure()
+    now[0] = 10
+    breaker.before_call()
+    with pytest.raises(CircuitOpenError, match="probe in flight"):
+        breaker.before_call()
+    now[0] = 20
+    breaker.before_call()

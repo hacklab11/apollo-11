@@ -16,6 +16,8 @@ from tenacity import (
 from agent_runtime.errors import CircuitOpenError
 from agent_runtime.tracing import inject_trace_context
 
+IDEMPOTENCY_KEY_HEADER = "Idempotency-Key"
+
 
 class RetryPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -24,10 +26,22 @@ class RetryPolicy(BaseModel):
     initial_backoff_s: float = Field(default=0.2, ge=0)
     max_backoff_s: float = Field(default=5.0, ge=0)
     retry_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+    idempotent_methods: frozenset[str] = frozenset(
+        {"GET", "HEAD", "OPTIONS", "PUT", "DELETE"}
+    )
+
+    def allows_retry(self, request: httpx.Request) -> bool:
+        """Only retry what is safe to send twice and whose body can be sent again."""
+        replayable = isinstance(request.stream, httpx.ByteStream)
+        idempotent = (
+            request.method in self.idempotent_methods
+            or IDEMPOTENCY_KEY_HEADER in request.headers
+        )
+        return replayable and idempotent
 
 
 class CircuitBreaker:
-    """Opens after `failure_threshold` consecutive failures; lets one probe through after `reset_after_s`."""
+    """Opens after `failure_threshold` consecutive failures; lets one probe through per `reset_after_s`."""
 
     def __init__(
         self,
@@ -41,6 +55,7 @@ class CircuitBreaker:
         self._clock = clock
         self._failures = 0
         self._opened_at: float | None = None
+        self._probe_at: float | None = None
 
     @property
     def state(self) -> str:
@@ -51,14 +66,23 @@ class CircuitBreaker:
         return "open"
 
     def before_call(self) -> None:
-        if self.state == "open":
+        state = self.state
+        if state == "open":
             raise CircuitOpenError("circuit open")
+        if state == "half_open":
+            now = self._clock()
+            # A probe that never reports back (e.g. cancelled) stops blocking after one interval.
+            if self._probe_at is not None and now - self._probe_at < self.reset_after_s:
+                raise CircuitOpenError("circuit half-open: probe in flight")
+            self._probe_at = now
 
     def record_success(self) -> None:
         self._failures = 0
         self._opened_at = None
+        self._probe_at = None
 
     def record_failure(self) -> None:
+        self._probe_at = None
         self._failures += 1
         if self.state == "half_open" or self._failures >= self.failure_threshold:
             self._opened_at = self._clock()
@@ -91,7 +115,9 @@ class ResilientTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         breaker = self.breaker(request.url.host)
         retrying = AsyncRetrying(
-            stop=stop_after_attempt(self._policy.attempts),
+            stop=stop_after_attempt(
+                self._policy.attempts if self._policy.allows_retry(request) else 1
+            ),
             wait=wait_random_exponential(
                 multiplier=self._policy.initial_backoff_s,
                 max=self._policy.max_backoff_s,
