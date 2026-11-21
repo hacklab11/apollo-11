@@ -17,7 +17,7 @@ uv python install 3.13
 uv sync --locked
 ```
 
-In your local `config/settings.yaml`, set `sim.autostart: false` (nested under `sim`). Leave `sim.start_ts` unchanged so recordings still match. Start with no existing simulator data; use a fresh checkout or worktree for another run so the clock and incidents are reset.
+In your local `config/settings.yaml`, set `sim.autostart: false` (nested under `sim`). Use the default simulator data source (`data.source: sim`); a DuckDB warehouse does not expose the demo scenarios. Leave `sim.start_ts` unchanged so recordings still match. Use a fresh checkout or worktree so the clock, incidents, and SellerOS actions are reset.
 
 **Claude (default):** Set `ANTHROPIC_API_KEY` from a funded workspace in the environment that starts the stack. Core, the specialists, and SellerOS use Claude by default.
 
@@ -45,7 +45,7 @@ Start all services in the first terminal:
 ./scripts/dev.sh
 ```
 
-Core generates 28 days of history and initializes the graph before the API is ready. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
+Core generates 28 days of history and initializes the graph before the API is ready. It can start even if the model is unavailable during graph refinement; if Core logs `refinement_unavailable`, check your provider credentials and model availability before rehearsing. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
 
 ```sh
 curl -fsS http://127.0.0.1:8000/api/status
@@ -57,7 +57,7 @@ Once ready, open [the observatory](http://127.0.0.1:8000/) and run:
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. It clears S8 after SellerOS acknowledges reverting the price, then waits for the same incident to resolve after three normal ticks.
+The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
