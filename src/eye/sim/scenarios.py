@@ -7,7 +7,7 @@ from typing import Any
 
 import yaml
 
-from eye.contracts import ScenarioId, ScenarioState
+from eye.contracts import Country, ScenarioId, ScenarioState
 from eye.sim.changelog import add_change, add_external_status
 from eye.sim.engine import Hour, Simulator
 from eye.sim.store import Batches
@@ -24,6 +24,51 @@ _TITLES = {
 }
 
 
+class LatePartitions:
+    """Pre-store hook; disable withholding with enabled=False, but keep ticking backfills."""
+
+    def __init__(
+        self, countries: tuple[Country, ...], loaded_share: float, backfill_hours: int
+    ) -> None:
+        if not 0 <= loaded_share <= 1 or backfill_hours < 1:
+            raise ValueError("loaded_share must be 0..1 and backfill_hours >= 1")
+        if any(country not in ("DE", "FR") for country in countries):
+            raise ValueError("countries must contain only DE or FR")
+        self.countries = tuple(dict.fromkeys(countries))
+        self.loaded_share = loaded_share
+        self.backfill_hours = backfill_hours
+        self.enabled = True
+        self._late: list[tuple[datetime, datetime, Country, list[tuple]]] = []
+
+    def __call__(self, sim: Simulator, hour: Hour) -> None:
+        for due, ts, country, rows in self._late[:]:
+            if due <= hour.ts:
+                sim.store.append({"orders_hourly": rows})
+                with sim.store.cursor() as con:
+                    con.execute(
+                        "UPDATE partition_status SET loaded_rows = expected_rows WHERE table_name = 'orders_hourly' AND country = ? AND ts = ?",
+                        [country, ts],
+                    )
+                self._late.remove((due, ts, country, rows))
+        if not self.enabled:
+            return
+        for country in self.countries:
+            rows = hour.batches["orders_hourly"]
+            selected = [r for r in rows if r[1] == country]
+            loaded = round(len(selected) * self.loaded_share)
+            due = hour.ts + timedelta(hours=self.backfill_hours)
+            self._late.append((due, hour.ts, country, selected[loaded:]))
+            hour.batches["orders_hourly"] = [
+                r for r in rows if r[1] != country
+            ] + selected[:loaded]
+            hour.batches["partition_status"] = [
+                (*r[:4], loaded, due)
+                if r[0] == "orders_hourly" and r[1] == country
+                else r
+                for r in hour.batches["partition_status"]
+            ]
+
+
 class ScenarioManager:
     def __init__(
         self, sim: Simulator, *, config_path: str | Path = "config/scenarios.yaml"
@@ -34,7 +79,10 @@ class ScenarioManager:
         )
         self._states: list[ScenarioState] = []
         self._pending: dict[ScenarioId, datetime] = {}
-        self._late: list[tuple[datetime, datetime, list[tuple]]] = []
+        p = self.params["I2"]
+        self._late_partitions = LatePartitions(
+            tuple(p["countries"]), p["completeness"], p["backfill_hours"]
+        )
         self._discounts = sim.finance.platform_discount.copy()
         self._checkout_version = sim.apps.versions["checkout-web"]
         self._pacing_exempt = sim.ads.pacing_exempt.copy()
@@ -48,6 +96,8 @@ class ScenarioManager:
         sim.pre_store_hooks.append(self._before_store)
 
     def inject(self, id: ScenarioId, at_ts: datetime | None = None) -> ScenarioState:
+        if id == "S8":
+            raise ValueError("scenario S8 is not implemented")
         if id not in _TITLES:
             raise ValueError(f"unsupported scenario: {id}")
         if any(s.id == id and s.cleared_ts is None for s in self._states):
@@ -325,35 +375,15 @@ class ScenarioManager:
                         )
 
     def _before_store(self, sim: Simulator, hour: Hour) -> None:
-        for due, ts, rows in self._late[:]:
-            if due <= hour.ts:
-                sim.store.append({"orders_hourly": rows})
-                with sim.store.cursor() as con:
-                    con.execute(
-                        "UPDATE partition_status SET loaded_rows = expected_rows WHERE table_name = 'orders_hourly' AND country = 'FR' AND ts = ?",
-                        [ts],
-                    )
-                self._late.remove((due, ts, rows))
+        self._late_partitions.enabled = any(
+            state.id == "I2"
+            and hour.ts < state.injected_ts + timedelta(hours=self.params["I2"]["duration_hours"])
+            for state in self.active()
+        )
+        self._late_partitions(sim, hour)
         for state in self.active():
             p = self.params[state.id]
-            if state.id == "I2" and hour.ts < state.injected_ts + timedelta(
-                hours=p["duration_hours"]
-            ):
-                rows = hour.batches["orders_hourly"]
-                fr = [r for r in rows if r[1] == "FR"]
-                loaded = round(len(fr) * p["completeness"])
-                due = hour.ts + timedelta(hours=p["backfill_hours"])
-                self._late.append((due, hour.ts, fr[loaded:]))
-                hour.batches["orders_hourly"] = [r for r in rows if r[1] != "FR"] + fr[
-                    :loaded
-                ]
-                hour.batches["partition_status"] = [
-                    (*r[:4], loaded, due)
-                    if r[0] == "orders_hourly" and r[1] == "FR"
-                    else r
-                    for r in hour.batches["partition_status"]
-                ]
-            elif state.id == "S7":
+            if state.id == "S7":
                 carts = {
                     r[2]: r[3] for r in hour.batches["checkout_hourly"] if r[1] == "DE"
                 }
