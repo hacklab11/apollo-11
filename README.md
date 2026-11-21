@@ -45,7 +45,7 @@ Start all services in the first terminal:
 ./scripts/dev.sh
 ```
 
-Core generates 28 days of history and initializes the graph before the API is ready. It can start even if the model is unavailable during graph refinement; if Core logs `refinement_unavailable`, check your provider credentials and model availability before rehearsing. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
+On a fresh world, Core generates 28 days of history and builds the seed graph before serving the API. Model refinement runs in the background; successful results are saved to `data/graph.json` and reused on later starts. If Core logs `refinement_unavailable`, check your provider credentials and model availability before rehearsing. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
 
 ```sh
 curl -fsS http://127.0.0.1:8000/api/status

@@ -2,16 +2,19 @@ import asyncio
 import copy
 import json
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
+import httpx
 import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import BetaMessage
+from fastapi import FastAPI
 
 from eye.agents.cartographer import (
     Cartographer,
@@ -26,7 +29,7 @@ from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, Trail
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore
 from eye.llm.client import BudgetExceeded, LLMClient, LLMUnavailable
-from eye.llm.runtime import AgentRefused
+from eye.llm.runtime import AgentRefused, AgentSpec
 from eye.main import _refine_causal_seeds
 from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
@@ -388,6 +391,7 @@ async def test_refinement_is_cached(
         (400, None),
         (401, None),
         (403, None),
+        (429, None),
         ("missing_auth", "ANTHROPIC_API_KEY"),
         ("missing_auth_at_init", "ANTHROPIC_API_KEY"),
         ("missing_openrouter_key", "DEMO_OPENROUTER_KEY"),
@@ -475,16 +479,29 @@ async def test_startup_refinement_model_unavailable_retries(
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("APPDATA", str(tmp_path))
-    async with AsyncAnthropic(
-        api_key=None if failure == "missing_auth" else "offline-placeholder",
-        max_retries=0,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)),
-    ) as sdk:
-        openrouter = failure == "missing_openrouter_key"
+    chat_requests: list[httpx.Request] = []
+
+    def throttled(request: httpx.Request) -> httpx.Response:
+        chat_requests.append(request)
+        return httpx.Response(
+            429, json={"error": {"message": "Free model quota exceeded"}}
+        )
+
+    if failure == 429:
+        monkeypatch.setenv("DEMO_OPENROUTER_KEY", "offline-placeholder")
+    async with (
+        AsyncAnthropic(
+            api_key=None if failure == "missing_auth" else "offline-placeholder",
+            max_retries=0,
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)),
+        ) as sdk,
+        httpx.AsyncClient(transport=httpx.MockTransport(throttled)) as chat_http,
+    ):
+        openrouter = failure in (429, "missing_openrouter_key")
         settings = Settings(
             sim={"autostart": False},
             llm=(
-                {"provider": "openai_compatible", "api_key_env": missing_env}
+                {"provider": "openai_compatible", "api_key_env": "DEMO_OPENROUTER_KEY"}
                 if openrouter
                 else {}
             ),
@@ -498,7 +515,7 @@ async def test_startup_refinement_model_unavailable_retries(
             ),
         )
         monkeypatch.setattr("eye.llm.client.AsyncAnthropic", create_sdk)
-        llm = LLMClient(settings.llm)
+        llm = LLMClient(settings.llm, http_client=chat_http)
         monkeypatch.setattr("eye.llm.client._client", llm)
         engine = cartographer.engine
         end = engine._con.execute(
@@ -525,6 +542,7 @@ async def test_startup_refinement_model_unavailable_retries(
         )
         try:
             async with app.router.lifespan_context(app):
+                await orchestrator._seed_refinement
                 assert cartographer.graph.edges() == [seed]
                 trail = store.trail("cartographer:bootstrap")
                 assert trail and trail[-1].action == "note"
@@ -545,18 +563,150 @@ async def test_startup_refinement_model_unavailable_retries(
                     assert missing_env in trail[-1].output_summary
                     assert requests == []
                 if openrouter:
+                    assert len(chat_requests) == (3 if failure == 429 else 0)
                     return
                 create_sdk.side_effect = None
                 sdk.api_key = "offline-placeholder"
                 await orchestrator.start()
+                await orchestrator._seed_refinement
                 refined = cartographer.graph.edges()[0]
                 assert refined.evidence["refined"] is True
                 assert refined.evidence["llm_refined"] is True
                 count = len(requests)
                 await orchestrator.start()
+                await orchestrator._seed_refinement
                 assert len(requests) == count
         finally:
             store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True], ids=["cache", "shutdown"])
+async def test_startup_serves_while_refining_and_caches_only_success(
+    cartographer: Cartographer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cancel: bool,
+) -> None:
+    graph_path = tmp_path / "graph.json"
+    cartographer.graph.path = graph_path
+    seed = Edge(
+        id="seed",
+        src="orders",
+        dst="refunds",
+        type="causal_hypothesis",
+        status="hypothesis",
+        confidence=0.5,
+        evidence={},
+        created_by="seed",
+    )
+    cartographer.graph.add_edge(seed)
+    engine = cartographer.engine
+    end = engine._con.execute(
+        "SELECT max(ts) + INTERVAL 1 HOUR FROM orders_hourly"
+    ).fetchone()[0]
+    settings = Settings(sim={"autostart": False})
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def submit(spec: AgentSpec, *_args: object) -> SeedSubmission:
+        entered.set()
+        try:
+            await release.wait()
+        finally:
+            stopped.set()
+        for tool in spec.tools:
+            if tool.name == "query_metric":
+                tool.fn(tool.input_model(metric="orders"))
+            elif tool.name == "lagged_correlation":
+                tool.fn(tool.input_model(src="orders", dst="refunds"))
+        return SeedSubmission(
+            seeds=[
+                SeedDecision(
+                    src=seed.src,
+                    dst=seed.dst,
+                    status="hypothesis",
+                    confidence=0.7,
+                    rationale="Plausible lagged mechanism.",
+                )
+            ],
+            edges=[
+                EdgeProposal(
+                    src="refunds",
+                    dst="orders",
+                    type="causal_hypothesis",
+                    rationale="Possible reverse relationship.",
+                )
+            ],
+            notes="Reviewed",
+        )
+
+    run = AsyncMock(side_effect=submit)
+    monkeypatch.setattr("eye.agents.cartographer.run_agent", run)
+    store = IncidentStore(":memory:")
+
+    def build(cart: Cartographer) -> tuple[Orchestrator, FastAPI]:
+        core = Orchestrator(
+            settings,
+            SimpleNamespace(
+                now=end, live_start=end, history_start=end - timedelta(days=28)
+            ),
+            Sentinel(engine._con, engine._registry, graph=cart.graph),
+            store,
+            LLMClient(settings.llm),
+            lambda *_: 0.0,
+            refine=partial(_refine_causal_seeds, cart),
+        )
+        return core, create_app(core, engine._con, engine._registry, cart.graph, engine)
+
+    try:
+        core, app = build(cartographer)
+        async with asyncio.timeout(3), app.router.lifespan_context(app):
+            await entered.wait()
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as http:
+                status = await http.get("/api/status")
+                graph = await http.get("/api/graph")
+            assert status.status_code == 200 and status.json()["tick"] == 0
+            assert graph.status_code == 200
+            assert graph.json()["edges"][0]["id"] == seed.id
+            assert GraphStore.load(graph_path).edges() == [seed]
+            assert not stopped.is_set()
+            pending = core._seed_refinement
+            assert pending is not None
+            await core.start()
+            assert core._seed_refinement is pending
+            if not cancel:
+                engine._con.execute(
+                    "INSERT INTO orders_hourly VALUES (?, 'DE', 'electronics', 'small_3P', 9000, 900)",
+                    [end],
+                )
+                engine.invalidate()
+                query = Mock(wraps=engine.query_metric)
+                monkeypatch.setattr(engine, "query_metric", query)
+                release.set()
+                await pending
+                cached_edges = GraphStore.load(graph_path).edges()
+                assert len(cached_edges) == 2
+                assert cached_edges[0].evidence["llm_refined"]
+                assert query.call_args_list
+                assert {call.args[2] for call in query.call_args_list} == {end}
+
+        assert stopped.is_set()
+        if cancel:
+            assert pending.cancelled()
+            assert GraphStore.load(graph_path).edges() == [seed]
+        else:
+            warm, app = build(Cartographer(engine, GraphStore.load(graph_path)))
+            async with app.router.lifespan_context(app):
+                cached = warm._seed_refinement
+                assert cached is not None
+                await cached
+            run.assert_awaited_once()
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
@@ -870,9 +1020,16 @@ async def test_pending_seed_does_not_abort_other_refinement(
         )
     original = cartographer._correlation
 
-    def correlate(engine: MetricEngine, src: str, dst: str, lag: int = 96):
+    def correlate(
+        engine: MetricEngine,
+        src: str,
+        dst: str,
+        lag: int = 96,
+        *,
+        end: datetime | None = None,
+    ):
         assert dst != "pending_refunds", "pending seed must not be queried"
-        return original(engine, src, dst, lag)
+        return original(engine, src, dst, lag, end=end)
 
     async def submit(spec: object, content: str, *args: object) -> SeedSubmission:
         payload = json.loads(content)["seeds"]

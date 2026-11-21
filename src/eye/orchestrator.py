@@ -157,6 +157,7 @@ class Orchestrator:
             for name in ("growth", "marketplace", "discovery", "selleros")
         }
         self._clock: asyncio.Task[None] | None = None
+        self._seed_refinement: asyncio.Task[None] | None = None
         self._tick_lock = asyncio.Lock()
         self._metric_lock = asyncio.Lock()
         self._upsert_lock = asyncio.Lock()
@@ -195,8 +196,6 @@ class Orchestrator:
             self.emit("agent_status", {"name": name, **self._agents[name].model_dump()})
 
     async def start(self) -> None:
-        if self.refine is not None:
-            await self.refine(self.clean_hours(), self.record_step)
         if self.investigate is not None:
             self._pending.extend(
                 item
@@ -204,8 +203,22 @@ class Orchestrator:
                 if item.status == "investigating"
             )
         await self.refresh_agents()
+        if self.refine is not None and (
+            self._seed_refinement is None or self._seed_refinement.done()
+        ):
+            self._seed_refinement = asyncio.create_task(
+                self._refine_seeds(self.refine), name="causal-seed-refinement"
+            )
         if self.settings.sim.autostart:
             self.resume()
+
+    async def _refine_seeds(self, refine: Refine) -> None:
+        try:
+            # Both Cartographer jobs share the graph and their validation window.
+            async with self._metric_lock:
+                await refine(self.clean_hours(), self.record_step)
+        except Exception as exc:  # noqa: BLE001 -- isolate a failed background run
+            _log_error("seed_refinement_failed", exc)
 
     def pause(self) -> None:
         self.paused = True
@@ -219,6 +232,9 @@ class Orchestrator:
         self._closing = True
         self._stop.set()
         self.pause()
+        if self._seed_refinement is not None:
+            self._seed_refinement.cancel()
+            await asyncio.gather(self._seed_refinement, return_exceptions=True)
         if self._clock is not None:
             await self._clock
         if self._tasks:

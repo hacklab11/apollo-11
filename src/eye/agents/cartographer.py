@@ -110,27 +110,42 @@ class Cartographer:
             for table in tables
         )
 
-    def _identity(self, engine: MetricEngine, text: str) -> ValidationResult:
-        return validate_identity(engine, text, scenario_hours=self.scenario_hours)
+    def _identity(
+        self, engine: MetricEngine, text: str, *, end: datetime | None = None
+    ) -> ValidationResult:
+        return validate_identity(
+            engine, text, end=end, scenario_hours=self.scenario_hours
+        )
 
     def _breakdown(
-        self, engine: MetricEngine, metric: str, dim: str
+        self,
+        engine: MetricEngine,
+        metric: str,
+        dim: str,
+        *,
+        end: datetime | None = None,
     ) -> ValidationResult:
         return validate_breakdown(
-            engine, metric, dim, scenario_hours=self.scenario_hours
+            engine, metric, dim, end=end, scenario_hours=self.scenario_hours
         )
 
     def _correlation(
-        self, engine: MetricEngine, src: str, dst: str, lag: int = 96
+        self,
+        engine: MetricEngine,
+        src: str,
+        dst: str,
+        lag: int = 96,
+        *,
+        end: datetime | None = None,
     ) -> CorrelationResult:
         return lagged_correlation(
-            engine, src, dst, lag, scenario_hours=self.scenario_hours
+            engine, src, dst, lag, end=end, scenario_hours=self.scenario_hours
         )
 
-    def _spec(self, engine: MetricEngine) -> AgentSpec:
+    def _spec(self, engine: MetricEngine, *, end: datetime | None = None) -> AgentSpec:
         def query(args: QueryInput) -> Output:
-            start, end = _window(engine, None, None, [args.metric])
-            series = engine.query_metric(args.metric, start, end)
+            start, through = _window(engine, None, end, [args.metric])
+            series = engine.query_metric(args.metric, start, through)
             return Output(
                 summary=f"{len(series)} series for {args.metric}",
                 data={"series": [s.model_dump(mode="json") for s in series]},
@@ -152,19 +167,21 @@ class Cartographer:
                     "validate_identity",
                     "Test a candidate identity at total and shared segments.",
                     IdentityInput,
-                    lambda a: self._identity(engine, a.identity),
+                    lambda a: self._identity(engine, a.identity, end=end),
                 ),
                 ToolSpec(
                     "validate_breakdown",
                     "Test whether dimension segments reconcile to total.",
                     BreakdownInput,
-                    lambda a: self._breakdown(engine, a.metric, a.dimension),
+                    lambda a: self._breakdown(engine, a.metric, a.dimension, end=end),
                 ),
                 ToolSpec(
                     "lagged_correlation",
                     "Measure lagged deseasonalized first-difference correlation, not causation.",
                     CorrelationInput,
-                    lambda a: self._correlation(engine, a.src, a.dst, a.max_lag),
+                    lambda a: self._correlation(
+                        engine, a.src, a.dst, a.max_lag, end=end
+                    ),
                 ),
                 ToolSpec(
                     "get_graph",
@@ -184,7 +201,12 @@ class Cartographer:
         )
 
     def _edges(
-        self, engine: MetricEngine, proposal: EdgeProposal, index: int
+        self,
+        engine: MetricEngine,
+        proposal: EdgeProposal,
+        index: int,
+        *,
+        end: datetime | None = None,
     ) -> list[Edge]:
         engine._registry.get(proposal.src)
         engine._registry.get(proposal.dst)
@@ -233,7 +255,7 @@ class Cartographer:
             lag = proposal.lag_hours or 0
             if not 0 <= lag <= 96:
                 raise ValueError("causal lag must be between 0 and 96 hours")
-            result = self._correlation(engine, proposal.src, proposal.dst)
+            result = self._correlation(engine, proposal.src, proposal.dst, end=end)
             evidence.update(result.model_dump(exclude={"summary"}))
             nearby = [
                 abs(row["corr"])
@@ -516,7 +538,9 @@ class Cartographer:
         ]
         if not seeds:
             return
-        self._set_clean_hours(clean_hours)
+        # The warehouse can advance during model calls; keep the initial window.
+        _, end = _window(self.engine, None, None, list(self.engine._registry.metrics))
+        self._set_clean_hours(clean_hours, end=end)
         payload = []
         for edge in seeds:
             pending = [
@@ -527,7 +551,7 @@ class Cartographer:
             numbers = None
             if not pending:
                 numbers = self._correlation(
-                    self.engine, edge.src, edge.dst
+                    self.engine, edge.src, edge.dst, end=end
                 ).model_dump()
             payload.append(
                 {
@@ -560,7 +584,9 @@ class Cartographer:
                     raise ValueError("; ".join(errors))
                 return self
 
-        spec = replace(self._spec(self.engine), submit_model=CompleteSeedSubmission)
+        spec = replace(
+            self._spec(self.engine, end=end), submit_model=CompleteSeedSubmission
+        )
         submission = cast(
             SeedSubmission,
             await run_agent(
@@ -598,15 +624,17 @@ class Cartographer:
         for index, proposal in enumerate(submission.edges[:10]):
             if proposal.type != "causal_hypothesis":
                 raise ValueError("bootstrap extras must be causal")
-            updated.extend(self._edges(self.engine, proposal, index))
+            updated.extend(self._edges(self.engine, proposal, index, end=end))
         self._competing(updated, [])
         for edge in updated:
             self.graph.add_edge(edge)
 
-    def _set_clean_hours(self, clean_hours: Sequence[datetime] | None) -> None:
+    def _set_clean_hours(
+        self, clean_hours: Sequence[datetime] | None, *, end: datetime | None = None
+    ) -> None:
         if clean_hours is None:
             return
-        _, end = _window(self.engine, None, None, list(self.engine._registry.metrics))
+        _, end = _window(self.engine, None, end, list(self.engine._registry.metrics))
         clean = set(clean_hours)
         hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
         self.scenario_hours = [hour for hour in hours if hour not in clean]
