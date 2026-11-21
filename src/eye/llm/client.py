@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -13,18 +14,33 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from anthropic import AnthropicError, AsyncAnthropic
+from anthropic import (
+    AnthropicError,
+    APIRequest,
+    AsyncAnthropic,
+    AsyncAPIResponse,
+    AsyncCallNext,
+)
 from anthropic.types.beta import BetaMessage
 
 from eye.config import LlmSettings, load_settings
+from eye.llm.chat_context import compact_chat_context
 
 
 class BudgetExceeded(Exception):
-    """The turn or rolling hourly call budget is exhausted."""
+    """The turn, hourly, or per-run call budget is exhausted."""
+
+
+class RunCallLimitExceeded(BudgetExceeded):
+    """The process has used its allotment of provider requests."""
 
 
 class LLMUnavailable(AnthropicError):
     """The provider could not complete the request."""
+
+
+class DailyQuotaExceeded(LLMUnavailable):
+    """The provider's daily request quota is exhausted."""
 
 
 class MissingProviderCredentials(LLMUnavailable):
@@ -34,6 +50,11 @@ class MissingProviderCredentials(LLMUnavailable):
 
 
 _MAX_RETRY_DELAY = 60.0
+_DAILY_QUOTA = re.compile(
+    r"\b(?:free-models-per-day|daily (?:model )?(?:quota|rate limit))\b", re.IGNORECASE
+)
+_SDK_TYPE = AsyncAnthropic
+_log = logging.getLogger(__name__)
 
 
 def _retry_delay(response: httpx.Response, fallback: float) -> float:
@@ -76,7 +97,7 @@ def _provider_detail(error: Any, key: str) -> str:
         parts.append(error)
     detail = " ".join(" ".join(parts).split()).replace(key, "[REDACTED]")
     detail = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [REDACTED]", detail)
-    return detail[:300]
+    return detail
 
 
 def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
@@ -86,7 +107,14 @@ def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
     for message in request["messages"]:
         content = message["content"]
         if isinstance(content, str):
-            messages.append({"role": message["role"], "content": content})
+            messages.append(
+                {
+                    "role": message["role"],
+                    "content": compact_chat_context(content)
+                    if message["role"] == "user"
+                    else content,
+                }
+            )
             continue
         text = "\n".join(b["text"] for b in content if b["type"] == "text")
         if message["role"] == "assistant":
@@ -113,7 +141,7 @@ def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
                         {
                             "role": "tool",
                             "tool_call_id": block["tool_use_id"],
-                            "content": block["content"],
+                            "content": compact_chat_context(block["content"]),
                         }
                     )
             if text:
@@ -211,10 +239,33 @@ class LLMClient:
         self._sdk = sdk
         self._http_client = http_client
         self._calls: deque[float] = deque()
+        self._provider_requests = 0
         self.tokens_in = 0
         self.tokens_out = 0
         self._cooldown_until = 0.0
         self._cooldown_reason = ""
+        self._daily_quota_reason = ""
+
+    def terminal_error(self) -> DailyQuotaExceeded | RunCallLimitExceeded | None:
+        if self._daily_quota_reason:
+            return DailyQuotaExceeded(self._daily_quota_reason)
+        limit = self.settings.max_calls_per_run
+        if self._provider_requests >= limit:
+            return RunCallLimitExceeded(
+                f"Per-run model-call limit reached ({limit} provider requests); restart to reset it"
+            )
+        return None
+
+    def _count_request(self) -> None:
+        if error := self.terminal_error():
+            raise error
+        self._provider_requests += 1
+
+    async def _count_sdk_attempt(
+        self, request: APIRequest, call_next: AsyncCallNext
+    ) -> AsyncAPIResponse[Any]:
+        self._count_request()
+        return await call_next(request)
 
     async def _openai_create(self, request: dict[str, Any]) -> BetaMessage:
         key = os.environ.get(self.settings.api_key_env)
@@ -230,7 +281,12 @@ class LLMClient:
         try:
             if self._sdk is None:
                 self._sdk = AsyncAnthropic(max_retries=2)
-            return await self._sdk.beta.messages.create(**request)
+            sdk = self._sdk
+            if isinstance(sdk, _SDK_TYPE):
+                sdk = sdk.with_middleware(self._count_sdk_attempt)
+            else:
+                self._count_request()
+            return await sdk.beta.messages.create(**request)
         except TypeError as exc:
             if "Could not resolve authentication method" not in str(exc):
                 raise
@@ -241,6 +297,7 @@ class LLMClient:
     ) -> BetaMessage:
         for attempt in range(3):
             delay = 0.1 * (2**attempt)
+            self._count_request()
             try:
                 response = await client.post(
                     self.settings.base_url.rstrip("/") + "/chat/completions",
@@ -283,8 +340,24 @@ class LLMClient:
                     except (ValueError, TypeError):
                         status = 502
                     message += f" (provider {status})"
-                if detail := _provider_detail(error if error is not None else raw, key):
-                    message += ": " + detail
+                detail = _provider_detail(error if error is not None else raw, key)
+                if status == 429 and _DAILY_QUOTA.search(detail):
+                    if not self._daily_quota_reason:
+                        self._daily_quota_reason = (
+                            "Daily model request quota exhausted; provider calls stopped for "
+                            "this process. Restart after the quota resets."
+                        )
+                        _log.warning(
+                            json.dumps(
+                                {
+                                    "event": "llm_daily_quota_exhausted",
+                                    "detail": self._daily_quota_reason,
+                                }
+                            )
+                        )
+                    raise DailyQuotaExceeded(self._daily_quota_reason)
+                if detail:
+                    message += ": " + detail[:300]
                 if status != 429 and status < 500:
                     raise LLMUnavailable(message)
                 delay = _retry_delay(response, delay)
@@ -306,7 +379,10 @@ class LLMClient:
             "calls_per_hour": len(self._calls),
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
-            "budget_paused": len(self._calls) >= self.settings.max_calls_per_hour,
+            "budget_paused": (
+                self.terminal_error() is not None
+                or len(self._calls) >= self.settings.max_calls_per_hour
+            ),
         }
 
     async def create(self, request: dict[str, Any]) -> BetaMessage:
@@ -339,6 +415,8 @@ class LLMClient:
             if response is None:
                 print(json.dumps({"event": "replay_miss", "key": key}))
         if response is None:
+            if error := self.terminal_error():
+                raise error
             if self.settings.provider == "openai_compatible":
                 remaining = self._cooldown_until - time.monotonic()
                 if remaining > 0:

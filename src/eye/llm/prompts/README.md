@@ -20,6 +20,10 @@ can install an `LLMClient` with `configure_client`. `budget_status()` exposes th
 rolling hour's logical network calls, cumulative input/output tokens, and
 `budget_paused` for `/api/status`. SDK retries belong to the same logical call.
 Replay hits consume no network-call budget; their tokens remain observable.
+Set `llm.max_calls_per_run` to limit actual provider requests (default 300,
+including retries) over the lifetime of each Eye service process. Restart the
+service to reset the counter. SellerOS runs independently and does not share
+this budget.
 
 The runtime appends remaining-turn notices to user messages, including tool results.
 Request independent tool calls in one turn and reserve a turn for `submit`. On the
@@ -51,6 +55,9 @@ accepting empty arguments. Thinking blocks are not forwarded.
 Compatible-provider replay keys additionally include provider and base URL to
 avoid collisions with Claude or another endpoint. Network retries (429, 5xx,
 transport failures) are twice with short backoff, within one logical budget call.
+A daily quota response (such as OpenRouter's `free-models-per-day`) stops
+provider requests immediately in that process; restart only after the quota
+resets. The demo runner reports Core's stop reason and exits.
 Run the opt-in provider test with
 `uv run pytest tests/llm/test_openai_compatible.py -m live -q` after setting
 `OPENROUTER_API_KEY`; `EYE_LIVE_OPENAI_MODEL` optionally overrides

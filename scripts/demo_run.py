@@ -81,7 +81,10 @@ async def inject_scenario(
 async def step(client: httpx.AsyncClient, seconds: float) -> Status:
     await asyncio.sleep(seconds)
     response = await request(client, "POST", "/api/clock/step")
-    return Status.model_validate_json(response.content)
+    status = Status.model_validate_json(response.content)
+    if status.llm_stop_reason:
+        raise RuntimeError(status.llm_stop_reason)
+    return status
 
 
 async def prepare(client: httpx.AsyncClient, status: Status) -> None:
@@ -173,6 +176,8 @@ async def demo(client: httpx.AsyncClient, seconds: float) -> None:
     paused = Status.model_validate_json(
         (await request(client, "POST", "/api/clock/pause")).content
     )
+    if paused.llm_stop_reason:
+        raise RuntimeError(paused.llm_stop_reason)
     with stage("Prepare the 09:00 starting point (not part of the pitch):"):
         await prepare(client, paused)
 
