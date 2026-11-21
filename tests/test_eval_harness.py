@@ -752,6 +752,33 @@ def test_campaign_false_alarm_before_checkout_is_not_dropped(name: str) -> None:
     assert "open" in results["also.I1.status_any"]["actual"]
 
 
+@pytest.mark.parametrize(
+    "name,campaign_id", [("S7", "black-friday-2026"), ("S8", "coupon-day-electronics")]
+)
+def test_campaign_mention_in_non_campaign_root_is_not_attribution(
+    name: str, campaign_id: str
+) -> None:
+    entry = deepcopy(harness.load_oracle()[name])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    good = make_incident_s7()
+    offset = int(next(p for p in entry["play"] if p.startswith("S")).rsplit("@", 1)[1])
+    good = good.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS + offset * harness.HOUR,
+            "root_cause": good.root_cause.model_copy(
+                update={
+                    "cause_type": "release",
+                    "statement": f"Checkout outage during {campaign_id}",
+                }
+            ),
+        }
+    )
+    results = {c["check"]: c for c in harness.evaluate(entry, [good], [])}
+    campaign = "I1" if name == "S7" else "I3"
+    assert results[f"also.{campaign}.status_any"]["passed"]
+    assert results[f"also.{campaign}.status_any"]["actual"] == []
+
+
 def test_detection_deadline_uses_the_best_report_candidate() -> None:
     good = make_incident_s7()
     wrong = good.model_copy(

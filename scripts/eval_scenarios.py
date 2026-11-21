@@ -736,12 +736,7 @@ def evaluate(
                 for i in incidents
                 if i.verdict == "INNOCENT"
                 or (i.root_cause and i.root_cause.cause_type == "planned_event")
-                or (
-                    campaign_id
-                    in (
-                        i.root_cause.statement if i.root_cause else i.summary
-                    ).casefold()
-                )
+                or (i.root_cause is None and campaign_id in i.summary.casefold())
                 or (
                     start is not None
                     and start <= i.opened_ts < start + first_fault * HOUR
