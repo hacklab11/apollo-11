@@ -94,6 +94,10 @@ class Status(BaseModel):
     llm_stop_reason: str | None = None
 
 
+class StepInProgress(Exception):
+    pass
+
+
 def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> None:
     log.warning(
         json.dumps(
@@ -158,6 +162,7 @@ class Orchestrator:
             for name in ("growth", "marketplace", "discovery", "selleros")
         }
         self._clock: asyncio.Task[None] | None = None
+        self._live_step: asyncio.Task[None] | None = None
         self._seed_refinement: asyncio.Task[None] | None = None
         self._tick_lock = asyncio.Lock()
         self._metric_lock = asyncio.Lock()
@@ -238,6 +243,8 @@ class Orchestrator:
             await asyncio.gather(self._seed_refinement, return_exceptions=True)
         if self._clock is not None:
             await self._clock
+        if self._live_step is not None:
+            await self._live_step
         if self._tasks:
             await asyncio.gather(*self._tasks, return_exceptions=True)
         if self.a2a is not None:
@@ -333,11 +340,31 @@ class Orchestrator:
         async with self._metric_lock:
             return await self.add_metric(request, self.clean_hours(), self.record_step)
 
-    async def step_once(self) -> Status:
-        """Advance one hour without starting the timer; drain that tick's work."""
-        return await self._step(manual=True)
+    async def step_once(self, *, wait_for_analysis: bool = True) -> Status:
+        """Advance one hour without starting the timer."""
+        if wait_for_analysis:
+            return await self._step(manual=True)
+        if self._live_step is not None and not self._live_step.done():
+            raise StepInProgress("The previous clock step is still processing.")
+        advanced = asyncio.get_running_loop().create_future()
+        self._live_step = asyncio.create_task(self._run_live_step(advanced))
+        return await advanced
 
-    async def _step(self, *, manual: bool) -> Status:
+    async def _run_live_step(self, advanced: asyncio.Future[Status]) -> None:
+        try:
+            status = await self._step(manual=True, advanced=advanced)
+        except Exception as exc:  # noqa: BLE001 -- relay failures until the response is ready
+            if advanced.done():
+                _log_error("tick_failed", exc)
+            else:
+                advanced.set_exception(exc)
+        else:
+            if not advanced.done():
+                advanced.set_result(status)
+
+    async def _step(
+        self, *, manual: bool, advanced: asyncio.Future[Status] | None = None
+    ) -> Status:
         async with self._tick_lock:
             self._dispatch()
             if manual:
@@ -360,6 +387,8 @@ class Orchestrator:
             for previous, current in zip(before, self.scenario_states(), strict=True):
                 if previous != current:
                     self.emit("scenario_changed", current)
+            if advanced is not None and not advanced.done():
+                advanced.set_result(self.status())
             decisions = []
             if self.llm.terminal_error() is None:
                 try:

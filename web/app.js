@@ -101,7 +101,7 @@ export const api = {
   clearScenario: (id) => post(`/scenarios/${encodeURIComponent(id)}/clear`),
   pauseClock: () => post("/clock/pause"),
   resumeClock: () => post("/clock/resume"),
-  stepClock: () => post("/clock/step"),
+  stepClock: () => post("/clock/step?wait_for_analysis=false"),
   chat: (messages) => post("/chat", { messages }),
   getTruth: () => request("/demo/truth"),
 };
@@ -913,9 +913,17 @@ function bindControls() {
         : api.pauseClock()));
     }),
   );
-  $("#clock-step").addEventListener("click", () =>
+  const stepButton = $("#clock-step");
+  stepButton.addEventListener("click", () =>
     attempt(async () => {
-      updateStatus(await api.stepClock());
+      stepButton.disabled = true;
+      stepButton.textContent = "Stepping…";
+      try {
+        updateStatus(await api.stepClock());
+      } finally {
+        stepButton.disabled = false;
+        stepButton.textContent = "Step +1h";
+      }
     }),
   );
   $("#scenarios").addEventListener("click", (event) =>

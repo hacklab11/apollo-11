@@ -29,7 +29,7 @@ from eye.contracts import (
     SeriesPoint,
     TrailStep,
 )
-from eye.orchestrator import Orchestrator, Status
+from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.tools.models import BaselineCompareInput, BaselineCompareOutput
@@ -239,8 +239,11 @@ def create_app(
         return orchestrator.status()
 
     @app.post("/api/clock/step")
-    async def step() -> Status:
-        return await orchestrator.step_once()
+    async def step(wait_for_analysis: bool = True) -> Status:
+        try:
+            return await orchestrator.step_once(wait_for_analysis=wait_for_analysis)
+        except StepInProgress as exc:
+            raise HTTPException(409, str(exc)) from exc
 
     @app.get("/api/events")
     async def events() -> StreamingResponse:
