@@ -4,6 +4,7 @@ from contextlib import aclosing, closing
 from datetime import datetime
 from typing import Any
 
+import httpx
 import pytest
 from factories import (
     make_add_metric_result,
@@ -281,6 +282,45 @@ def test_incident_symptoms(service: tuple[FastAPI, Settings, Orchestrator]) -> N
     with TestClient(app) as client:
         assert client.get(f"/api/incidents/{item.id}").json()["symptoms"] == expected
         assert client.get("/api/incidents").json()[0]["symptoms"] == expected
+
+
+@pytest.mark.asyncio
+async def test_live_clock_step_returns_before_analysis(
+    service: tuple[FastAPI, Settings, Orchestrator], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app, settings, orchestrator = service
+    scanning = asyncio.Event()
+    finish_scan = asyncio.Event()
+
+    async def run(ts: datetime, **kwargs: Any) -> list[SentinelDecision]:
+        scanning.set()
+        await finish_scan.wait()
+        return []
+
+    monkeypatch.setattr(orchestrator.sentinel, "run", run)
+    async with (
+        app.router.lifespan_context(app),
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1"
+        ) as client,
+    ):
+        url = "/api/clock/step?wait_for_analysis=false"
+        request = asyncio.create_task(client.post(url))
+        try:
+            await asyncio.wait_for(scanning.wait(), 2)
+            current = Status.model_validate((await client.get("/api/status")).json())
+            assert current.tick == 1
+            response = await asyncio.wait_for(asyncio.shield(request), 2)
+            assert response.status_code == 200
+            status = Status.model_validate(response.json())
+            assert status.tick == 1
+            assert status.sim_ts == settings.sim.start_ts
+            assert status.paused and not status.running
+            busy = await asyncio.wait_for(client.post(url), 2)
+            assert busy.status_code == 409
+        finally:
+            finish_scan.set()
+            await request
 
 
 @pytest.mark.asyncio
