@@ -95,7 +95,7 @@ const mockApi = {
     const expression = "fee_revenue / orders";
     Object.assign(result.metric, {
       name, expression, description: "Marketplace fee revenue in euros divided by units ordered.",
-      unit: "EUR", dimensions: ["country", "platform", "category", "seller_tier", "channel"],
+      unit: "eur", dimensions: ["country", "platform", "category", "seller_tier", "channel"],
     });
     result.accepted = result.accepted.map((edge, index) => {
       const src = ["fee_revenue", "orders"][index];
