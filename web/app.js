@@ -83,6 +83,8 @@ const post = (path, body) => request(path, { method: "POST", body });
 const metricPath = (name) => `/metrics/${encodeURIComponent(name)}`;
 const incidentPath = (id) => `/incidents/${encodeURIComponent(id)}`;
 
+const MAX_CHAT_CONTENT = 4000; // ChatMessage.content max_length in src/eye/api/chat.py
+
 export const api = {
   getStatus: () => request("/status"),
   getGraph: (query) => request("/graph", { query }),
@@ -856,7 +858,7 @@ async function sendChat(event) {
   $("#messages").setAttribute("aria-busy", "true");
   try {
     const response = await api.chat(state.messages.slice(-20));
-    state.messages.push({ role: "assistant", content: response.answer });
+    state.messages.push({ role: "assistant", content: response.answer.slice(0, MAX_CHAT_CONTENT) });
     const message = renderMessage("assistant", response.answer);
     message.insertAdjacentHTML(
       "beforeend",
