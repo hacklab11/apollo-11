@@ -88,6 +88,26 @@ async def test_same_final_fingerprint_merges_older(store):
 
 
 @pytest.mark.asyncio
+async def test_absorbed_snapshot_is_not_merged_twice(store):
+    first = await store.upsert(result())
+    store.lifecycle(first.entry.ts + timedelta(hours=1), lambda *_: 5)
+    value = result("b", hours=2)
+    value.entry.metric = "gmv"
+    pending = store.match(
+        SentinelDecision(anomaly=value.entry, action="investigate", reason="New metric")
+    )
+    pending.impact_eur_total = 10
+    pending.notifications = [{"to": "selleros", "ok": True}]
+    store._save(pending)
+    merged = await store.upsert(value)
+    assert merged.id == first.id
+    assert merged.occurrences == 2
+    assert merged.impact_eur_total == first.impact_eur_per_hour + 10
+    assert merged.notifications == pending.notifications
+    assert store.get(pending.id).merged_into == first.id
+
+
+@pytest.mark.asyncio
 async def test_same_trigger_merges(store):
     left = result()
     left.trigger = "trigger"

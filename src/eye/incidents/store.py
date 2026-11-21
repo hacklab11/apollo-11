@@ -261,7 +261,9 @@ class IncidentStore:
             "UPDATE incidents SET trigger_id = ?, ticks = 0 WHERE id = ?",
             [result.trigger, item.id],
         )
-        for other in self.all():
+        for candidate in self.all():
+            other = self.get(candidate.id)
+            assert other is not None
             if other.id == item.id or not self._active(other) or not self._active(item):
                 continue
             trigger = self.db.execute(
