@@ -431,14 +431,18 @@
   kind: sql
   dimensions: [category]
   higher_is_better: false
+  # One (num, den = 1) row per category hour, so totals and windows average the category HHIs.
   sql: |
-    SELECT ts, category,
-           power(gmv / SUM(gmv) OVER (PARTITION BY ts, category), 2) AS num
+    SELECT ts, category, SUM(power(share, 2)) AS num, 1 AS den
     FROM (
-      SELECT ts, category, seller_id, SUM(gmv) AS gmv
-      FROM orders_hourly
-      GROUP BY ts, category, seller_id
+      SELECT ts, category, gmv / SUM(gmv) OVER (PARTITION BY ts, category) AS share
+      FROM (
+        SELECT ts, category, seller_id, SUM(gmv) AS gmv
+        FROM orders_hourly
+        GROUP BY ts, category, seller_id
+      )
     )
+    GROUP BY ts, category
 
 # Supply
 
