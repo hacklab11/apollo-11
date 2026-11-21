@@ -4,6 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ from selleros.data import (
     Selection,
     SellerStore,
     Snapshot,
+    price_intent,
     receive_alert,
 )
 from selleros.models import SellerAlert, SpecialistRequest
@@ -39,27 +41,34 @@ class MemorySellerStore:
         self.paused: set[tuple[str, str]] = set()
         self.reverted: set[tuple[str, str, datetime, float]] = set()
         self.fail_sku: str | None = None
+        self.stale_reads = False
 
     def read(self) -> Snapshot:
         return self.snapshot.model_copy(deep=True)
 
     def paused_repricers(self) -> set[tuple[str, str]]:
-        return set(self.paused)
+        return set() if self.stale_reads else set(self.paused)
 
     def reverted_prices(self) -> set[tuple[str, str, datetime, float]]:
-        return set(self.reverted)
+        return set() if self.stale_reads else set(self.reverted)
 
-    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> None:
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool:
         if sku == self.fail_sku:
             raise OSError("actuator unavailable")
+        if (seller_id, sku) in self.paused:
+            return False
         self.paused.add((seller_id, sku))
+        return True
 
     def revert_manual_price(
         self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
-    ) -> None:
+    ) -> bool:
         if sku == self.fail_sku:
             raise OSError("actuator unavailable")
+        if (seller_id, sku, intent.ts, intent.new) in self.reverted:
+            return False
         self.reverted.add((seller_id, sku, intent.ts, intent.new))
+        return True
 
 
 def boundary_alert(action: str) -> SellerAlert:
@@ -97,6 +106,36 @@ def test_corrupt_earlier_journal_record_raises(s8_store: FileSellerStore) -> Non
         s8_store.paused_repricers()
     with pytest.raises(json.JSONDecodeError):
         s8_store.pause_repricer("corrupt", "S-14", "E02")
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+def test_ack_uses_actuation_result(s8_store: FileSellerStore, action: str) -> None:
+    store = MemorySellerStore(s8_store.read())
+    store.stale_reads = True
+    alert = boundary_alert(action)
+    assert receive_alert(store, alert).actions_taken
+    assert receive_alert(store, alert).actions_taken == []
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+def test_concurrent_actuation_applies_once(
+    s8_store: FileSellerStore, action: str
+) -> None:
+    seller = s8_store.read().sellers[0]
+    intent = price_intent(seller, seller.skus[0])
+    assert intent is not None
+
+    def actuate(_: int) -> bool:
+        if action == "pause":
+            return s8_store.pause_repricer("concurrent", seller.seller_id, intent.sku)
+        return s8_store.revert_manual_price(
+            "concurrent", seller.seller_id, intent.sku, intent
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(actuate, range(2)))
+    assert sorted(results) == [False, True]
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
 
 
 @pytest.mark.parametrize("action", ["pause", "revert manual price"])

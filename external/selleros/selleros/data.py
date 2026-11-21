@@ -115,11 +115,11 @@ class SellerStore(Protocol):
 
     def reverted_prices(self) -> set[tuple[str, str, datetime, float]]: ...
 
-    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> None: ...
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool: ...
 
     def revert_manual_price(
         self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
-    ) -> None: ...
+    ) -> bool: ...
 
 
 class FileSellerStore:
@@ -184,10 +184,10 @@ class FileSellerStore:
             log.flush()
             os.fsync(log.fileno())
 
-    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> None:
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool:
         with self.lock:
             if (seller_id, sku) in self.paused_repricers():
-                return
+                return False
             self._append(
                 {
                     "incident_id": incident_id,
@@ -197,13 +197,14 @@ class FileSellerStore:
                     "action": f"paused repricer for {seller_id} on {sku}",
                 }
             )
+            return True
 
     def revert_manual_price(
         self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
-    ) -> None:
+    ) -> bool:
         with self.lock:
             if (seller_id, sku, intent.ts, intent.new) in self.reverted_prices():
-                return
+                return False
             self._append(
                 {
                     "incident_id": incident_id,
@@ -215,6 +216,7 @@ class FileSellerStore:
                     "action": f"reverted manual price for {seller_id} on {sku}",
                 }
             )
+            return True
 
 
 def receive_alert(store: SellerStore, alert: SellerAlert) -> SellerAlertAck:
@@ -241,18 +243,20 @@ def receive_alert(store: SellerStore, alert: SellerAlert) -> SellerAlertAck:
                     in store.reverted_prices()
                 ):
                     continue
-                store.revert_manual_price(
+                if store.revert_manual_price(
                     alert.incident_id, seller.seller_id, sku.sku, intent
-                )
-                reverted.append(sku.sku)
+                ):
+                    reverted.append(sku.sku)
             else:
                 if (
                     seller.repricer_for(sku).floor is not None
                     or (seller.seller_id, sku.sku) in store.paused_repricers()
                 ):
                     continue
-                store.pause_repricer(alert.incident_id, seller.seller_id, sku.sku)
-                actions.append(f"paused repricer for {seller.seller_id} on {sku.sku}")
+                if store.pause_repricer(alert.incident_id, seller.seller_id, sku.sku):
+                    actions.append(
+                        f"paused repricer for {seller.seller_id} on {sku.sku}"
+                    )
         if reverted:
             actions.append(
                 f"reverted manual price for {seller.seller_id} on {', '.join(sorted(reverted))}"
