@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from time import perf_counter
@@ -9,7 +10,7 @@ import pytest
 import yaml
 
 from eye.config import Settings
-from eye.contracts import GraphView
+from eye.contracts import GraphView, MetricDef
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
 from eye.sim.store import Store
@@ -223,6 +224,63 @@ def test_scans_rank_segments_and_keep_divergence_with_healthy_total(
 def _has_s6() -> bool:
     config = Path("config/scenarios.yaml")
     return config.exists() and "S6" in yaml.safe_load(config.read_text())
+
+
+def test_point_scan_finds_joint_fee_drop_with_flat_marginals(
+    world: duckdb.DuckDBPyConnection,
+) -> None:
+    world.execute(
+        """
+        INSERT INTO orders_hourly
+        SELECT ts, country, platform, category, 'E01', 'S-24', seller_tier, 'search',
+               100, 5000, 4000 + CASE WHEN ts < ? THEN 0
+                                     WHEN (category = 'electronics') = (seller_tier = 'small_3P')
+                                     THEN -2000 ELSE 2000 END,
+               0, 0, 0
+        FROM (SELECT DISTINCT ts FROM fixture_hours) t,
+             unnest(['electronics', 'home']) c(category),
+             unnest(['small_3P', 'large_3P']) s(seller_tier),
+             (VALUES ('DE', 'web')) v(country, platform)
+        """,
+        [T0],
+    )
+    metric = MetricDef(
+        name="fee_per_order",
+        description="Marketplace fee revenue divided by units ordered.",
+        unit="eur",
+        domain="finance",
+        kind="sql",
+        sql="SELECT ts, category, seller_tier, fee_revenue AS num, units AS den "
+        "FROM orders_hourly WHERE seller_tier != '1P'",
+        dimensions=["category", "seller_tier"],
+    )
+    registry = replace(
+        load_registry(world),
+        metrics={metric.name: metric},
+        has_den={metric.name: True},
+        source_tables={metric.name: ("orders_hourly",)},
+    )
+    data = ScanAnomaliesInput(ts=T0)
+    result = scan_anomalies(data, con=world, registry=registry)
+    assert len(result.anomalies) == 4
+    assert all(
+        set(item.segment) == {"category", "seller_tier"} for item in result.anomalies
+    )
+    joint = next(
+        item
+        for item in result.anomalies
+        if item.segment == {"category": "electronics", "seller_tier": "small_3P"}
+    )
+    assert (joint.actual, joint.expected, joint.z) == pytest.approx((20, 40, -25))
+
+    world.execute(
+        """
+        UPDATE orders_hourly SET units = 2, fee_revenue = fee_revenue / 50
+        WHERE category = 'electronics' AND seller_tier = 'small_3P'
+        """
+    )
+    result = scan_anomalies(data, con=world, registry=registry)
+    assert all(item.segment != joint.segment for item in result.anomalies)
 
 
 @pytest.mark.skipif(not _has_s6(), reason="T05 S6 scenario is not available")

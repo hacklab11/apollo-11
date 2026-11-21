@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from itertools import combinations
 from math import sqrt
 from statistics import mean, median
 
@@ -155,6 +156,8 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension] = (),
+        *,
+        max_group_dims: int = 1,
     ) -> dict[SegmentKey, Samples]:
         unknown = (segment.keys() | set(dims)) - set(metric.dimensions)
         if unknown or segment.keys() & set(dims):
@@ -167,12 +170,20 @@ class _Stats:
             )
         if not stamps:
             return {}
-        key = metric.name, stamps, tuple(sorted(segment.items())), tuple(dims)
+        key = (
+            metric.name,
+            stamps,
+            tuple(sorted(segment.items())),
+            tuple(dims),
+            max_group_dims,
+        )
         if key not in self._cache:
             self._cache[key] = (
-                self._sql_samples(metric, stamps, segment, dims)
+                self._sql_samples(metric, stamps, segment, dims, max_group_dims)
                 if metric.kind == "sql"
-                else self._formula_samples(metric, stamps, segment, dims)
+                else self._formula_samples(
+                    metric, stamps, segment, dims, max_group_dims
+                )
             )
         return self._cache[key]
 
@@ -182,17 +193,25 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension],
+        max_group_dims: int,
     ) -> dict[SegmentKey, Samples]:
         has_den = self.registry.has_den[metric.name]
         keys = [f'"{dim}"' for dim in dims]
         select = ["ts", *keys, "SUM(num)", "SUM(den)" if has_den else "NULL"]
+        grouped_indexes = {}
         if keys:
+            mask = (1 << len(dims)) - 1
+            grouped_indexes = {
+                mask ^ sum(1 << (len(dims) - 1 - idx) for idx in indexes): indexes
+                for size in range(max_group_dims + 1)
+                for indexes in combinations(range(len(dims)), size)
+            }
             select.append(f"GROUPING_ID({', '.join(keys)})")
-            grouping = (
-                "GROUP BY GROUPING SETS ((ts), "
-                + ", ".join(f"(ts, {key})" for key in keys)
-                + ")"
+            groups = ", ".join(
+                f"({', '.join(['ts', *(keys[idx] for idx in indexes)])})"
+                for indexes in grouped_indexes.values()
             )
+            grouping = f"GROUP BY GROUPING SETS ({groups})"
         else:
             grouping = "GROUP BY ts"
         where = ["ts >= ?", "ts <= ?", *(f'"{dim}" = ?' for dim in segment)]
@@ -213,11 +232,12 @@ class _Stats:
             if num is None:
                 continue
             scope = total
-            if dims and (selected := ((1 << len(dims)) - 1) ^ row[-1]):
-                index = len(dims) - selected.bit_length()
-                if row[index] is None:
+            if dims and (indexes := grouped_indexes[row[-1]]):
+                if any(row[idx] is None for idx in indexes):
                     continue
-                scope = tuple(sorted((*total, (dims[index], str(row[index])))))
+                scope = tuple(
+                    sorted((*total, *((dims[idx], str(row[idx])) for idx in indexes)))
+                )
             slices[scope][ts] = _Sample(
                 float(num), float(den or 0) if has_den else None
             )
@@ -229,11 +249,18 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension],
+        max_group_dims: int,
     ) -> dict[SegmentKey, Samples]:
         assert metric.expression is not None
         expr = ast.parse(metric.expression, mode="eval").body
         inputs = {
-            name: self.samples(self.registry.get(name), stamps, segment, dims)
+            name: self.samples(
+                self.registry.get(name),
+                stamps,
+                segment,
+                dims,
+                max_group_dims=max_group_dims,
+            )
             for name in _names(expr)
         }
         result: dict[SegmentKey, Samples] = {}
@@ -263,8 +290,16 @@ class _Stats:
         hours: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension] = (),
+        *,
+        max_group_dims: int = 1,
     ) -> dict[SegmentKey, list[tuple[BaselinePoint, _Sample | None, _Sample | None]]]:
-        seasonal = self.samples(metric, _seasonal_stamps(hours), segment, dims)
+        seasonal = self.samples(
+            metric,
+            _seasonal_stamps(hours),
+            segment,
+            dims,
+            max_group_dims=max_group_dims,
+        )
         if not dims and not seasonal and hours:
             seasonal = {tuple(sorted(segment.items())): {}}
         fallback: dict[SegmentKey, Samples] | None = None
@@ -285,7 +320,11 @@ class _Stats:
                 elif current is not None or not dims:
                     if fallback is None:
                         fallback = self.samples(
-                            metric, _fallback_stamps(hours), segment, dims
+                            metric,
+                            _fallback_stamps(hours),
+                            segment,
+                            dims,
+                            max_group_dims=max_group_dims,
                         )
                     references = self._references(
                         metric,
@@ -303,6 +342,7 @@ class _Stats:
                                 ),
                                 segment,
                                 dims,
+                                max_group_dims=max_group_dims,
                             )
                         factors = self._weekday_factors(
                             metric, scope, daily.get(key, {}), ts
@@ -590,14 +630,20 @@ def scan_anomalies(
     margin, per_order = _impact_scale(stats, ts)
     anomalies = []
     for metric in registry.active:
-        floor = {"count": 20.0, "eur": 200.0}.get(metric.unit)
-        for key, [(point, _, _)] in stats.baselines(
-            metric, (ts,), {}, metric.dimensions
+        for key, [(point, _, reference)] in stats.baselines(
+            metric, (ts,), {}, metric.dimensions, max_group_dims=2
         ).items():
-            if point.actual is None or point.expected is None or point.z is None:
+            if (
+                point.actual is None
+                or point.expected is None
+                or point.z is None
+                or reference is None
+            ):
                 continue
-            if abs(point.z) < settings.z_threshold or (
-                floor is not None and point.expected < floor
+            if (
+                abs(point.z) < settings.z_threshold
+                or (metric.unit == "count" and point.expected < 20)
+                or (metric.unit == "eur" and reference.num < 200)
             ):
                 continue
             anomalies.append(
