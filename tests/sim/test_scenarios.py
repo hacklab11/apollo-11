@@ -2,14 +2,16 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
+from typing import get_args
 
 import numpy as np
 import pytest
 
 from eye.config import Settings
+from eye.contracts import ScenarioId
 from eye.sim.engine import Hour, Simulator
 from eye.sim.market import Market
-from eye.sim.scenarios import ScenarioManager, inject
+from eye.sim.scenarios import LatePartitions, ScenarioManager, inject
 
 
 @pytest.fixture(scope="module")
@@ -299,6 +301,80 @@ def test_i2_late_rows_are_backfilled_even_after_clear(baseline: Simulator) -> No
             assert con.execute(
                 "SELECT count(*) FROM partition_status WHERE table_name = 'orders_hourly' AND country = 'FR' AND loaded_rows != expected_rows"
             ).fetchone() == (0,)
+
+
+def test_late_partitions_both_countries_backfill_next_tick(baseline: Simulator) -> None:
+    with fork(baseline) as control, fork(baseline) as sim:
+        hook = LatePartitions(("DE", "FR"), loaded_share=0.6, backfill_hours=1)
+        sim.pre_store_hooks.append(hook)
+        start = sim.now
+        play(control, 2)
+        sim.step()
+        with sim.store.cursor() as con:
+            rows = con.execute(
+                "SELECT country, expected_rows, loaded_rows, loaded_at - ts "
+                "FROM partition_status WHERE table_name = 'orders_hourly' AND ts = ?",
+                [start],
+            ).fetchall()
+            assert {r[0] for r in rows} == {"DE", "FR"}
+            for country, expected, loaded, delay in rows:
+                assert loaded == round(expected * 0.6)
+                assert loaded / expected == pytest.approx(0.6, abs=1 / expected)
+                assert delay == timedelta(hours=1)
+                assert con.execute(
+                    "SELECT count(*) FROM orders_hourly WHERE country = ? AND ts = ?",
+                    [country, start],
+                ).fetchone() == (loaded,)
+        hook.enabled = False
+        sim.step()
+        with sim.store.cursor() as con, control.store.cursor() as reference:
+            query = "SELECT * FROM orders_hourly WHERE ts >= ? ORDER BY ALL"
+            assert (
+                con.execute(query, [start]).fetchall()
+                == reference.execute(query, [start]).fetchall()
+            )
+            assert con.execute(
+                "SELECT count(*) FROM partition_status WHERE table_name = 'orders_hourly' "
+                "AND loaded_rows != expected_rows"
+            ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "countries,share", [((), 0.6), (("DE", "FR"), 0.0), (("FR",), 1.0)]
+)
+def test_late_partitions_empty_and_boundary_shares(
+    settings: Settings, countries: tuple, share: float
+) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        hook = LatePartitions(countries, share, 1)
+        hour = Hour(sim.now, np.random.default_rng(42))
+        hour.batches = {"orders_hourly": [], "partition_status": []}
+        hook(sim, hour)
+        assert hour.batches == {"orders_hourly": [], "partition_status": []}
+        hook.enabled = False
+        hour.ts += timedelta(hours=1)
+        hook(sim, hour)
+        assert not hook._late
+
+
+@pytest.mark.parametrize(
+    "countries,share,delay",
+    [(("DE",), -0.1, 1), (("FR",), 1.1, 1), (("DE",), 0.6, 0), (("XX",), 0.6, 1)],
+)
+def test_late_partitions_invalid_parameters(
+    countries: tuple, share: float, delay: int
+) -> None:
+    with pytest.raises(ValueError):
+        LatePartitions(countries, share, delay)
+
+
+def test_s8_contract_is_reserved_but_not_implemented(settings: Settings) -> None:
+    assert "S8" in get_args(ScenarioId)
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        manager = ScenarioManager(sim)
+        with pytest.raises(ValueError, match="S8 is not implemented"):
+            manager.inject("S8")
+        assert manager.timeline() == []
 
 
 @pytest.mark.parametrize("id", ["S1", "S3", "S4", "S5", "S7", "I1"])

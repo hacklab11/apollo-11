@@ -377,7 +377,8 @@ class ScenarioManager:
     def _before_store(self, sim: Simulator, hour: Hour) -> None:
         self._late_partitions.enabled = any(
             state.id == "I2"
-            and hour.ts < state.injected_ts + timedelta(hours=self.params["I2"]["duration_hours"])
+            and hour.ts
+            < state.injected_ts + timedelta(hours=self.params["I2"]["duration_hours"])
             for state in self.active()
         )
         self._late_partitions(sim, hour)
