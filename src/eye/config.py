@@ -65,6 +65,11 @@ class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+class DataSettings(_Section):
+    source: Literal["sim", "duckdb"] = "sim"
+    path: CachePath = Path("data/world.duckdb")
+
+
 class SimSettings(_Section):
     seed: int = Field(42, ge=0)
     history_days: int = Field(28, ge=21, le=60)
@@ -145,6 +150,7 @@ class PortsSettings(_Section):
 
 
 class Settings(_Section):
+    data: DataSettings = Field(default_factory=DataSettings)
     sim: SimSettings = Field(default_factory=SimSettings)
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
     sentinel: SentinelSettings = Field(default_factory=SentinelSettings)
