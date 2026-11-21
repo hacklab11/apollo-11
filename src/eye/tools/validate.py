@@ -8,6 +8,7 @@ import numpy as np
 from pydantic import BaseModel, Field, validate_call
 
 from eye.registry.engine import MetricEngine
+from eye.registry.loader import formula_inputs
 from eye.tools.identity import parse_identity, ratio_sums
 
 
@@ -26,11 +27,30 @@ class CorrelationResult(BaseModel):
 
 
 def _window(
-    engine: MetricEngine, start: datetime | None, end: datetime | None
+    engine: MetricEngine,
+    start: datetime | None,
+    end: datetime | None,
+    metrics: list[str],
 ) -> tuple[datetime, datetime]:
     if end is None:
+        pending = list(metrics)
+        visited = set()
+        latest = None
         with engine._con.cursor() as cur:
-            latest = cur.execute("SELECT max(ts) FROM partition_status").fetchone()[0]
+            while pending:
+                name = pending.pop()
+                if name in visited:
+                    continue
+                visited.add(name)
+                definition = engine._registry.get(name)
+                if definition.kind == "formula":
+                    pending.extend(formula_inputs(definition.expression))
+                else:
+                    stamp = cur.execute(
+                        f"SELECT max(ts) FROM ({definition.sql}) metric_clock"
+                    ).fetchone()[0]
+                    if stamp is not None:
+                        latest = max(latest, stamp) if latest is not None else stamp
         if latest is None:
             raise ValueError("cannot infer validation window without simulated history")
         end = latest + timedelta(hours=1)
@@ -93,9 +113,9 @@ def validate_identity(
     segments: list[dict[str, str]] | None = None,
     scenario_hours: list[datetime] | None = None,
 ) -> ValidationResult:
-    start, end = _window(engine, start, end)
     parsed = parse_identity(identity)
     names = {parsed.target, *(t.name for t in parsed.terms)}
+    start, end = _window(engine, start, end, sorted(names))
     shared = set.intersection(*(set(engine._registry.get(n).dimensions) for n in names))
     excluded = set(scenario_hours or [])
     selections = [{}]
@@ -170,7 +190,7 @@ def validate_breakdown(
     end: datetime | None = None,
     scenario_hours: list[datetime] | None = None,
 ) -> ValidationResult:
-    start, end = _window(engine, start, end)
+    start, end = _window(engine, start, end, [metric])
     definition = engine._metric(metric, [dim])
     excluded = set(scenario_hours or [])
     total = _points(engine, metric, start, end, {}, excluded)
@@ -226,7 +246,7 @@ def lagged_correlation(
 ) -> CorrelationResult:
     if max_lag < 0:
         raise ValueError("max_lag must be nonnegative")
-    start, end = _window(engine, start, end)
+    start, end = _window(engine, start, end, [src, dst])
     excluded = set(scenario_hours or [])
 
     def differences(name: str) -> dict[datetime, float]:

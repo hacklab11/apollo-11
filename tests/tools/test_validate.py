@@ -92,15 +92,14 @@ def test_breakdown_zero_denominator_segment(
 def test_validation_defaults_to_simulated_data_clock(
     weighted_engine: MetricEngine,
 ) -> None:
-    weighted_engine._con.execute("CREATE TABLE partition_status (ts TIMESTAMPTZ)")
-    weighted_engine._con.execute("INSERT INTO partition_status VALUES ('2020-01-01')")
     result = validate_breakdown(weighted_engine, "orders", "country")
     assert result.passed
     assert result.evidence["n"] == 1
     assert result.evidence["skipped"] == 14 * 24 - 1
     assert validate_identity(weighted_engine, "orders = orders").passed
+    assert validate_breakdown(weighted_engine, "aov", "country").passed
     assert lagged_correlation(weighted_engine, "orders", "orders").n == 0
-    weighted_engine._con.execute("DELETE FROM partition_status")
+    weighted_engine._con.execute("DELETE FROM facts")
     with pytest.raises(ValueError, match="without simulated history"):
         validate_breakdown(weighted_engine, "orders", "country")
 
@@ -166,6 +165,18 @@ def test_baseline_breakdowns(baseline: tuple[Path, datetime]) -> None:
             end - timedelta(days=1),
         )
         assert sum(r.share for r in result.contributions) == pytest.approx(1)
+
+
+def test_default_window_on_fresh_simulator_baseline(
+    baseline: tuple[Path, datetime],
+) -> None:
+    path, _ = baseline
+    with duckdb.connect(str(path), read_only=True) as con:
+        assert con.execute("SELECT count(*) FROM partition_status").fetchone()[0] == 0
+        engine = MetricEngine(con, load_registry(con))
+        result = validate_breakdown(engine, "orders", "country")
+        assert result.passed
+        assert result.evidence["n"] == 4 * 24
 
 
 class SyntheticEngine(MetricEngine):
