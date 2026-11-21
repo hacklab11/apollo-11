@@ -273,8 +273,8 @@ class Cartographer:
                 seen.add(node)
                 pending.extend(
                     e.dst
-                    for e in self.graph.out_edges(node, {"formula"})
-                    if e.status == "validated"
+                    for e in self.graph.edges()
+                    if e.src == node and e.type == "formula" and e.status == "validated"
                 )
         return False
 
