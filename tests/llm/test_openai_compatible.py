@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from eye.config import LlmSettings
 from eye.llm.client import LLMClient, _chat_request, _chat_response, configure_client
-from eye.llm.runtime import LLMUnavailable, run_agent
+from eye.llm.runtime import AgentRefused, LLMUnavailable, run_agent
 
 from .test_runtime import discard, spec
 
@@ -124,6 +124,15 @@ def test_finish_reason(finish, expected):
     result = _chat_response(completion(finish=finish, text="hello"), "fallback")
     assert result.stop_reason == expected
     assert result.content[0].text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_explicit_refusal_with_stop(transport):
+    refused = completion(finish="stop")
+    refused["choices"][0]["message"]["refusal"] = "Cannot comply"
+    transport([refused])
+    with pytest.raises(AgentRefused):
+        await run_agent(spec(), "go", "inv", discard)
 
 
 def test_thinking_dropped():

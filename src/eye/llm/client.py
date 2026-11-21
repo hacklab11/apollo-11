@@ -111,6 +111,8 @@ def _chat_response(raw: dict[str, Any], model: str) -> BetaMessage:
         "length": "max_tokens",
         "content_filter": "refusal",
     }[choice["finish_reason"]]
+    if message.get("refusal"):
+        finish = "refusal"
     usage = raw.get("usage") or {}
     return BetaMessage.model_validate(
         {
