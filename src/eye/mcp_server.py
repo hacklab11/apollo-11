@@ -40,6 +40,7 @@ MAX_TRAIL_STEPS = 60
 MAX_GRAPH_DEPTH = 3
 MAX_GRAPH_NODES = 80
 DEFAULT_WINDOW = timedelta(hours=48)
+MAX_SUMMARY = 300
 # add_metric runs the Cartographer, which may take up to 60 s.
 TIMEOUT = httpx.Timeout(30.0, read=90.0)
 
@@ -79,6 +80,8 @@ class IncidentDetail(BaseModel):
 
 
 def _result(summary: str, data: BaseModel | list[BaseModel]) -> CallToolResult:
+    if len(summary) > MAX_SUMMARY:
+        summary = summary[: MAX_SUMMARY - 1] + "…"
     payload = (
         [item.model_dump(mode="json") for item in data]
         if isinstance(data, list)
@@ -133,7 +136,7 @@ def create_server(
         """Return the simulation clock and tick, agent health, active scenarios and
         LLM mode. Use it first to see whether the system is running."""
         state = await status()
-        healthy = sum(agent["ok"] for agent in state.agents.values())
+        healthy = sum(agent.ok for agent in state.agents.values())
         active = ", ".join(state.active_scenarios) or "none"
         return _result(
             f"Sim time {state.sim_ts.isoformat()} (tick {state.tick}, "
@@ -153,7 +156,7 @@ def create_server(
             Field(description=f"Maximum incidents to return, 1 to {MAX_INCIDENTS}."),
         ] = 20,
     ) -> CallToolResult:
-        """List incidents with id, title, status, verdict, impact in EUR and
+        """Return incidents with id, title, status, verdict, impact in EUR and
         opened/updated times. Use it to find what is wrong now; then call
         get_incident with an id for the evidence."""
         if not 1 <= limit <= MAX_INCIDENTS:
@@ -329,8 +332,8 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def list_scenarios() -> CallToolResult:
-        """List the demo scenarios with id, title, whether each is active and when
-        it was injected or cleared."""
+        """Return the demo scenarios with id, title, whether each is active and when
+        it was injected or cleared. Use it before inject_scenario or clear_scenario."""
         states = _SCENARIOS.validate_python(await call("GET", "/api/scenarios"))
         active = [state.id for state in states if state.active]
         return _result(
@@ -364,7 +367,8 @@ def create_server(
             ScenarioId, Field(description="Scenario id from list_scenarios.")
         ],
     ) -> CallToolResult:
-        """Stop a demo scenario in the simulation and return its new state."""
+        """Stop a demo scenario in the simulation and return its new state. Use it
+        to end a demo the user started."""
         return await change_scenario(id, "clear")
 
     return server
