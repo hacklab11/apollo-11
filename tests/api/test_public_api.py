@@ -31,6 +31,7 @@ from eye.contracts import (
     ScenarioState,
     SentinelDecision,
     Series,
+    Symptom,
     TrailStep,
 )
 from eye.incidents.store import IncidentStore
@@ -227,6 +228,17 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         assert client.get("/").status_code == 200
         assert client.get("/web/app.js").status_code == 200
         assert client.get("/api/metrics/no_such_metric").status_code == 404
+
+
+def test_incident_symptoms(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
+    app, _, orchestrator = service
+    item = orchestrator.incidents.all()[0]
+    item.symptoms = [Symptom(node="orders", first_change_ts=item.entry.ts)]
+    orchestrator.incidents._save(item)
+    expected = [symptom.model_dump(mode="json") for symptom in item.symptoms]
+    with TestClient(app) as client:
+        assert client.get(f"/api/incidents/{item.id}").json()["symptoms"] == expected
+        assert client.get("/api/incidents").json()[0]["symptoms"] == expected
 
 
 @pytest.mark.asyncio

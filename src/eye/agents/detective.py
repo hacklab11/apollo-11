@@ -37,6 +37,7 @@ from eye.contracts import (
     Series,
     SpecialistRequest,
     SpecialistResponse,
+    Symptom,
     TrailStep,
     Verdict,
 )
@@ -276,6 +277,74 @@ class Detective:
         self._llm = llm or LlmSettings()
         self._skeptic = Skeptic(con, registry, freshness=self._freshness, llm=self._llm)
 
+    def _first_changes(
+        self, segment: dict[str, str], window: _Window, nodes: Iterable[str]
+    ) -> dict[str, datetime | None]:
+        scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
+        for node in sorted(nodes):
+            dims = self._registry.get(node).dimensions
+            scope = tuple(
+                sorted((dim, value) for dim, value in segment.items() if dim in dims)
+            )
+            scoped.setdefault(scope, []).append(node)
+        changes: dict[str, datetime | None] = {}
+        for scope, metrics in scoped.items():
+            result = first_change(
+                FirstChangeInput(
+                    metrics=metrics,
+                    segment=dict(scope),
+                    start=window.lookback,
+                    end=window.end,
+                ),
+                con=self._con,
+                registry=self._registry,
+            )
+            changes.update(result.changes)
+        return changes
+
+    def _symptoms(
+        self, anomaly: Anomaly, window: _Window, cause: Hypothesis | None
+    ) -> list[Symptom]:
+        if cause is None:
+            return []
+        names = frontier = {cause.root_node}
+        edges = self._graph.view().edges
+        while frontier:
+            frontier = {
+                edge.dst
+                for edge in edges
+                if edge.src in frontier
+                and edge.type != "breakdown"
+                and edge.status != "rejected"
+            } - names
+            names |= frontier
+        candidates = {
+            node
+            for node in (names - {cause.root_node}) & self._registry.metrics.keys()
+            if self._registry.get(node).status == "active"
+        }
+        measured = set(candidates)
+        if (
+            cause.first_change_ts is None
+            and cause.root_node in self._registry.metrics
+            and self._registry.get(cause.root_node).status == "active"
+        ):
+            measured.add(cause.root_node)
+        changes = self._first_changes(
+            {**anomaly.segment, **cause.segment}, window, measured
+        )
+        cause_ts = cause.first_change_ts or changes.get(cause.root_node)
+        if cause_ts is None:
+            return []
+        return sorted(
+            [
+                Symptom(node=node, first_change_ts=ts)
+                for node in candidates
+                if (ts := changes.get(node)) is not None and ts > cause_ts
+            ],
+            key=lambda symptom: (symptom.first_change_ts, symptom.node),
+        )
+
     def _detect_loop(
         self,
         anomaly: Anomaly,
@@ -295,32 +364,11 @@ class Detective:
             for node in cycle
             if self._registry.get(node).status == "active"
         }
-        changes: dict[str, datetime] = {}
-        scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
-        for node in sorted(active):
-            dims = self._registry.get(node).dimensions
-            segment = tuple(
-                sorted(
-                    (dim, value)
-                    for dim, value in anomaly.segment.items()
-                    if dim in dims
-                )
-            )
-            scoped.setdefault(segment, []).append(node)
-        for segment, names in scoped.items():
-            result = first_change(
-                FirstChangeInput(
-                    metrics=names,
-                    segment=dict(segment),
-                    start=window.lookback,
-                    end=window.end,
-                ),
-                con=self._con,
-                registry=self._registry,
-            )
-            changes.update(
-                {node: ts for node, ts in result.changes.items() if ts is not None}
-            )
+        changes = {
+            node: ts
+            for node, ts in self._first_changes(anomaly.segment, window, active).items()
+            if ts is not None
+        }
         corroborated = {
             hyp.root_node
             for hyp in hypotheses
@@ -781,8 +829,19 @@ class Detective:
                 if incident.root_cause is not None
             },
         )
+        cause = answer.root_cause or next(
+            (hyp for hyp in answer.hypotheses if hyp.id == answer.trigger), None
+        )
+        symptoms = self._symptoms(anomaly, window, cause)
+        if symptoms:
+            await record(
+                "note",
+                "Downstream symptoms: " + ", ".join(item.node for item in symptoms),
+                tool="first_change",
+            )
         result = InvestigationResult(
             **answer.model_dump(),
+            symptoms=symptoms,
             investigation_id=investigation_id,
             entry=anomaly,
             steps_used=turns,

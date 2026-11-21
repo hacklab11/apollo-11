@@ -1,10 +1,11 @@
+from contextlib import closing
 from datetime import timedelta
 
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 
 from eye.agents.reporter import Reporter
-from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision
+from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision, Symptom
 from eye.incidents.store import IncidentStore, canonical, fingerprint
 
 
@@ -43,6 +44,26 @@ def test_canonical_and_fingerprint():
         fingerprint("orders", {"country": "DE"}, "release")
         == "orders|country=DE|release"
     )
+
+
+@pytest.mark.asyncio
+async def test_symptoms_persist_and_merge(tmp_path):
+    path = tmp_path / "symptoms.duckdb"
+    value = result()
+    value.symptoms = [Symptom(node="orders", first_change_ts=value.entry.ts)]
+    with closing(IncidentStore(path)) as store:
+        first = await store.upsert(value)
+        assert first.symptoms == value.symptoms
+    with closing(IncidentStore(path)) as store:
+        assert store.get(first.id).symptoms == value.symptoms
+        newer = result("b", hours=1)
+        newer.symptoms = [Symptom(node="gmv", first_change_ts=newer.entry.ts)]
+        merged = await store.upsert(newer)
+        assert merged.id == first.id
+        assert store.get(first.id).symptoms == newer.symptoms
+        newer = result("c", hours=2)
+        cleared = await store.upsert(newer)
+        assert store.get(cleared.id).symptoms == []
 
 
 def test_match_provisional_and_empty(store):
