@@ -45,7 +45,7 @@ Start all services in the first terminal:
 ./scripts/dev.sh
 ```
 
-Core generates 28 days of history and initializes the graph before the API is ready. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
+Core generates 28 days of history and initializes the graph before the API is ready. It can start even if the model is unavailable during graph refinement; if Core logs `refinement_unavailable`, check your provider credentials and model availability before rehearsing. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
 
 ```sh
 curl -fsS http://127.0.0.1:8000/api/status
