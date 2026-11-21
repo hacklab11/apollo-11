@@ -216,6 +216,18 @@ def test_s7_with_i1_checkout_outage(baseline: Simulator) -> None:
         ), (normal, actual)
         assert actual["gmv"] / normal["gmv"] <= 0.7, (normal, actual)
         with sim.store.cursor() as con:
+            assert con.execute(
+                "SELECT min(latency_p95_ms), max(latency_p95_ms), count(DISTINCT ts) "
+                "FROM payments_hourly WHERE psp = 'PSP-2' AND ts >= ? AND ts < ?",
+                [start - timedelta(hours=1), start + timedelta(hours=1)],
+            ).fetchone() == (900.0, 900.0, 2)
+            recovered = con.execute(
+                "SELECT DISTINCT latency_p95_ms FROM payments_hourly "
+                "WHERE psp = 'PSP-2' AND ts >= ?",
+                [start + timedelta(hours=1)],
+            ).fetchall()
+            assert len(recovered) > 1
+            assert all(150 < latency < 250 for (latency,) in recovered)
             assert (
                 con.execute(
                     "SELECT sum(errors) FROM client_errors_hourly WHERE ts >= ? AND platform = 'web' AND app_version = 'checkout-web v5.8' AND page = 'checkout' AND error_type = 'TypeError'",

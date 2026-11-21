@@ -11,7 +11,7 @@ from eye.config import Settings
 from eye.sim.ads import Ads, marketing
 from eye.sim.apps import Apps
 from eye.sim.changelog import noise
-from eye.sim.demand import DemandModifiers, generate_demand
+from eye.sim.demand import BASE_PSP_LATENCY_MS, PSPS, DemandModifiers, generate_demand
 from eye.sim.finance import Finance
 from eye.sim.market import Market
 from eye.sim.pipeline import Pipeline
@@ -81,6 +81,15 @@ class Simulator:
         ads_rng = default_rng([self.settings.sim.seed, hour_index, 1])
         for hook in self.pre_demand_hooks:
             hook(self, hour)
+        for psp_index, psp in enumerate(PSPS):
+            latency_rng = default_rng(
+                [self.settings.sim.seed, hour_index, 2, psp_index]
+            )
+            hour.demand.psp_latency.setdefault(
+                psp,
+                BASE_PSP_LATENCY_MS
+                * float(latency_rng.lognormal(-(0.05**2) / 2, 0.05)),
+            )
         for table, rows in self.market.before_demand(hour.ts, hour.rng).items():
             hour.batches.setdefault(table, []).extend(rows)
         for adv in self.world.advertisers.values():
