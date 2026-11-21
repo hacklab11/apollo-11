@@ -290,7 +290,7 @@ class Cartographer:
     async def add_metric(
         self,
         req: AddMetricRequest,
-        *,
+        clean_hours: Sequence[datetime] | None = None,
         on_step: Callable[[TrailStep], Awaitable[None]] = _discard,
     ) -> AddMetricResult:
         investigation = f"cartographer:{uuid4().hex}"
@@ -374,6 +374,7 @@ class Cartographer:
             has_den={**registry.has_den, req.name: "den" in columns},
         )
         engine = MetricEngine(self.engine._con, staged)
+        self._set_clean_hours(clean_hours)
         _, end = _window(engine, None, None, [req.name])
         samples = engine.query_metric(req.name, end - timedelta(days=7), end)
         if not any(p.value is not None for s in samples for p in s.points):
@@ -502,15 +503,20 @@ class Cartographer:
             notes.append("competing parents")
 
     async def refine_causal_seeds(
-        self, *, on_step: Callable[[TrailStep], Awaitable[None]] = _discard
+        self,
+        clean_hours: Sequence[datetime] | None = None,
+        on_step: Callable[[TrailStep], Awaitable[None]] = _discard,
     ) -> None:
         seeds = [
             e
             for e in self.graph.edges()
-            if e.created_by == "seed" and not e.evidence.get("refined")
+            if e.created_by == "seed"
+            and not e.evidence.get("refined")
+            and not e.evidence.get("llm_refined")
         ]
         if not seeds:
             return
+        self._set_clean_hours(clean_hours)
         payload = []
         for edge in seeds:
             pending = [
@@ -575,39 +581,10 @@ class Cartographer:
         for edge in updated:
             self.graph.add_edge(edge)
 
-
-def _runtime(
-    clean_hours: Sequence[datetime],
-    on_step: Callable[[TrailStep], Awaitable[None]],
-) -> Cartographer:
-    owner = getattr(on_step, "__self__", None)
-    engine = getattr(getattr(owner, "invalidate", None), "__self__", None)
-    graph = getattr(getattr(owner, "sentinel", None), "_graph", None)
-    if not isinstance(engine, MetricEngine) or not isinstance(graph, GraphStore):
-        raise TypeError("Cartographer requires the orchestrator's engine and graph")
-    _, end = _window(engine, None, None, list(engine._registry.metrics))
-    clean = set(clean_hours)
-    hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
-    return Cartographer(
-        engine,
-        graph,
-        llm=owner.settings.llm,
-        scenario_hours=[hour for hour in hours if hour not in clean],
-    )
-
-
-async def add_metric(
-    req: AddMetricRequest,
-    clean_hours: Sequence[datetime],
-    on_step: Callable[[TrailStep], Awaitable[None]],
-) -> AddMetricResult:
-    """T18 callback, using its bound trail sink to locate the shared runtime."""
-    return await _runtime(clean_hours, on_step).add_metric(req, on_step=on_step)
-
-
-async def refine_causal_seeds(
-    clean_hours: Sequence[datetime],
-    on_step: Callable[[TrailStep], Awaitable[None]],
-) -> None:
-    """Refine the graph through T18's module-level callback interface."""
-    await _runtime(clean_hours, on_step).refine_causal_seeds(on_step=on_step)
+    def _set_clean_hours(self, clean_hours: Sequence[datetime] | None) -> None:
+        if clean_hours is None:
+            return
+        _, end = _window(self.engine, None, None, list(self.engine._registry.metrics))
+        clean = set(clean_hours)
+        hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
+        self.scenario_hours = [hour for hour in hours if hour not in clean]

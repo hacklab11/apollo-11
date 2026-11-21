@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, Mock
 import duckdb
 import pytest
 
-from eye.agents import cartographer as cartographer_module
 from eye.agents.cartographer import (
     Cartographer,
     SeedDecision,
@@ -347,6 +346,28 @@ async def test_refinement_is_cached(
 
 
 @pytest.mark.asyncio
+async def test_refinement_respects_main_cache_marker(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cartographer.graph.add_edge(
+        Edge(
+            id="main_refined",
+            src="orders",
+            dst="refunds",
+            type="causal_hypothesis",
+            status="hypothesis",
+            confidence=0.5,
+            evidence={"llm_refined": True},
+            created_by="seed",
+        )
+    )
+    run = AsyncMock(side_effect=AssertionError("cached seed must not be refined"))
+    monkeypatch.setattr("eye.agents.cartographer.run_agent", run)
+    await cartographer.refine_causal_seeds([], run)
+    run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_deterministic_acceptance_overrides_proposal(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -557,8 +578,8 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
         store,
         LLMClient(settings.llm),
         lambda *_: (0.0, 1.0),
-        add_metric=cartographer_module.add_metric,
-        refine=cartographer_module.refine_causal_seeds,
+        add_metric=cartographer.add_metric,
+        refine=cartographer.refine_causal_seeds,
         invalidate=engine.invalidate,
     )
     monkeypatch.setattr(
@@ -566,12 +587,8 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
         AsyncMock(return_value=Submission(edges=[], notes="", unit="ratio")),
     )
     try:
-        runtime = cartographer_module._runtime(
-            orchestrator.clean_hours()[:-1], orchestrator.record_step
-        )
-        assert runtime.engine is engine
-        assert runtime.graph is cartographer.graph
-        assert orchestrator.clean_hours()[-1] in runtime.scenario_hours
+        clean = orchestrator.clean_hours()
+        monkeypatch.setattr(orchestrator, "clean_hours", lambda: clean[:-1])
         await orchestrator.refine(orchestrator.clean_hours(), orchestrator.record_step)
         result = await orchestrator.register_metric(
             AddMetricRequest(
@@ -579,6 +596,7 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
             )
         )
         assert result.metric.name == "new_ratio"
+        assert clean[-1] in cartographer.scenario_hours
         assert engine.metric_window(
             "new_ratio", end.replace(day=1), end
         ) == pytest.approx(0.02)
