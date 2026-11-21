@@ -11,7 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from anthropic import AnthropicError
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from eye.contracts import Actor, StepAction, TrailStep
 from eye.llm.client import BudgetExceeded, LLMUnavailable, get_client
@@ -137,7 +137,14 @@ async def run_agent(
             error = True
             output = None
             summary = f"{type(exc).__name__}: tool {block.name} failed"
-            content = summary
+            if isinstance(exc, ValidationError):
+                detail = "; ".join(
+                    f"{'.'.join(map(str, item['loc']))}: {item['msg']}"
+                    for item in exc.errors(include_input=False, include_url=False)
+                )
+            else:
+                detail = str(exc)
+            content = f"{summary}: {detail[:300]}"
         await emit(
             "tool_call",
             summary,

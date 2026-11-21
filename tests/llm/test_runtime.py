@@ -177,13 +177,17 @@ async def test_failed_tools_get_second_chance(harness, kind):
     if kind == "exception":
 
         def broken(args):
-            raise RuntimeError("sensitive error should not escape")
+            raise RuntimeError("upstream calculation unavailable")
 
         agent.tools[0].fn = broken
     assert (await run_agent(agent, "go", "inv", discard)).value == 9
     block = requests[1]["messages"][-1]["content"][0]
     assert block["is_error"]
-    assert "sensitive" not in block["content"]
+    if kind == "submit":
+        assert "value: Field required" in block["content"]
+        assert "summary: Field required" in block["content"]
+    elif kind == "exception":
+        assert "upstream calculation unavailable" in block["content"]
 
 
 @pytest.mark.asyncio
