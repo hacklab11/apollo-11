@@ -46,6 +46,7 @@ def test_oracle_ids() -> None:
 @pytest.mark.parametrize("include_audit", [True, False])
 def test_scenario_audit_supplies_injection_and_seller_evidence(
     include_audit: bool,
+    tmp_path: Path,
 ) -> None:
     incident = make_incident_s7()
     root = incident.root_cause.model_copy(update={"first_change_ts": CAMPAIGN_TS})
@@ -86,9 +87,14 @@ def test_scenario_audit_supplies_injection_and_seller_evidence(
             "must_mention_scenario_seller": "S8",
         },
     }
-    results = harness.evaluate(
-        entry, [incident], [defer, audit] if include_audit else [defer]
-    )
+    scenario_audits = [audit] if include_audit else []
+    with harness.closing(harness.IncidentStore(tmp_path / "ops.duckdb")) as store:
+        store.add_step(defer)
+        results = harness.evaluate(
+            entry, [incident], harness.stored_trails(store) + scenario_audits
+        )
+        assert store.trail("eval:scenarios") == []
+        assert harness.stored_trails(store) == [defer]
     assert all(c["passed"] == include_audit for c in results)
 
 

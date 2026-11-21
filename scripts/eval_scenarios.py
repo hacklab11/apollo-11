@@ -1004,6 +1004,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
         actions = ConditionalActions(entry, DEMO_METRICS)
+        scenario_audits: list[TrailStep] = []
         try:
             for hour in range(entry["run_hours"]):
                 for command in entry["play"]:
@@ -1014,7 +1015,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                             action[6:-1] if clear else action, active=not clear
                         )
                         if not clear:
-                            await core.record_step(
+                            scenario_audits.append(
                                 scenario_audit(
                                     state, core.scenarios.params.get(action, {})
                                 )
@@ -1041,7 +1042,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             await core.close()
             await world_http.aclose()
         incidents = store.all()
-        trails = stored_trails(store)
+        trails = stored_trails(store) + scenario_audits
         checks = evaluate(entry, incidents, trails)
         replay_misses = llm.replay_misses + a2a.replay_misses
         if replay_misses:
