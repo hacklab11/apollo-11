@@ -447,6 +447,8 @@ class Cartographer:
                 notes.append(f"Missing dimensions: {', '.join(sorted(missing))}")
         self._competing(edges, notes)
         await step("acceptance", f"{len(edges)} deterministically checked edges")
+        if req.name in registry.metrics:
+            raise ValueError("metric name was registered concurrently")
         registry.metrics[req.name] = metric
         registry.source_tables[req.name] = staged.source_tables[req.name]
         registry.has_den[req.name] = staged.has_den[req.name]
