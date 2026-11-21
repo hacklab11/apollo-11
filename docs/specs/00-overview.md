@@ -38,7 +38,8 @@ Most of these sources are seller-tool vendors or news. They are good enough for 
 
 ## 3. The hardest problem: S6 "Black Friday cascade"
 
-This is our main demo. It is what most teams will not build: a cross-actor feedback loop, where the total looks good.
+This is our deep example for the slides and Q&A. It is what most teams will not build: a cross-actor feedback loop, where the total looks good.
+The 3-minute live demo uses S8 "The €9 headphones" (`15-demo-and-pitch.md` §1): one fault, one innocent change, one new metric.
 
 Timeline in the simulator:
 
@@ -160,7 +161,8 @@ Input: a new metric with only a name, a definition, and SQL. The contributor giv
 3. The LLM decides: keep, reject, or mark `ambiguous` when two placements both pass or evidence is weak.
 4. The metric joins monitoring at the next tick.
 
-Demo metric: `refund_rate = refunds / orders` (formula edge, breakdown by country and seller_tier). Then the system can see the S6 lagged refund effect with the new metric.
+Live demo metric: `fee_per_order` (formula edge `fee_revenue = orders * fee_per_order`, breakdowns, causal hypothesis from `aov`). During S8 its anomaly joins the open incident.
+Second metric for S6 and tests: `refund_rate = refunds / orders`. With it the system can see the S6 lagged refund effect.
 Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to `orders`?).
 
 ## 6. Algorithms (what the judges asked to see)
@@ -233,11 +235,12 @@ Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to
 4. S6 produces one merged story: innocent campaign share, trigger, repricer loop, consequences, uncertain items. The totals stayed green, and the system found it anyway.
 5. I1 alone is labeled `INNOCENT` and does not raise an alert.
 6. I2 is deferred or labeled as a data issue, not as a business fault.
-7. `add_metric(refund_rate, ...)` places the metric with validated edges in < 60 s, and the UI shows it.
+7. `add_metric(fee_per_order, ...)` places the metric with validated edges in < 60 s, and the UI shows it. During S8 its anomaly attaches to the open S8 incident.
 8. The same anomaly on later ticks updates one incident. After `clear_scenario`, the incident becomes `resolved`.
 9. S6 uses evidence from SellerOS over A2A, and SellerOS receives a notification. Stopping SellerOS makes the report say "agent unavailable" and lowers confidence.
 10. An external MCP client (Claude Desktop or Claude Code) can list incidents and read a report.
 11. Chat in the UI answers "why did contribution fall?" by using MCP tools.
+12. S8 during I1 (D6): the first S8 hour is deferred for incomplete data; the incident names the seller's price drop as the first cause, first as `HYPOTHESIS`, then `CONFIRMED` after SellerOS; I1 is a `planned` contribution; other price drops and the stockout are symptoms.
 
 ## 9. Where the details are
 

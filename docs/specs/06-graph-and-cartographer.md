@@ -109,6 +109,7 @@ T09:
 
 T10 (use `llm.mode=replay` with a recorded fixture for CI; one live run by hand):
 1. `add_metric(refund_rate, SQL num=refunds den=orders)` → identity `refund_rate = refunds / orders` validated; breakdowns c, cat, t validated.
-2. `add_metric` with SQL `DROP TABLE orders_hourly` → rejected by the guard, no change to the DB.
-3. `add_metric` of a duplicate of `orders` → `ambiguous` with "duplicate".
-4. The whole flow takes < 60 s live.
+2. `add_metric(fee_per_order, SQL num=fee_revenue den=units)` → identity `fee_revenue = orders * fee_per_order` validated; breakdowns c, p, cat, t, ch validated; causal hypothesis from `aov`. This is the live demo metric (`15-demo-and-pitch.md` §1).
+3. `add_metric` with SQL `DROP TABLE orders_hourly` → rejected by the guard, no change to the DB.
+4. `add_metric` of a duplicate of `orders` → `ambiguous` with "duplicate".
+5. The whole flow takes < 60 s live.

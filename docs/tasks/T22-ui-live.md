@@ -21,7 +21,7 @@ The same UI on the real API and SSE stream.
 ## Done when (checklist in the PR, with screenshots)
 - [ ] `./scripts/dev.sh`, open `http://localhost:8000/` → clock ticks.
 - [ ] Inject S3 → within 2 ticks an incident appears and its trail grows live.
-- [ ] Add metric `refund_rate` → new node appears.
+- [ ] Add metric `fee_per_order` → new node appears.
 - [ ] Clear S3 → incident becomes resolved.
 - [ ] Mock mode still works.
 

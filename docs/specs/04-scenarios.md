@@ -113,7 +113,7 @@ Expected:
 - `must_mention`: `marketing`, `discount`, `promo-engine`, contribution shares with numbers.
 - Contributions table: shares within ±10 pp of the ground truth.
 
-## S6 Black Friday cascade (main demo)
+## S6 Black Friday cascade (deep example for slides and Q&A)
 
 Full story: `00-overview.md` §3. Parameters:
 
@@ -173,6 +173,50 @@ Expected:
 - Suggested action: roll back `checkout-web` to v5.7.
 - Impact: lost GMV per hour = (expected Black Friday GMV − actual GMV) for web + android.
 
+## S8 Price typo: the €9 headphones (live demo)
+
+Story: during Black Friday, one small seller types a wrong price in its seller tool. Its electronics offers should cost about €99, but they now cost about €9. The tool saves this as the real offer price. The shop shows it and checkout charges it. Nothing on the website is broken. The price itself is wrong. Plain-language version and the 3-minute script: `15-demo-and-pitch.md` §1.
+
+Seller: `scenarios.S8.seller_id` in `config/scenarios.yaml`. T27 chooses it for seed 42: the SellerOS customer (small_3P, not S-03, S-07 or S-12) with the most offers on E01–E10. All its offers on E01–E10 are affected (2–4 offers).
+
+Injection (normally at I1 T0 + 10h, during I1):
+- Price: the seller's affected offers get `price = 0.10 × current price`. Their `repricer_mode` becomes `fixed` while S8 is active (a hand-typed price; the seller's repricer does not undo it).
+- Stock: the affected offers get stock so that they sell out 4–8 h after inject at the new demand (tuning target below).
+- No `change_log` row. A seller's price change does not announce itself. Agents see it only in `offers_hourly` (the price path per hour).
+- SellerOS data: the price change goes to the seller's `price_history` in `sellers.json` with `source: "manual"` (`11-selleros-external.md` §3).
+- Late data: the first S8 hour uses the I2 late-partition hook for both countries: `orders_hourly` gets `loaded_rows = 0.6 × expected_rows`, and the missing rows are backfilled at the next tick. The Sentinel defers this hour (completeness < 0.9) and investigates on the next tick.
+
+What follows from the existing rules (no extra code):
+- `price_factor` is 2.0 at this price (`03-simulator.md` §3.4), so cart rate on these SKUs doubles. The seller wins the Buy Box on its affected SKUs.
+- Other sellers' repricers, and 1P, follow the price down to their floors (§4.2 in 03). These are symptoms. They change after the seller's price.
+- 1P loses sales on these SKUs, so `first_party_margin` for electronics falls. The seller's orders bring only a small fee.
+- After sellout, the Buy Box moves to more expensive offers, and the recovery rule raises prices again.
+
+`clear(S8)` models the seller's fix: the affected offers get their pre-S8 price and repricer mode back. Stock that was sold stays sold. The demo runner (T24) calls `clear(S8)` after the SellerOS ack appears on the incident.
+
+Decoys:
+- I1 is active: sessions +40% and platform-funded 10% coupons on electronics (planned). Hypothesis "the campaign explains it" must explain only its share (from `expected_effect`). The contributions table needs a `planned` row.
+- Other sellers' and 1P price drops on the same SKUs. Hypothesis "1P price change" or "repricer loop" as root cause must be refuted: they changed later than the seller's price.
+- Baseline releases on the same day, with no effect.
+
+Expected:
+- `entry_metrics`: `aov` `{category: electronics}`, `first_party_margin` `{category: electronics}`, `price_change_rate` `{category: electronics, seller_tier: small_3P}`, `contribution_margin`.
+- `root_node`: `aov` or `price_change_rate`; segment contains `{category: electronics}`; `cause_type`: `price_change`; `first_change_ts` = inject hour.
+- Verdict: `HYPOTHESIS` ("pricing error") until SellerOS answers. `CONFIRMED` after SellerOS's `price_intent_check` reports a manual price below unit cost (evidence groups: data + specialist).
+- Symptoms named: 1P and other sellers' price drops, stockout of the seller's offers, Buy Box move.
+- The first S8 hour is deferred for incomplete data, not alerted.
+- `must_mention`: the seller id, `price`, `manual` or `typo` or `pricing error`, `Black Friday`, `planned`, `SellerOS`.
+- `must_not_claim` as root cause: `traffic_change`, `planned_event`, `repricer_loop`.
+- Notification: SellerOS receives a `SellerAlert` for the seller with `recommended_action` "revert manual price".
+- Demo metric: `add_metric(fee_per_order)` while the incident is open → the new metric's anomaly is attached to this incident (Sentinel action `attach`), not a new incident. The attach rule needs a graph path from the root node: `price_change_rate → aov` (causal seed) and `aov → fee_per_order` (found by the Cartographer).
+- After `clear(S8)`: the incident becomes `resolved` after 3 normal ticks.
+
+Tuning targets (T27 test, I1 at 0 and S8 at +10 h, seed 42 and 2 more seeds):
+- `aov` `{category: electronics}` −30% or more in the first 3 S8 hours against I1 alone.
+- `fee_per_order` `{category: electronics}` −30% or more in the same hours.
+- The seller sells out on all affected offers 4–8 h after inject.
+- Without S8, I1 alone still matches its oracle.
+
 ## I1 Innocent: Black Friday campaign only
 
 Injection: only the T0 row of S6 (campaign + coupons). No 1P price cut, no hijacker.
@@ -194,3 +238,4 @@ Expected: the Sentinel defers (completeness < 0.9) or the Skeptic labels `DATA_I
 | D3 | S3, then `clear(S3)` | S3 incident → `resolved` after 3 normal ticks, no duplicate incident |
 | D4 | S1, S2, S4, S5, I2 one by one | each matches its oracle |
 | D5 | I1 at T0, S7 at T0+3h | I1 cleared; S7 incident `CONFIRMED` within 2 ticks, rollback suggested, PSP-2 refuted |
+| D6 (live demo) | I1 at T0, S8 at T0+10h, `add_metric(fee_per_order)` while the incident is open, `clear(S8)` after the SellerOS ack | first S8 hour deferred; one S8 incident, `HYPOTHESIS` then `CONFIRMED`; `fee_per_order` attached to it; `resolved` after 3 normal ticks |

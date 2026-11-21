@@ -48,5 +48,6 @@
 - `avg_cpc`: Advertising spend in euros divided by ad clicks.
 - `ad_ctr`: Ad clicks divided by ad impressions.
 - `budget_pace_ratio`: Cumulative daily advertiser spend divided by daily budget times the planned cumulative spending share, using each advertiser's latest hour.
+- `fee_per_order`: Marketplace fee revenue in euros divided by units ordered (live demo metric, added through `add_metric`).
 - `refund_rate`: Refund count divided by units ordered.
 - `delivery_delay_hours`: Delivery delay in hours from purchase orders, comparing actual delivery with the expected arrival time.
