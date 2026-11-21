@@ -6,7 +6,7 @@ from datetime import date, datetime
 import numpy as np
 from numpy.random import Generator
 
-from eye.sim.demand import COUNTRIES, _HOUR_PROFILE
+from eye.sim.demand import _HOUR_PROFILE, COUNTRIES
 from eye.sim.store import Batches
 from eye.sim.world import CATEGORIES, World
 
