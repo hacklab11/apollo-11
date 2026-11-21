@@ -13,7 +13,7 @@ def main() -> None:
     sys.path.insert(0, str(ROOT / "tests"))
     import factories
 
-    output = ROOT / "web/mock"
+    output = ROOT / "tests/fixtures/web"
     output.mkdir(parents=True, exist_ok=True)
     responses = {
         "status": factories.make_status(),
@@ -44,7 +44,7 @@ def main() -> None:
         event.model_dump_json() + "\n" for event in factories.make_events()
     )
     (output / "events.jsonl").write_text(events, encoding="utf-8")
-    print(f"Wrote {len(responses) + 1} mock responses to web/mock")
+    print(f"Wrote {len(responses) + 1} mock responses to tests/fixtures/web")
 
 
 if __name__ == "__main__":

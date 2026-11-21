@@ -272,13 +272,6 @@ label {
   border-color: #9dc6b0;
   color: #185439;
 }
-.mock-label {
-  margin-left: auto;
-  font-size: 9px;
-  font-weight: 700;
-  color: var(--muted);
-  letter-spacing: 1px;
-}
 .notice {
   background: #fff0ce;
   border-bottom: 1px solid #d7b471;
@@ -425,7 +418,7 @@ main {
   padding: 4px 20px 0;
   line-height: 1.6;
 }
-#fixture-note {
+.chart-panel .muted {
   padding: 3px 20px 14px;
 }
 .tabs {
@@ -877,15 +870,6 @@ dialog pre {
   padding: 12px;
   border-radius: 6px;
 }
-.mock-callout {
-  font-size: 11px;
-  line-height: 1.7;
-  color: #805309;
-  background: #fff6df;
-  border-radius: 6px;
-  padding: 10px;
-  margin-top: 12px;
-}
 #metric-result {
   font-size: 12px;
   line-height: 1.7;
@@ -962,9 +946,6 @@ dialog pre {
   .scenario-bar {
     flex-wrap: wrap;
   }
-  .mock-label {
-    margin-left: 0;
-  }
 }
 @media (max-width: 650px) {
   main {
@@ -1009,9 +990,6 @@ dialog pre {
   }
   #incident-detail {
     max-height: none;
-  }
-  .mock-label {
-    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

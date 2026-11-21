@@ -9,7 +9,6 @@ from typing import Annotated, Literal, Protocol
 import duckdb
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import AwareDatetime, BaseModel, TypeAdapter, ValidationError
 
 from eye.api import chat
@@ -283,7 +282,11 @@ def create_app(
     async def index() -> FileResponse:
         return FileResponse(web_dir / "index.html")
 
-    app.mount("/web", StaticFiles(directory=web_dir), name="web")
-    # The mock page uses relative assets and is served unchanged at the root.
-    app.mount("/", StaticFiles(directory=web_dir), name="root-assets")
+    @app.get("/web/{asset}", include_in_schema=False)
+    @app.get("/{asset}", include_in_schema=False)
+    async def web_asset(asset: str) -> FileResponse:
+        if asset not in {"app.js", "styles.css", "index.html"}:
+            raise HTTPException(404, "not found")
+        return FileResponse(web_dir / asset)
+
     return app
