@@ -52,8 +52,9 @@
     <div class="scenario-bar">
       <span class="eyebrow">DEMO SCENARIOS</span>
       <div id="scenarios" class="scenario-buttons"></div>
-      <span class="mock-label">MOCK DATA · NO LIVE CALLS</span>
+      <span id="mode-label" class="mock-label"></span>
     </div>
+    <div id="core-notice" class="notice" role="status" hidden>core not reachable</div>
     <div id="notice" class="notice" role="status" hidden></div>
     <main id="main" tabindex="-1">
       <div class="workspace-heading">
@@ -119,7 +120,7 @@
                 <p class="eyebrow">SELECTED METRIC</p>
                 <h3 id="metric-title">Orders</h3>
               </div>
-              <span class="badge neutral" id="metric-unit">COUNT / HOUR</span>
+              <span class="badge neutral" id="metric-unit">COUNT</span>
             </div>
             <div class="chart-wrap">
               <canvas
@@ -199,7 +200,7 @@
               required
             ></textarea>
             <div class="chat-send">
-              <span>Mock answer · tools via MCP</span
+              <span>Mock answer · example tool calls</span
               ><button class="primary" id="chat-submit" type="submit">
                 Send ↗
               </button>
@@ -210,11 +211,9 @@
       <section class="panel feed-panel" aria-labelledby="feed-title">
         <div class="panel-heading">
           <h3 id="feed-title"><i class="dot healthy"></i> Live activity</h3>
-          <span class="muted"
-            >Replay · one event every 2 seconds · last 30</span
-          >
+          <span id="feed-caption" class="muted">Live stream · last 30</span>
         </div>
-        <ol id="feed" aria-label="Replayed events" tabindex="0"></ol>
+        <ol id="feed" aria-label="Live events" tabindex="0"></ol>
       </section>
       <footer>
         Eye of the System
@@ -232,10 +231,10 @@
         </button>
       </div>
       <p class="muted">
-        Describe a signal. The Cartographer proposes its relationships.
+        Supply a metric query. The Cartographer proposes its relationships.
       </p>
       <p class="mock-callout">
-        Mock mode returns the fixed <strong>orders_per_session</strong> example,
+        Mock mode returns the fixed <strong>fee_per_order</strong> example,
         regardless of input. No SQL is executed.
       </p>
       <form id="metric-form">
@@ -243,7 +242,8 @@
         ><input
           id="new-name"
           name="name"
-          value="orders_per_session"
+          value="fee_per_order"
+          placeholder="fee_per_order"
           pattern="[a-z][a-z0-9_]{2,40}"
           maxlength="41"
           required
@@ -251,17 +251,19 @@
         ><input
           id="new-description"
           name="description"
-          value="Orders divided by marketplace sessions."
+          value="Marketplace fee revenue in euros divided by units ordered."
+          placeholder="Marketplace fee revenue in euros divided by units ordered."
           required
         /><label for="new-sql">SQL</label
         ><textarea
           id="new-sql"
           name="sql"
           rows="3"
-          placeholder="SELECT ts, …"
+          placeholder="SELECT ts, SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly GROUP BY ts"
           required
         >
-SELECT ts, SUM(units) AS num FROM orders_hourly GROUP BY ts</textarea
+SELECT ts, country, platform, category, seller_tier, channel, SUM(fee_revenue) AS num, SUM(units) AS den
+FROM orders_hourly GROUP BY ALL</textarea
         ><button class="primary" id="metric-submit" type="submit">
           Ask Cartographer
         </button>
