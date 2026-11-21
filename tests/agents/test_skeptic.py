@@ -73,10 +73,12 @@ async def test_only_matching_plan_can_establish_innocence(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("seasonal", [False, True])
+@pytest.mark.parametrize("check_plan", [False, True])
 async def test_seasonality_must_be_checked_on_entry(
     world: duckdb.DuckDBPyConnection,
     monkeypatch: pytest.MonkeyPatch,
     seasonal: bool,
+    check_plan: bool,
 ) -> None:
     if seasonal:
         world.execute("UPDATE orders_hourly SET gmv=115200 WHERE ts >= ?", [START])
@@ -88,6 +90,10 @@ async def test_seasonality_must_be_checked_on_entry(
         )
         assert observed.points[0].ts == START
         assert len(observed.points) == 2
+        if check_plan:
+            plan = next(t for t in spec.tools if t.name == "planned_effect_check")
+            outcome = plan.fn(plan.input_model(event_id="black-friday"))
+            assert outcome.verdict != "matches"
         return SkepticResult(
             verdict="innocent", explained_share=1, reasons=[], evidence=[]
         )

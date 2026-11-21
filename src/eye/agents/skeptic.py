@@ -297,7 +297,7 @@ class Skeptic:
         if result.verdict == "innocent":
             if matches:
                 return result.model_copy(update={"explained_share": max(matches)})
-            if seasonal and not checks:
+            if seasonal:
                 return result.model_copy(update={"explained_share": 1.0})
             return result.model_copy(
                 update={
