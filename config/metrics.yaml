@@ -112,6 +112,10 @@
   sql: |
     SELECT ts, country, category, seller_tier, refund_cost AS num
     FROM refunds_hourly
+    -- refunds_hourly has rows only for hours with refunds; the zero rows make other hours 0, not missing.
+    UNION ALL
+    SELECT ts, country, category, seller_tier, 0 AS num
+    FROM orders_hourly
 
 - name: refunds
   description: Total number of refunds.
@@ -123,6 +127,10 @@
   sql: |
     SELECT ts, country, category, seller_tier, refunds AS num
     FROM refunds_hourly
+    -- refunds_hourly has rows only for hours with refunds; the zero rows make other hours 0, not missing.
+    UNION ALL
+    SELECT ts, country, category, seller_tier, 0 AS num
+    FROM orders_hourly
 
 - name: contribution_margin
   description: Fee revenue plus ad revenue and first-party margin, minus platform discounts, fulfillment costs, marketing costs, and refund costs, in euros.
