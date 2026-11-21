@@ -63,9 +63,10 @@ def test_seed_registry_matches_spec(registry) -> None:
     assert T01_METRICS <= {m.name for m in registry.active}
 
 
-def test_pending_metrics_warn(con, caplog) -> None:
+def test_pending_metrics_warn(writable, caplog) -> None:
+    writable.execute("DELETE FROM marketing_hourly")
     with caplog.at_level(logging.WARNING, logger="eye.registry.loader"):
-        registry = load_registry(con)
+        registry = load_registry(writable)
     warned = {r.getMessage() for r in caplog.records}
     pending = [m.name for m in registry.metrics.values() if m.status == "pending"]
     assert pending
@@ -75,6 +76,7 @@ def test_pending_metrics_warn(con, caplog) -> None:
 
 
 def test_metric_becomes_active_once_its_table_has_data(writable) -> None:
+    writable.execute("DELETE FROM marketing_hourly")
     assert load_registry(writable).metrics["marketing_cost"].status == "pending"
     writable.execute(
         "INSERT INTO marketing_hourly SELECT max(ts), 'DE', 'search_ads', 10.0, 5 FROM orders_hourly"
