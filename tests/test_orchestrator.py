@@ -195,6 +195,74 @@ class Sentinel:
 
 
 @pytest.mark.asyncio
+async def test_automatic_reinvestigation_accounts_inflight_impact() -> None:
+    settings = Settings(
+        sim={"autostart": False},
+        orchestrator={"pause_sim_during_investigation": False},
+    )
+    store = IncidentStore(":memory:")
+    previous = make_incident_s7()
+    previous.status, previous.verdict, previous.root_cause = "open", "HYPOTHESIS", None
+    previous.investigation_ids = ["inv_previous"]
+    previous.impact_eur_total = 100
+    previous.impact_eur_per_hour = 25
+    store._save(previous)
+    entry = previous.entry.model_copy(
+        update={"id": "anm_retry", "ts": previous.entry.ts + 2 * HOUR}
+    )
+    release = asyncio.Event()
+
+    class RetrySentinel:
+        async def run(self, ts, **kwargs):
+            return [
+                SentinelDecision(anomaly=entry, action="investigate", reason="Retry")
+            ]
+
+    async def investigate(anomaly, on_step):
+        await release.wait()
+        return InvestigationResult(
+            investigation_id="scripted",
+            entry=anomaly,
+            verdict="HYPOTHESIS",
+            summary="Still uncertain",
+            root_cause=None,
+            hypotheses=[],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=0,
+            stop_reason="budget",
+        )
+
+    core = Orchestrator(
+        settings,
+        Clock(entry.ts),
+        RetrySentinel(),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    core.paused = False
+    try:
+        await core._step(manual=False)
+        assert store.get(previous.id).status == "investigating"
+        assert store.get(previous.id).impact_eur_total == 125
+        await core._step(manual=False)
+        assert store.get(previous.id).impact_eur_total == 150
+        release.set()
+        await asyncio.gather(*core._tasks)
+        assert store.get(previous.id).impact_eur_total == 150
+        # The same hour must not be accounted twice after the result arrives.
+        store.lifecycle(core.sim_ts, lambda *_: 9)
+        assert store.get(previous.id).impact_eur_total == 150
+    finally:
+        release.set()
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("verdict", ["HYPOTHESIS", "CONFIRMED"])
 @pytest.mark.parametrize("status", ["open", "persisting"])
 @pytest.mark.parametrize("failure", [False, True])

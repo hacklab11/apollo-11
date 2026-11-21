@@ -458,11 +458,26 @@ class IncidentStore:
             last_tick = self.db.execute(
                 "SELECT lifecycle_ts FROM incidents WHERE id = ?", [item.id]
             ).fetchone()[0]
+            reinvestigating = (
+                item.status == "investigating" and item.verdict is not None
+            )
             if (
                 item.merged_into
-                or item.status not in {"open", "persisting", "deferred"}
+                or (
+                    item.status not in {"open", "persisting", "deferred"}
+                    and not reinvestigating
+                )
                 or ts <= (last_tick or item.opened_ts)
             ):
+                continue
+            if reinvestigating:
+                item.impact_eur_total += item.impact_eur_per_hour
+                item.updated_ts = ts
+                self._save(item)
+                self.db.execute(
+                    "UPDATE incidents SET lifecycle_ts = ? WHERE id = ?", [ts, item.id]
+                )
+                changed.append(item)
                 continue
             reading = z_lookup(item.entry.metric, item.entry.segment, ts)
             z, completeness = reading if isinstance(reading, tuple) else (reading, None)
