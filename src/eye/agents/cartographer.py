@@ -513,11 +513,21 @@ class Cartographer:
             return
         payload = []
         for edge in seeds:
-            result = self._correlation(self.engine, edge.src, edge.dst)
+            pending = [
+                name
+                for name in (edge.src, edge.dst)
+                if self.engine._registry.get(name).status == "pending"
+            ]
+            numbers = None
+            if not pending:
+                numbers = self._correlation(
+                    self.engine, edge.src, edge.dst
+                ).model_dump()
             payload.append(
                 {
                     "edge": edge.model_dump(),
-                    "numbers": result.model_dump(),
+                    "numbers": numbers,
+                    **({"pending_metrics": pending} if pending else {}),
                     "src_description": self.engine._registry.get(edge.src).description,
                     "dst_description": self.engine._registry.get(edge.dst).description,
                 }
