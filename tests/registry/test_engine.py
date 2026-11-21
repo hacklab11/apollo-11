@@ -96,7 +96,9 @@ def test_unknown_dimension_lists_allowed(engine, day, segment, group_by) -> None
         engine.query_metric("nope", *day)
 
 
-def test_pending_metric_is_not_queried(engine, day) -> None:
+def test_pending_metric_is_not_queried(writable, day) -> None:
+    writable.execute("DELETE FROM ads_hourly")
+    engine = MetricEngine(writable, load_registry(writable))
     with pytest.raises(ValueError, match="ad_spend is pending"):
         engine.query_metric("ad_spend", *day)
 
@@ -141,6 +143,10 @@ def test_results_are_cached_until_invalidate(writable, day) -> None:
 def test_incomplete_hours_keep_value_and_lower_completeness(writable, day) -> None:
     start, end = day
     late = start + timedelta(hours=5)
+    writable.execute(
+        "DELETE FROM partition_status WHERE table_name = 'orders_hourly' AND ts = ?",
+        [late],
+    )
     writable.execute(
         "INSERT INTO partition_status VALUES "
         "('orders_hourly', 'DE', ?, 100, 40, ?), ('orders_hourly', 'FR', ?, 100, 100, ?)",
