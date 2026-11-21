@@ -461,3 +461,40 @@ def test_coupled_stockouts_do_not_become_payment_failures(settings: Settings) ->
             assert attempts > 1000
             assert 0.94 < successes / attempts < 0.99
         assert all(o.stock >= 0 for offers in sim.world.offers.values() for o in offers)
+
+
+def test_backfill_commits_orders_before_marking_complete(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    with closing(Simulator(settings, db_path=":memory:")) as sim:
+        manager = ScenarioManager(sim)
+        manager.inject("I2")
+        ts = sim.now
+        play(sim, 6)
+        original = sim.store.append
+        observed = []
+
+        def append(batches: dict) -> None:
+            with sim.store.cursor() as con:
+                observed.append(
+                    con.execute(
+                        "SELECT loaded_rows < expected_rows FROM partition_status "
+                        "WHERE table_name = 'orders_hourly' AND country = 'FR' AND ts = ?",
+                        [ts],
+                    ).fetchone()[0]
+                )
+            original(batches)
+
+        monkeypatch.setattr(sim.store, "append", append)
+        sim.step()
+        assert observed == [True, False]
+        with sim.store.cursor() as con:
+            expected, loaded = con.execute(
+                "SELECT expected_rows, loaded_rows FROM partition_status "
+                "WHERE table_name = 'orders_hourly' AND country = 'FR' AND ts = ?",
+                [ts],
+            ).fetchone()
+            assert expected == loaded == con.execute(
+                "SELECT count(*) FROM orders_hourly WHERE country = 'FR' AND ts = ?",
+                [ts],
+            ).fetchone()[0]

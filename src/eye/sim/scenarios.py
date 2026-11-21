@@ -327,7 +327,7 @@ class ScenarioManager:
     def _before_store(self, sim: Simulator, hour: Hour) -> None:
         for due, ts, rows in self._late[:]:
             if due <= hour.ts:
-                hour.batches["orders_hourly"].extend(rows)
+                sim.store.append({"orders_hourly": rows})
                 with sim.store.cursor() as con:
                     con.execute(
                         "UPDATE partition_status SET loaded_rows = expected_rows WHERE table_name = 'orders_hourly' AND country = 'FR' AND ts = ?",
