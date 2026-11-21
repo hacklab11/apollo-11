@@ -15,6 +15,7 @@ D6:
       must_mention_scenario_seller: S8
       must_not_root_cause: [traffic_change, planned_event, repricer_loop, stockout]
       must_not_root_node: [buybox_share, in_stock_rate]
+      symptom_nodes_all: [buybox_share, in_stock_rate]
       contribution_kind: planned
       evidence_groups_min: 2
       first_change_at_inject: S8
@@ -24,7 +25,7 @@ D6:
       notification_action: revert manual price
       metric_attached:
         metric: fee_per_order
-        segment: {category: electronics, seller_tier: 3P}
+        segment: {category: electronics, seller_tier: small_3P}
       max_incidents_for_scenario: 1
     status_any: [resolved]
   also:

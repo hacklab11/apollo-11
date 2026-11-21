@@ -288,6 +288,9 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
         elif key == "must_not_root_node":
             actual = [h["root_node"] for h in roots]
             ok = bool(items) and not set(actual).intersection(wanted)
+        elif key == "symptom_nodes_all":
+            actual = sorted({s["node"] for i in items for s in i["symptoms"]})
+            ok = bool(items) and set(wanted) <= set(actual)
         elif key in {
             "must_mention",
             "must_mention_any",

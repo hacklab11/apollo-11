@@ -11,7 +11,7 @@ from factories import CAMPAIGN_TS, make_incident_s7
 from pydantic import BaseModel
 
 from eye.config import A2aSettings, LlmSettings
-from eye.contracts import AddMetricRequest, Contribution, Incident, TrailStep
+from eye.contracts import AddMetricRequest, Contribution, Incident, Symptom, TrailStep
 from eye.llm.client import LLMUnavailable
 
 SPEC = spec_from_file_location(
@@ -69,9 +69,10 @@ def test_story_oracles() -> None:
         assert entry["play"] == ["I3@0", "S8@10"]
         assert "Black Friday" not in entry["expect"]["must_mention"]
         assert "stockout" in entry["expect"]["must_not_root_cause"]
+        assert entry["expect"]["symptom_nodes_all"] == ["buybox_share", "in_stock_rate"]
         assert entry["expect"]["metric_attached"] == {
             "metric": "fee_per_order",
-            "segment": {"category": "electronics", "seller_tier": "3P"},
+            "segment": {"category": "electronics", "seller_tier": "small_3P"},
         }
     assert (
         harness.load_oracle()["D6"]["on_incident_open"] == "add_metric(fee_per_order)"
@@ -332,6 +333,27 @@ def test_mentions_report_only_found_and_missing_tokens() -> None:
     assert not result["passed"]
 
 
+@pytest.mark.parametrize(
+    "nodes,passed",
+    [(["buybox_share", "in_stock_rate"], True), (["buybox_share"], False), ([], False)],
+)
+def test_structured_symptoms_required(nodes: list[str], passed: bool) -> None:
+    incident = make_incident_s7().model_copy(
+        update={
+            "symptoms": [
+                Symptom(node=node, first_change_ts=CAMPAIGN_TS + harness.HOUR)
+                for node in nodes
+            ],
+            "summary": "buybox_share and in_stock_rate are symptoms",
+        }
+    )
+    entry = {"expect": {"symptom_nodes_all": ["buybox_share", "in_stock_rate"]}}
+    result = harness.evaluate(entry, [incident], [])[0]
+    assert result["passed"] == passed
+    assert result["actual"] == sorted(nodes)
+    assert not harness.evaluate(entry, [], [])[0]["passed"]
+
+
 @pytest.mark.asyncio
 async def test_live_response_mapping_order_matches_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -392,12 +414,15 @@ def test_seeded_identity_streams() -> None:
 @pytest.mark.parametrize(
     "segment,passed",
     [
-        ({"category": "electronics", "seller_tier": "3P"}, True),
+        ({"category": "electronics", "seller_tier": "small_3P"}, True),
+        ({"category": "electronics", "seller_tier": "large_3P"}, False),
         ({"category": "electronics"}, False),
         ({"category": "electronics", "seller_tier": "1P"}, False),
     ],
 )
-def test_attached_metric_requires_3p_electronics(segment: dict, passed: bool) -> None:
+def test_attached_metric_requires_small_3p_electronics(
+    segment: dict, passed: bool
+) -> None:
     incident = make_incident_s7()
     step = TrailStep(
         id="attached-metric",
