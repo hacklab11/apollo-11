@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import math
 import sys
+from typing import Literal
 
 import httpx
 from pydantic import ValidationError
@@ -34,14 +35,16 @@ def say(line: str) -> None:
 
 
 async def request(
-    client: httpx.AsyncClient, method: str, path: str, **kwargs: object
+    client: httpx.AsyncClient, method: str, path: str, *, json: dict | None = None
 ) -> httpx.Response:
-    response = await client.request(method, path, **kwargs)
+    response = await client.request(method, path, json=json)
     return response.raise_for_status()
 
 
 async def set_scenario(
-    client: httpx.AsyncClient, scenario: ScenarioId, action: str = "inject"
+    client: httpx.AsyncClient,
+    scenario: ScenarioId,
+    action: Literal["inject", "clear"] = "inject",
 ) -> None:
     response = await request(client, "POST", f"/api/scenarios/{scenario}/{action}")
     state = ScenarioState.model_validate_json(response.content)
@@ -89,7 +92,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
     await advance(client, 3, seconds)
     say(
         "+6h — S6: totals hide shrinking small-seller share. Show the 1P price cut, "
-        "repricer loop, and hijacker S-99. Look for a MIXED verdict, a striped planned "
+        "the repricer loop, and how hijacker S-99 enters later. Look for a MIXED verdict, a striped planned "
         "contribution, and SellerOS's acknowledgement for S-03, S-07, and S-12."
     )
     await set_scenario(client, "S6")
@@ -100,7 +103,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
         "breakdowns, and the proposed 72-hour Buy Box lag."
     )
     response = await request(
-        client, "POST", "/api/metrics", json=REFUND_RATE.model_dump()
+        client, "POST", "/api/metrics", json=REFUND_RATE.model_dump(exclude_none=True)
     )
     result = AddMetricResult.model_validate_json(response.content)
     say(

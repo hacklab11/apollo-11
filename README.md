@@ -22,13 +22,13 @@ Open `http://localhost:5500/?mock=1` for the graph, sample incidents, and invest
 
 ### Local stack and rehearsal
 
-For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or record mode. Start the services with `./scripts/dev.sh`; core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status` and open the observatory at `http://localhost:8000/`. For a rehearsal from Black Friday 00:00 UTC, start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings).
+For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or record mode. Start the services with `./scripts/dev.sh`; core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status`. Once [live UI wiring](docs/tasks/T22-ui-live.md) lands, open the observatory at `http://localhost:8000/`. For a rehearsal from Black Friday 00:00 UTC, start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings).
 
 ```sh
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner injects I1 at the start, S7 at +3h, S6 at +6h, adds `refund_rate` at +10h, and clears S7 at +12h. It pauses the automatic clock and advances it through the API. `--speed 5` (the default) waits five real seconds before each simulated hour, plus processing time. On success the runner preserves the original pause state; on an API failure it stops without resuming or undoing changes. Use a fresh world for another run.
+The runner injects I1 at the start, S7 at +3h, S6 at +6h, adds `refund_rate` at +10h, and clears S7 at +12h. It pauses the automatic clock and advances it through the API. `--speed 5` (the default) waits five real seconds before each simulated hour, plus processing time. On success the runner preserves the original pause state; on an API failure it stops without resuming or undoing changes. Advance the clock beyond the scripted window to show S-99 entering the market. Use a fresh world for another run.
 
 Add `--record` to save **core** LLM responses to `data/llm_cache.jsonl`. Keep the cache out of git and use `llm.mode: replay` in your local settings for the next launch. Replay may still call the API on a cache miss. The HTTP mode switch affects only core, not the separately running specialists.
 
@@ -49,8 +49,8 @@ flowchart LR
     Graph --> API["Core API and event stream"]
     Reporter --> API
     API --> UI["Observatory"]
-    API --> MCP["MCP server"]
-    MCP --> Client["Claude Code or another MCP client"]
+    MCP["MCP server"] --> API
+    Client["Claude Code or another MCP client"] --> MCP
     UI -->|Chat via core| MCP
 ```
 
