@@ -4,6 +4,7 @@ import asyncio
 import re
 from pathlib import Path
 
+from selleros.client import get_client
 from selleros.data import ScopedData, Selection, Store, ToolOutput
 from selleros.models import (
     SpecialistRequest,
@@ -71,7 +72,7 @@ async def answer(store: Store, request: SpecialistRequest) -> SpecialistResponse
             tools=tools,
             submit_model=SpecialistResponse,
             effort="medium",
-            model="claude-opus-5-5",
+            model=get_client().settings.model,
             max_steps=6,
         ),
         request.model_dump_json(),
