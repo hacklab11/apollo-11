@@ -109,6 +109,18 @@ class IncidentStore:
             "persisting",
         }
 
+    def _path_exists(
+        self,
+        src: str,
+        dst: str,
+        graph: Callable[[str, str], bool] | None = None,
+    ) -> bool:
+        try:
+            return (graph or self.path_exists)(src, dst)
+        except ValueError:
+            # Model-supplied roots may name a service rather than a graph metric.
+            return False
+
     def match(
         self,
         decision: SentinelDecision,
@@ -128,9 +140,20 @@ class IncidentStore:
         downstream = [
             item
             for item in active
-            if item.root_cause
-            and _overlap(item.root_cause.segment, entry.segment)
-            and (graph or self.path_exists)(item.root_cause.root_node, entry.metric)
+            if (
+                item.root_cause
+                and _overlap(item.root_cause.segment, entry.segment)
+                and self._path_exists(item.root_cause.root_node, entry.metric, graph)
+            )
+            or (
+                item.root_cause is None
+                and _overlap(item.entry.segment, entry.segment)
+                and (
+                    item.entry.metric == entry.metric
+                    or self._path_exists(item.entry.metric, entry.metric, graph)
+                    or self._path_exists(entry.metric, item.entry.metric, graph)
+                )
+            )
         ]
         for item in exact + downstream:
             item.occurrences += 1
@@ -173,6 +196,7 @@ class IncidentStore:
         )
         if findings is not None:
             for field in (
+                "fingerprint",
                 "title",
                 "summary",
                 "status",
@@ -302,15 +326,23 @@ class IncidentStore:
                 "SELECT trigger_id FROM incidents WHERE id = ?", [other.id]
             ).fetchone()[0]
             same_trigger = bool(result.trigger and trigger == result.trigger)
+            same_cause = bool(
+                root
+                and other.root_cause
+                and root.root_node == other.root_cause.root_node
+                and root.cause_type == other.root_cause.cause_type != "unknown"
+                and root.first_change_ts == other.root_cause.first_change_ts
+                and _overlap(root.segment, other.root_cause.segment)
+            )
             chain = bool(
                 root
                 and other.root_cause
                 and (
-                    self.path_exists(root.root_node, other.root_cause.root_node)
-                    or self.path_exists(other.root_cause.root_node, root.root_node)
+                    self._path_exists(root.root_node, other.root_cause.root_node)
+                    or self._path_exists(other.root_cause.root_node, root.root_node)
                 )
             )
-            if other.fingerprint == item.fingerprint:
+            if other.fingerprint == item.fingerprint or same_cause:
                 older, newer = sorted([item, other], key=lambda i: (i.opened_ts, i.id))
                 item = self._merge(older, newer, findings=item)
             elif (

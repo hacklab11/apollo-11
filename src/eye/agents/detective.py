@@ -669,6 +669,7 @@ class Detective:
             model=self._llm.model_for("detective"),
             max_steps=self._settings.max_steps,
             max_tokens=self._llm.max_tokens,
+            force_submit_on_final_turn=True,
         )
         spec.tools = [
             cite(tool) if tool.name != "update_hypotheses" else tool

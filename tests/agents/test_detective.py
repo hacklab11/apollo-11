@@ -2,9 +2,11 @@ import json
 import os
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import closing
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
@@ -16,7 +18,7 @@ from fastapi import FastAPI
 from eye.a2a_client import A2AClient
 from eye.agents.detective import Detective, _Submission
 from eye.api.data_api import create_router
-from eye.config import A2aSettings, LlmSettings, Settings
+from eye.config import A2aSettings, DetectiveSettings, LlmSettings, Settings
 from eye.contracts import (
     Anomaly,
     Contribution,
@@ -393,6 +395,77 @@ async def test_budget_preserves_current_board(
     assert len(result.hypotheses) == 1
     assert result.hypotheses[0].id == f"{result.investigation_id}:{root.id}"
     assert result.hypotheses[0].statement == root.statement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("final_action", ["submit", "ignore", "invalid"])
+async def test_final_turn_requires_detective_submit(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    final_action: str,
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    requests = []
+
+    async def create(request: dict) -> BetaMessage:
+        requests.append(deepcopy(request))
+        content = [
+            {
+                "type": "tool_use",
+                "id": f"board-{len(requests)}",
+                "name": "update_hypotheses",
+                "input": {"hypotheses": [hypothesis().model_dump(mode="json")]},
+            }
+        ]
+        if request["tool_choice"] == {"type": "tool", "name": "submit"}:
+            answer = submission(hypothesis(), "HYPOTHESIS")
+            answer.summary = "Submitted available evidence."
+            content = [
+                {
+                    "type": "tool_use",
+                    "id": "final",
+                    "name": "submit",
+                    "input": answer.model_dump(mode="json"),
+                }
+            ]
+            if final_action == "ignore":
+                content = [{"type": "text", "text": "More exploration needed."}]
+            elif final_action == "invalid":
+                content[0]["input"] = {"summary": "Incomplete submission."}
+        return BetaMessage.model_validate(
+            {
+                "id": "msg",
+                "type": "message",
+                "role": "assistant",
+                "model": request["model"],
+                "content": content,
+                "stop_reason": "tool_use"
+                if content[0]["type"] == "tool_use"
+                else "end_turn",
+                "usage": {"input_tokens": 10, "output_tokens": 10},
+            }
+        )
+
+    monkeypatch.setattr("eye.llm.client._client", SimpleNamespace(create=create))
+    detective = Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        settings=DetectiveSettings(max_steps=5),
+    )
+    result = await detective.investigate(anomaly("s3"), AsyncMock())
+    if final_action == "submit":
+        assert result.summary == "Submitted available evidence."
+        assert result.stop_reason != "budget"
+    else:
+        assert result.stop_reason == "budget"
+        assert result.verdict == "HYPOTHESIS"
+        assert result.hypotheses[0].statement == hypothesis().statement
+    assert result.steps_used == 5
+    assert requests[0]["tool_choice"] == {"type": "auto"}
+    assert requests[-1]["tool_choice"] == {"type": "tool", "name": "submit"}
+    assert "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
 
 
 @pytest.mark.asyncio

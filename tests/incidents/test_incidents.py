@@ -2,10 +2,11 @@ from contextlib import closing
 from datetime import timedelta
 
 import pytest
-from factories import make_anomaly, make_incident_s7, make_trail_s7
+from factories import make_anomaly, make_incident_s7, make_metrics, make_trail_s7
 
 from eye.agents.reporter import Reporter
 from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision, Symptom
+from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore, canonical, fingerprint
 
 
@@ -82,6 +83,68 @@ def test_match_provisional_and_empty(store):
     assert attached.last_seen_ts == decision.anomaly.ts
 
 
+@pytest.mark.parametrize("first_metric", ["search_conversion", "orders"])
+def test_related_pending_anomalies_share_one_investigation(store, first_metric):
+    store.path_exists = lambda src, dst: (src, dst) == ("search_conversion", "orders")
+    metrics = [first_metric] + ["orders", "search_conversion"] * 5
+    matched = []
+    for index, metric in enumerate(metrics):
+        entry = make_anomaly().model_copy(
+            update={
+                "id": f"signal-{index}",
+                "metric": metric,
+                "segment": {"country": "DE"},
+            }
+        )
+        matched.append(
+            store.match(
+                SentinelDecision(
+                    anomaly=entry, action="investigate", reason="Related drop"
+                )
+            )
+        )
+    assert len({item.id for item in matched}) == 1
+    assert store.get(matched[0].id).occurrences == len(metrics)
+    for metric, segment in [
+        ("orders", {"country": "FR"}),
+        ("payment_success_rate", {"country": "DE"}),
+    ]:
+        entry = make_anomaly().model_copy(update={"metric": metric, "segment": segment})
+        assert (
+            store.match(
+                SentinelDecision(
+                    anomaly=entry, action="investigate", reason="Separate signal"
+                )
+            ).id
+            != matched[0].id
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unknown_root", ["search-ranker", "edg_search_ranker_release"])
+async def test_unknown_model_root_does_not_break_incident_upsert(store, unknown_root):
+    graph = GraphStore(None)
+    for metric in make_metrics():
+        graph.add_metric(metric)
+    store.path_exists = graph.path_exists
+    first = await store.upsert(result())
+    value = result("ranker")
+    value.root_cause = value.root_cause.model_copy(update={"root_node": unknown_root})
+    saved = await store.upsert(value)
+    assert store.get(saved.id).root_cause.root_node == unknown_root
+    assert saved.id != first.id
+    assert not saved.related_incident_ids
+    candidate = make_anomaly().model_copy(
+        update={"metric": "orders", "segment": {"country": "DE"}}
+    )
+    assert (
+        store.match(
+            SentinelDecision(anomaly=candidate, action="investigate", reason="New drop")
+        )
+        is not None
+    )
+
+
 @pytest.mark.asyncio
 async def test_graph_match_overlap(store):
     incident = await store.upsert(result())
@@ -106,6 +169,30 @@ async def test_same_final_fingerprint_merges_older(store):
     assert second.investigation_ids == ["a", "b"]
     assert len(store.all()) == 2
     assert sum(item.merged_into == first.id for item in store.all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_same_root_cause_merges_compatible_scopes_only(store):
+    left = result()
+    left.root_cause.segment = {"country": "DE"}
+    first = await store.upsert(left)
+    right = result("scoped", hours=1)
+    right.root_cause.segment = {"country": "DE", "platform": "web"}
+    merged = await store.upsert(right)
+    assert merged.id == first.id
+    assert merged.investigation_ids == [left.investigation_id, right.investigation_id]
+    assert merged.fingerprint == fingerprint(
+        right.root_cause.root_node,
+        right.root_cause.segment,
+        right.root_cause.cause_type,
+    )
+    separate = result("other-country")
+    separate.root_cause.segment = {"country": "FR"}
+    assert (await store.upsert(separate)).id != first.id
+    later = result("other-change")
+    later.root_cause.segment = {"country": "DE"}
+    later.root_cause.first_change_ts += timedelta(hours=1)
+    assert (await store.upsert(later)).id != first.id
 
 
 @pytest.mark.asyncio

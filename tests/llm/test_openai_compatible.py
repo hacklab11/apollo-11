@@ -43,6 +43,36 @@ def final():
     return completion([call("submit", '{"value":9,"summary":"Total 9"}')])
 
 
+def test_named_tool_choice_is_preserved():
+    request = {
+        "model": "test",
+        "max_tokens": 10,
+        "system": [{"text": "Submit"}],
+        "messages": [{"role": "user", "content": "Now"}],
+        "tools": [],
+        "tool_choice": {"type": "tool", "name": "submit"},
+    }
+    assert _chat_request(request)["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_final_submit_choice_reaches_chat_completions(transport):
+    _, requests = transport(
+        [completion(text="Still exploring", finish="stop"), final()]
+    )
+    agent = replace(spec(), max_steps=2, force_submit_on_final_turn=True)
+    result = await run_agent(agent, "Calculate", "inv", discard)
+    assert result.value == 9
+    assert requests[0]["tool_choice"] == "auto"
+    assert requests[-1]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit"},
+    }
+
+
 @pytest.fixture
 def transport(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-placeholder")

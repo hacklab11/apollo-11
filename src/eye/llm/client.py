@@ -67,7 +67,11 @@ def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
         "model": request["model"],
         "max_tokens": request["max_tokens"],
         "messages": messages,
-        "tool_choice": "auto",
+        "tool_choice": (
+            {"type": "function", "function": {"name": request["tool_choice"]["name"]}}
+            if request.get("tool_choice", {}).get("type") == "tool"
+            else "auto"
+        ),
         "tools": [
             {
                 "type": "function",

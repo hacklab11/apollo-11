@@ -40,6 +40,7 @@ class AgentSpec:
     model: str
     max_steps: int
     max_tokens: int = 16000
+    force_submit_on_final_turn: bool = False
 
 
 def _schema(model: type[BaseModel]) -> dict[str, Any]:
@@ -210,7 +211,11 @@ async def run_agent(
                     "tools": definitions,
                     "messages": messages,
                     "output_config": {"effort": spec.effort},
-                    "tool_choice": {"type": "auto"},
+                    "tool_choice": (
+                        {"type": "tool", "name": "submit"}
+                        if remaining == 1 and spec.force_submit_on_final_turn
+                        else {"type": "auto"}
+                    ),
                     "betas": ["server-side-fallback-2026-07-01"],
                     "fallbacks": "default",
                 }
