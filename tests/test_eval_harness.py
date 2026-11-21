@@ -26,13 +26,29 @@ def oracle_entry() -> dict:
 def test_oracle_ids() -> None:
     oracle = harness.load_oracle()
     assert set(oracle) == {
-        *(f"S{i}" for i in range(1, 8)),
+        *(f"S{i}" for i in range(1, 9)),
         "I1",
         "I2",
-        *(f"D{i}" for i in range(1, 6)),
+        *(f"D{i}" for i in range(1, 7)),
     }
     for entry in oracle.values():
         assert entry["play"] and entry["run_hours"] > 0 and entry["expect"]
+        assert harness.evaluate(entry, [], [])
+    assert next(iter(oracle)) == "D6"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["S8", "D6"])
+async def test_unavailable_s8_fails_clearly(name: str) -> None:
+    result = await harness.run_scenario(name, harness.load_oracle()[name], object())
+    assert result["checks"] == [
+        {
+            "check": "simulator_available",
+            "passed": False,
+            "actual": "scenario S8 not available in the simulator",
+        }
+    ]
+    assert result["llm_calls"] == 0
 
 
 def test_refuted_hypothesis_does_not_supply_root_or_segment() -> None:

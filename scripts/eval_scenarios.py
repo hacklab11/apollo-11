@@ -162,6 +162,66 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 for v in (output.get("loop" if key == "loop_contains" else key) or [])
             ]
             ok = set(wanted) <= set(actual)
+        elif key == "must_mention_scenario_seller":
+            actual = [
+                t["output"].get("scenario_seller")
+                for t in trails
+                if t.get("output") and t["output"].get("scenario_id") == wanted
+            ]
+            ok = bool(actual) and any(
+                seller and seller.casefold() in text for seller in actual
+            )
+        elif key == "notification_action":
+            actual = [
+                t["output"].get("recommended_action", "")
+                for t in trails
+                if (t.get("output") or {}).get("received") is True
+            ]
+            ok = any(wanted.casefold() in action.casefold() for action in actual)
+        elif key == "verdict_sequence":
+            actual = [
+                t["output"]["verdict"]
+                for t in trails
+                if t.get("output") and "verdict" in t["output"]
+            ]
+            remaining = iter(actual)
+            ok = all(any(value == verdict for value in remaining) for verdict in wanted)
+        elif key == "metric_attached":
+            actual = [
+                (t.get("output") or {})
+                for t in trails
+                if (t.get("output") or {}).get("action") == "attach"
+            ]
+            ok = any(
+                value.get("anomaly", {}).get("metric") == wanted
+                and value.get("attach_to_incident") in {i["id"] for i in items}
+                for value in actual
+            )
+        elif key in {"first_change_at_inject", "first_hour_deferred"}:
+            injections = [
+                t["output"]["inject_ts"]
+                for t in trails
+                if (t.get("output") or {}).get("scenario_id") == wanted
+            ]
+            if key == "first_change_at_inject":
+                actual = [h["first_change_ts"] for h in roots]
+                ok = bool(injections) and any(
+                    ts
+                    and datetime.fromisoformat(ts)
+                    == datetime.fromisoformat(injections[0])
+                    for ts in actual
+                )
+            else:
+                actual = [
+                    t["output"]
+                    for t in trails
+                    if (t.get("output") or {}).get("action") == "defer"
+                ]
+                ok = bool(injections) and any(
+                    datetime.fromisoformat(value["anomaly"]["ts"])
+                    == datetime.fromisoformat(injections[0])
+                    for value in actual
+                )
         else:
             raise ValueError(f"Unknown oracle check: {key}")
         check(key, optional or ok, actual)
@@ -265,6 +325,25 @@ def evaluate(
 
 async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict:
     started = time.monotonic()
+    unavailable = [
+        command.rsplit("@", 1)[0]
+        for command in entry["play"]
+        if not command.startswith("clear(") and command.rsplit("@", 1)[0] not in _TITLES
+    ]
+    if unavailable:
+        reason = f"scenario {unavailable[0]} not available in the simulator"
+        return {
+            "scenario": name,
+            "checks": [
+                {"check": "simulator_available", "passed": False, "actual": reason}
+            ],
+            "ticks_to_detect": None,
+            "llm_calls": 0,
+            "tokens": 0,
+            "seconds": round(time.monotonic() - started, 2),
+            "incidents": [],
+            "trails": [],
+        }
     settings = load_settings(ROOT / "config/settings.yaml")
     settings.sim.seed = args.seed
     settings.sim.autostart = False
@@ -373,6 +452,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                         output={
                             "received": ack.received,
                             "seller_ids": alert.seller_ids,
+                            "recommended_action": alert.recommended_action,
                         },
                     )
                 )
