@@ -14,13 +14,14 @@ from uuid import uuid4
 import yaml
 
 from eye.a2a_client import A2AClient
+from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
 from eye.config import load_settings
 from eye.contracts import Incident, TrailStep
 from eye.graph.bootstrap import load_or_bootstrap
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, configure_client
-from eye.main import _optional_module, _reporter
+from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
@@ -280,7 +281,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
     settings.llm.cache_path = record
     llm = LLMClient(settings.llm)
     configure_client(llm)
-    missing = []
     with TemporaryDirectory(prefix="eye-eval-") as directory, ExitStack() as stack:
         path = Path(directory)
         sim = stack.enter_context(
@@ -293,24 +293,15 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         engine = MetricEngine(connection, registry)
         graph = load_or_bootstrap(engine, path / "graph.json", ROOT / "config")
         a2a = A2AClient(settings.a2a)
-        detective = _optional_module("eye.agents.detective")
-        if detective is None:
-            missing.append(
-                "eye.agents.detective (T14); no investigation dispatch or Skeptic verdict"
-            )
-        investigate = (
-            detective.Detective(
-                connection,
-                registry,
-                graph,
-                a2a=a2a,
-                settings=settings.detective,
-                freshness=settings.sentinel,
-                llm=settings.llm,
-            ).investigate
-            if detective
-            else None
-        )
+        investigate = Detective(
+            connection,
+            registry,
+            graph,
+            a2a=a2a,
+            settings=settings.detective,
+            freshness=settings.sentinel,
+            llm=settings.llm,
+        ).investigate
         store = stack.enter_context(
             closing(
                 IncidentStore(
@@ -345,25 +336,24 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             investigate=investigate,
             invalidate=engine.invalidate,
         )
-        if investigate is not None:
 
-            async def recorded_investigate(anomaly: Any, on_step: Any) -> Any:
-                result = await investigate(anomaly, on_step)
-                await on_step(
-                    TrailStep(
-                        id=f"stp_{uuid4().hex}",
-                        investigation_id=result.investigation_id,
-                        n=result.steps_used + 1,
-                        real_ts=datetime.now(UTC),
-                        actor="orchestrator",
-                        action="decision",
-                        output_summary=f"Investigation verdict: {result.verdict}",
-                        output=result.model_dump(mode="json"),
-                    )
+        async def recorded_investigate(anomaly: Any, on_step: Any) -> Any:
+            result = await investigate(anomaly, on_step)
+            await on_step(
+                TrailStep(
+                    id=f"stp_{uuid4().hex}",
+                    investigation_id=result.investigation_id,
+                    n=result.steps_used + 1,
+                    real_ts=datetime.now(UTC),
+                    actor="orchestrator",
+                    action="decision",
+                    output_summary=f"Investigation verdict: {result.verdict}",
+                    output=result.model_dump(mode="json"),
                 )
-                return result
+            )
+            return result
 
-            core.investigate = recorded_investigate
+        core.investigate = recorded_investigate
 
         async def notify(alert: Any) -> Any:
             ack = await a2a.notify_seller_os(alert)
@@ -413,7 +403,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         return {
             "scenario": name,
             "checks": checks,
-            "missing": missing,
             "ticks_to_detect": next(
                 (c["actual"] for c in checks if c["check"] == "max_ticks_to_detect"),
                 None,
@@ -454,8 +443,6 @@ async def main() -> int:
             print(
                 f"{name} | {check['check']} | {'PASS' if check['passed'] else 'FAIL'} | {json.dumps(check['actual'])} | {result['ticks_to_detect']} | {result['llm_calls']} | {result['tokens']} | {result['seconds']}"
             )
-        for missing in result["missing"]:
-            print(f"Unavailable: {missing}")
         passed &= all(c["passed"] for c in result["checks"])
     return 0 if passed else 1
 
