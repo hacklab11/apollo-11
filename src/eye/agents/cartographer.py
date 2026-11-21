@@ -19,13 +19,27 @@ from eye.registry.engine import MetricEngine
 from eye.registry.loader import formula_inputs, source_tables
 from eye.tools import sqlguard
 from eye.tools.identity import parse_identity
-from eye.tools.validate import _window, lagged_correlation, validate_breakdown, validate_identity
+from eye.tools.validate import CorrelationResult, ValidationResult, _window, lagged_correlation, validate_breakdown, validate_identity
 
 
 class Submission(BaseModel):
     edges: list[EdgeProposal]
     notes: str
     unit: str = "count"
+
+
+class SeedDecision(BaseModel):
+    src: str
+    dst: str
+    status: str
+    confidence: float
+    rationale: str
+
+
+class SeedSubmission(BaseModel):
+    seeds: list[SeedDecision]
+    edges: list[EdgeProposal]
+    notes: str
 
 
 class IdentityInput(BaseModel):
@@ -67,13 +81,13 @@ class Cartographer:
         self.llm = llm or LlmSettings()
         self.scenario_hours = scenario_hours
 
-    def _identity(self, engine: MetricEngine, text: str):
+    def _identity(self, engine: MetricEngine, text: str) -> ValidationResult:
         return validate_identity(engine, text, scenario_hours=self.scenario_hours)
 
-    def _breakdown(self, engine: MetricEngine, metric: str, dim: str):
+    def _breakdown(self, engine: MetricEngine, metric: str, dim: str) -> ValidationResult:
         return validate_breakdown(engine, metric, dim, scenario_hours=self.scenario_hours)
 
-    def _correlation(self, engine: MetricEngine, src: str, dst: str, lag: int = 96):
+    def _correlation(self, engine: MetricEngine, src: str, dst: str, lag: int = 96) -> CorrelationResult:
         return lagged_correlation(engine, src, dst, lag, scenario_hours=self.scenario_hours)
 
     def _spec(self, engine: MetricEngine) -> AgentSpec:
@@ -189,7 +203,7 @@ class Cartographer:
         await step("tools", "query_metric, validate_identity, validate_breakdown, lagged_correlation, get_graph available")
         edges, notes = [], [submitted.notes]
         if req.unit is None:
-            metric.unit = MetricDef.model_fields["unit"].annotation and MetricDef.model_validate({**metric.model_dump(), "unit": submitted.unit}).unit
+            metric.unit = MetricDef.model_validate({**metric.model_dump(), "unit": submitted.unit}).unit
         proposals = list(submitted.edges)
         for dim in dims:
             if not any(p.type == "breakdown" and p.src == req.name and p.dimension == dim for p in proposals):
@@ -230,3 +244,30 @@ class Cartographer:
                 edge.evidence["note"] = "competing parents"
         if competing:
             notes.append("competing parents")
+
+    async def refine_causal_seeds(self, *, on_step: Callable[[TrailStep], Awaitable[None]] = _discard) -> None:
+        seeds = [e for e in self.graph.edges() if e.created_by == "seed" and not e.evidence.get("refined")]
+        if not seeds:
+            return
+        payload = []
+        for edge in seeds:
+            result = self._correlation(self.engine, edge.src, edge.dst)
+            payload.append({"edge": edge.model_dump(), "numbers": result.model_dump(), "src_description": self.engine._registry.get(edge.src).description, "dst_description": self.engine._registry.get(edge.dst).description})
+        spec = replace(self._spec(self.engine), submit_model=SeedSubmission)
+        submission = cast(SeedSubmission, await run_agent(spec, json.dumps({"mode": "refine_seeds", "seeds": payload}, sort_keys=True), "cartographer:bootstrap", on_step))
+        decisions = {(d.src, d.dst): d for d in submission.seeds}
+        if set(decisions) != {(e.src, e.dst) for e in seeds}:
+            raise ValueError("refinement must decide every seed exactly once")
+        updated = []
+        for edge, data in zip(seeds, payload, strict=True):
+            decision = decisions[(edge.src, edge.dst)]
+            if decision.status not in {"hypothesis", "ambiguous", "rejected"} or not 0 <= decision.confidence <= 1:
+                raise ValueError("invalid seed status or confidence")
+            updated.append(edge.model_copy(update={"status": decision.status, "confidence": decision.confidence, "evidence": {**edge.evidence, "refined": True, "rationale": decision.rationale, "numbers": data["numbers"]}}))
+        for index, proposal in enumerate(submission.edges[:10]):
+            if proposal.type != "causal_hypothesis":
+                raise ValueError("bootstrap extras must be causal")
+            updated.extend(self._edges(self.engine, proposal, index))
+        self._competing(updated, [])
+        for edge in updated:
+            self.graph.add_edge(edge)
