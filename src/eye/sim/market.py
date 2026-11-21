@@ -35,11 +35,12 @@ class Market:
         self.week: tuple[int, int] | None = None
         self.pos: list[Row] = []
         self._po_number = 0
+        self._sales_start: datetime | None = None
         for sku, offers in world.offers.items():
             winner = buy_box(world, sku)
             for offer in offers:
-                # Baseline funnel yields about 1,200 orders/day across the catalog.
-                daily = max(1.0, 1200 * world.skus[sku].popularity)
+                # Baseline traffic and conversion yield about 15,000 orders/day.
+                daily = max(1.0, 15000 * world.skus[sku].popularity)
                 if offer is not winner:
                     daily = max(1.0, daily * 0.1)
                 key = (offer.seller_id, sku)
@@ -60,10 +61,12 @@ class Market:
         history = self.sales[key]
         while history and history[0][0] < ts - timedelta(days=7):
             history.popleft()
-        if not history:
-            return self.baseline[key]
-        days = min(7.0, max(1.0, (ts - history[0][0]).total_seconds() / 86400))
-        return sum(qty for _, qty in history) / days
+        days = (
+            0.0
+            if self._sales_start is None
+            else min(7.0, (ts - self._sales_start).total_seconds() / 86400)
+        )
+        return (sum(qty for _, qty in history) + self.baseline[key] * (7 - days)) / 7
 
     def run_repricers(self) -> None:
         for sku, offers in self.world.offers.items():
@@ -86,6 +89,8 @@ class Market:
                     offer.repricer_mode == "beat"
                     and offer is not winner
                     and lowest <= price
+                    # The tie-beating rule otherwise triggers a baseline price war.
+                    and lowest < ref * 0.97
                 ):
                     price = max(
                         lowest * (0.99 if offer.repricer_mode == "beat" else 1), floor
@@ -95,19 +100,20 @@ class Market:
                 offer.price = price
 
     def before_demand(self, ts: datetime, rng: Generator) -> Batches:
+        if self._sales_start is None:
+            self._sales_start = ts
         week = ts.isocalendar()[:2]
         if self.week != week:
             self.used.clear()
             self.week = week
         self.run_repricers()
-        for i, po in enumerate(self.pos):
+        changed_pos: list[Row] = []
+        for po in self.pos:
             if po[6] <= ts:
                 offer = next(o for o in self.world.offers[po[1]] if o.seller_id == "1P")
                 offer.stock += po[7]
-        delivered = [po for po in self.pos if po[6] <= ts]
+                changed_pos.append(po)
         self.pos = [po for po in self.pos if po[6] > ts]
-        # PO rows are published once, when delivery is known (planned at creation).
-        del delivered
         if ts.hour == 0:
             self.blocked.clear()
         for sku, offers in self.world.offers.items():
@@ -119,7 +125,6 @@ class Market:
                 offer.inbound[:] = [
                     (arrival, qty) for arrival, qty in offer.inbound if arrival > ts
                 ]
-        new_pos: list[Row] = []
         for sku, offers in self.world.offers.items():
             if sku in HYPED_SKUS:
                 continue
@@ -144,7 +149,7 @@ class Market:
                             "purchasing v2.2",
                         )
                         self.pos.append(po)
-                        new_pos.append(po)
+                        changed_pos.append((*po[:6], None, 0, po[8]))
                 elif offer.seller_id != "1P" and ts.hour == 6:
                     inbound = sum(qty for _, qty in offer.inbound)
                     if offer.stock + inbound < daily * 2:
@@ -203,7 +208,7 @@ class Market:
                 )
         return {
             "offers_hourly": rows,
-            "purchase_orders": new_pos,
+            "purchase_orders": changed_pos,
             "fba_capacity_daily": capacity_rows,
         }
 

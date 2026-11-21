@@ -13,6 +13,7 @@ from eye.config import Settings
 from eye.sim import cli
 from eye.sim.demand import _HOUR_PROFILE, _WEEKDAY_PROFILE
 from eye.sim.engine import Hour, Simulator
+from eye.sim.market import buy_box
 from eye.sim.store import TABLES
 
 
@@ -129,14 +130,12 @@ def test_replay_checksum_with_timed_hook(settings: Settings) -> None:
     assert play(42, 1) != play(43, 1)
 
 
-def test_orders_use_cheapest_in_stock_offer(settings: Settings) -> None:
+def test_orders_use_buy_box_offer(settings: Settings) -> None:
     with closing(Simulator(settings, db_path=":memory:")) as sim:
         offers = sim.world.offers["E01"]
         offers[0].stock = 0
-        winner = min(
-            (offer for offer in offers if offer.stock > 0),
-            key=lambda offer: (offer.price, offer.seller_id),
-        )
+        sim.market.run_repricers()
+        winner = buy_box(sim.world, "E01")
         sim.step()
         with sim.store.cursor() as con:
             assert con.execute("""

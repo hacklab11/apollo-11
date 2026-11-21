@@ -9,6 +9,9 @@ from numpy.random import Generator, default_rng
 
 from eye.config import Settings
 from eye.sim.demand import DemandModifiers, generate_demand
+from eye.sim.finance import Finance
+from eye.sim.market import Market
+from eye.sim.selleros_export import SellerOSExport
 from eye.sim.store import WORLD_DB, Batches, Store
 from eye.sim.world import build_world
 
@@ -34,6 +37,9 @@ class Simulator:
         self._history_start = self._start - timedelta(days=settings.sim.history_days)
         self._next_history = self._history_start
         self.world = build_world(settings.sim.seed, joined_ts=self._history_start)
+        self.market = Market(self.world)
+        self.finance = Finance(self.world)
+        self.selleros_export = SellerOSExport(self.world, settings.sim.seed)
         self.pre_demand_hooks: list[Hook] = []
         self.post_demand_hooks: list[Hook] = []
         self.store = Store(db_path)
@@ -48,6 +54,7 @@ class Simulator:
 
     def backfill(self) -> None:
         if self._next_history == self._start:
+            self.selleros_export.write(self.now)
             return
         if self.now != self._start:
             raise ValueError("backfill must run before stepping past start_ts")
@@ -58,19 +65,27 @@ class Simulator:
                 self._next_history = self.now
         finally:
             self.now = self._start
+        self.selleros_export.write(self.now)
 
     def step(self) -> None:
         hour_index = (self.now - self._history_start) // _HOUR
         hour = Hour(self.now, default_rng(self.settings.sim.seed + hour_index))
         for hook in self.pre_demand_hooks:
             hook(self, hour)
+        for table, rows in self.market.before_demand(hour.ts, hour.rng).items():
+            hour.batches.setdefault(table, []).extend(rows)
         for table, rows in generate_demand(
             hour.ts, hour.rng, self.world, hour.demand
         ).items():
             hour.batches.setdefault(table, []).extend(rows)
         for hook in self.post_demand_hooks:
             hook(self, hour)
+        self.market.record_sales(hour.ts, hour.batches.get("orders_hourly", []))
+        hour.batches.update(
+            self.finance.book(hour.ts, hour.rng, hour.batches.get("orders_hourly", []))
+        )
         self.store.append(hour.batches)
+        self.selleros_export.write(hour.ts)
         self.now += _HOUR
 
     def close(self) -> None:

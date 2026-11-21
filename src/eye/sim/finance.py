@@ -63,7 +63,12 @@ class Finance:
         return {
             "orders_hourly": orders,
             "refunds_hourly": [
-                (*key, int(values[0]), round(values[1], 2), round(values[2], 2))
+                (
+                    *key,
+                    int(values[0]),
+                    round(values[1], 2),
+                    round(round(values[1], 2) * 0.25, 2),
+                )
                 for key, values in refunds_by_key.items()
             ],
         }
