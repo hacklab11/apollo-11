@@ -288,12 +288,19 @@ function updateStatus(status, reset = false) {
 }
 
 function renderScenarios(scenarios) {
-  $("#scenarios").innerHTML = scenarios
-    .map(
-      (scenario) =>
-        `<button type="button" data-scenario="${escapeHtml(scenario.id)}" aria-pressed="${scenario.active}" aria-label="${scenario.active ? "Clear" : "Inject"} ${escapeHtml(scenario.id)}: ${escapeHtml(scenario.title)}" title="${escapeHtml(scenario.title)}">${escapeHtml(scenario.id)}${scenario.active ? " ·" : ""}</button>`,
-    )
-    .join("");
+  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
+  const ids = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "I1", "I2", ...byId.keys()]);
+  const titles = { S6: "Black Friday cascade", S8: "The €9 headphones" };
+  $("#scenarios").innerHTML = [...ids].map((id) => {
+    const scenario = byId.get(id);
+    const key = escapeHtml(id);
+    if (!scenario) {
+      const label = `${key}${titles[id] ? `: ${titles[id]}` : ""} (unavailable)`;
+      return `<button type="button" data-scenario="${key}" aria-label="${label}" title="${label}" disabled>${key}</button>`;
+    }
+    const title = escapeHtml(scenario.title);
+    return `<button type="button" data-scenario="${key}" aria-pressed="${scenario.active}" aria-label="${scenario.active ? "Clear" : "Inject"} ${key}: ${title}" title="${title}">${key}${scenario.active ? " ·" : ""}</button>`;
+  }).join("");
 }
 
 function renderScenario(scenario) {
@@ -301,6 +308,8 @@ function renderScenario(scenario) {
     (item) => item.dataset.scenario === scenario.id,
   );
   if (!button) return;
+  button.disabled = false;
+  button.title = scenario.title;
   button.setAttribute("aria-pressed", String(scenario.active));
   button.setAttribute(
     "aria-label",
@@ -1040,7 +1049,7 @@ function bindControls() {
   $("#scenarios").addEventListener("click", (event) =>
     attempt(async () => {
       const button = event.target.closest("[data-scenario]");
-      if (!button) return;
+      if (!button || button.disabled) return;
       const active = button.getAttribute("aria-pressed") === "true";
       const scenario = await (active
         ? api.clearScenario(button.dataset.scenario)
