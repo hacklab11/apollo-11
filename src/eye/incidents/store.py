@@ -167,6 +167,10 @@ class IncidentStore:
     def _merge(
         self, keeper: Incident, newer: Incident, *, findings: Incident | None = None
     ) -> Incident:
+        self.db.execute(
+            "UPDATE incidents SET lifecycle_ts = (SELECT MAX(lifecycle_ts) FROM incidents WHERE id IN (?, ?)) WHERE id = ?",
+            [keeper.id, newer.id, keeper.id],
+        )
         if findings is not None:
             for field in (
                 "title",

@@ -218,6 +218,30 @@ async def test_attached_anomalies_do_not_skip_lifecycle(store):
 
 
 @pytest.mark.asyncio
+async def test_merge_preserves_absorbed_incidents_processed_tick(store):
+    trigger = result("trigger")
+    trigger.entry.metric = "upstream"
+    trigger.root_cause = trigger.root_cause.model_copy(
+        update={"id": "trigger_root", "root_node": "upstream"}
+    )
+    pending = store.match(
+        SentinelDecision(
+            anomaly=trigger.entry, action="investigate", reason="Trigger investigation"
+        )
+    )
+    downstream = result("downstream", hours=1)
+    downstream.trigger = trigger.root_cause.id
+    await store.upsert(downstream)
+    ts = trigger.entry.ts + timedelta(hours=2)
+    store.lifecycle(ts, lambda *_: 0)
+    survivor = await store.upsert(trigger)
+    assert survivor.id == pending.id
+    assert survivor.impact_eur_total == downstream.entry.impact_eur_per_hour
+    assert store.lifecycle(ts, lambda *_: 0) == []
+    assert store.get(survivor.id) == survivor
+
+
+@pytest.mark.asyncio
 async def test_causal_chain_links_without_merging(store):
     store.path_exists = lambda src, dst: (src, dst) == ("cart_to_checkout_rate", "gmv")
     first = await store.upsert(result())
