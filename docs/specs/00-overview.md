@@ -114,6 +114,8 @@ Why the external agent is a seller tool: small sellers use third-party repricers
 | S5 | Orders up, contribution down | `contribution_margin` | ad cost / product mix / fees / funded discounts | Growth + Discovery + `decompose` |
 | S6 | Black Friday cascade (section 3) | `small_seller_gmv_share`, found by divergent-segment scan | campaign / 1P price cut / repricer loop / capacity / hijacker | all three + SellerOS |
 | S7 | Black Friday checkout outage: `checkout-web v5.8` breaks the Place Order button on web + Android webview | `gmv` below Black Friday plan, `cart_to_checkout_rate[web, android]` | front-end release / PSP-2 degraded / android app release / campaign | Discovery & Experience + change log + client errors |
+| S8 | Price typo during I3: one seller's electronics prices × 0.10 at 10:00 | `aov[electronics]`, `first_party_margin` | planned coupons / unplanned seller price drop / later repricer moves | data + SellerOS; partial hour deferred, seller fixes price, recovery |
+| I3 | Innocent: Electronics coupon day, 10% platform-funded coupons, no session uplift | electronics sales up | planned coupon-only effect | Skeptic clears it |
 | I1 | Innocent: Black Friday campaign alone | `sessions` up | planned event | Skeptic clears it |
 | I2 | Missing data: late partition for FR | `orders[FR]` drop | stale data | Skeptic / Sentinel defers |
 
@@ -240,7 +242,7 @@ Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to
 9. S6 uses evidence from SellerOS over A2A, and SellerOS receives a notification. Stopping SellerOS makes the report say "agent unavailable" and lowers confidence.
 10. An external MCP client (Claude Desktop or Claude Code) can list incidents and read a report.
 11. Chat in the UI answers "why did contribution fall?" by using MCP tools.
-12. S8 during I1 (D6): the first S8 hour is deferred for incomplete data; the incident names the seller's price drop as the first cause, first as `HYPOTHESIS`, then `CONFIRMED` after SellerOS; I1 is a `planned` contribution; other price drops and the stockout are symptoms.
+12. S8 during I3 (D6): the first S8 hour is deferred for incomplete data; the incident names the seller's price drop as the first cause, first as `HYPOTHESIS`, then `CONFIRMED` after SellerOS; I3 is a `planned` coupon contribution; other price drops and the stockout are symptoms.
 
 ## 9. Where the details are
 

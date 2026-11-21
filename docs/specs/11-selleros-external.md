@@ -7,7 +7,7 @@ Code: `external/selleros/` (its own `pyproject.toml`). Task: T17.
 SellerOS is a fictional third-party company. It sells repricing and stock tools to small marketplace sellers. Its agent talks to the marketplace's agents over A2A, like two companies' systems would.
 It knows things the platform does not: each seller's repricer rules, price floor, unit cost, supplier ETAs.
 The platform knows things SellerOS does not: Buy Box results across all sellers, search rank, hijackers.
-Together they explain S6. In S8 (the live demo) SellerOS confirms that a price was a manual mistake. SellerOS also receives alerts and acts on them (pauses a repricer, reverts a manual price).
+Together they explain S6. In S8 (the live demo) SellerOS answers "No, it was a mistake" from `price_intent_check` verdict `likely_error`, then reverts the price as the seller's fix. SellerOS also receives alerts and acts on them (pauses a repricer, reverts a manual price).
 
 ## 2. Isolation rules (checked by a test)
 
