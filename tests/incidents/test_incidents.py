@@ -108,6 +108,49 @@ async def test_absorbed_snapshot_is_not_merged_twice(store):
 
 
 @pytest.mark.asyncio
+async def test_same_fingerprint_keeps_latest_findings(store):
+    preliminary = result()
+    preliminary.verdict = "HYPOTHESIS"
+    preliminary.stop_reason = "budget"
+    preliminary.root_cause = preliminary.root_cause.model_copy(
+        update={"status": "open", "evidence_for": []}
+    )
+    preliminary.hypotheses = [preliminary.root_cause]
+    first = await store.upsert(preliminary)
+    store.lifecycle(first.entry.ts + timedelta(hours=1), lambda *_: 5)
+    confirmed = result("confirmed", hours=2)
+    confirmed.entry.impact_eur_per_hour = 123456
+    confirmed.open_questions = ["Latest question"]
+    confirmed.suggested_actions = ["Latest action"]
+    confirmed.trigger = confirmed.root_cause.id
+
+    async def report(value):
+        return "Confirmed findings", "Latest investigation narrative."
+
+    store.reporter = report
+    survivor = await store.upsert(confirmed)
+    assert survivor.id == first.id
+    assert survivor.opened_ts == first.opened_ts
+    assert survivor.verdict == "CONFIRMED"
+    assert survivor.title == "Confirmed findings"
+    assert survivor.summary == "Latest investigation narrative."
+    assert survivor.root_cause == confirmed.root_cause
+    assert survivor.hypotheses == confirmed.hypotheses
+    assert survivor.contributions == confirmed.contributions
+    assert survivor.entry == confirmed.entry
+    assert survivor.impact_eur_per_hour == 123456
+    assert survivor.impact_eur_total == first.impact_eur_per_hour
+    assert survivor.open_questions == confirmed.open_questions
+    assert survivor.suggested_actions == confirmed.suggested_actions
+    assert (
+        store.db.execute(
+            "SELECT trigger_id FROM incidents WHERE id = ?", [survivor.id]
+        ).fetchone()[0]
+        == confirmed.trigger
+    )
+
+
+@pytest.mark.asyncio
 async def test_same_trigger_merges(store):
     left = result()
     left.trigger = "trigger"

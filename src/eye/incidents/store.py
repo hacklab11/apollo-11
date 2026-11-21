@@ -164,7 +164,33 @@ class IncidentStore:
         self._save(item)
         return item
 
-    def _merge(self, keeper: Incident, newer: Incident) -> Incident:
+    def _merge(
+        self, keeper: Incident, newer: Incident, *, findings: Incident | None = None
+    ) -> Incident:
+        if findings is not None:
+            for field in (
+                "title",
+                "summary",
+                "status",
+                "verdict",
+                "resolved_ts",
+                "normal_ticks",
+                "entry",
+                "impact_eur_per_hour",
+                "root_cause",
+                "hypotheses",
+                "contributions",
+                "open_questions",
+                "suggested_actions",
+            ):
+                setattr(keeper, field, getattr(findings, field))
+            trigger = self.db.execute(
+                "SELECT trigger_id FROM incidents WHERE id = ?", [findings.id]
+            ).fetchone()[0]
+            self.db.execute(
+                "UPDATE incidents SET trigger_id = ?, ticks = 0 WHERE id = ?",
+                [trigger, keeper.id],
+            )
         keeper.investigation_ids = list(
             dict.fromkeys(keeper.investigation_ids + newer.investigation_ids)
         )
@@ -280,7 +306,7 @@ class IncidentStore:
             )
             if other.fingerprint == item.fingerprint:
                 older, newer = sorted([item, other], key=lambda i: (i.opened_ts, i.id))
-                item = self._merge(older, newer)
+                item = self._merge(older, newer, findings=item)
             elif (
                 same_trigger
                 or chain
