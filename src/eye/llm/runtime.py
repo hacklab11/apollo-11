@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from anthropic import AnthropicError
+from anthropic import AnthropicError, transform_schema
 from pydantic import BaseModel, ValidationError
 
 from eye.contracts import Actor, StepAction, TrailStep
@@ -102,6 +102,8 @@ async def run_agent(
         definition["strict"] = definition["strict"] and _supports_strict(
             definition["input_schema"]
         )
+        if definition["strict"]:
+            definition["input_schema"] = transform_schema(definition["input_schema"])
     definitions.sort(key=lambda t: t["name"])
     system = [
         {
