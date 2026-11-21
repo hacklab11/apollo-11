@@ -138,9 +138,13 @@ def list_events(
         if data.planned is not None and event.planned != data.planned:
             continue
         country = event.scope.get("country")
-        if data.country is not None and country is not None and country != data.country:
-            if not isinstance(country, list) or data.country not in country:
-                continue
+        if (
+            data.country is not None
+            and country is not None
+            and country != data.country
+            and (not isinstance(country, list) or data.country not in country)
+        ):
+            continue
         filtered.append(event)
     filtered.sort(key=lambda event: (event.ts, event.source, event.id))
     planned = sum(event.planned for event in filtered)

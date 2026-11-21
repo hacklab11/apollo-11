@@ -58,6 +58,9 @@ def _value(sample: _Sample | None) -> float | None:
 
 def _hours(start: datetime, end: datetime) -> tuple[datetime, ...]:
     start = start.astimezone(UTC)
+    aligned = start.replace(minute=0, second=0, microsecond=0)
+    if aligned < start:
+        start = aligned + HOUR
     return tuple(start + i * HOUR for i in range(-((start - end) // HOUR)))
 
 
@@ -262,12 +265,14 @@ class _Stats:
         dims: Sequence[Dimension] = (),
     ) -> dict[SegmentKey, list[tuple[BaselinePoint, _Sample | None, _Sample | None]]]:
         seasonal = self.samples(metric, _seasonal_stamps(hours), segment, dims)
+        if not dims and not seasonal and hours:
+            seasonal = {tuple(sorted(segment.items())): {}}
         fallback: dict[SegmentKey, Samples] | None = None
         daily: dict[SegmentKey, Samples] | None = None
         result = {}
         for key, sample in seasonal.items():
             scope = dict(key)
-            if not any(ts in sample for ts in hours):
+            if dims and not any(ts in sample for ts in hours):
                 continue
             rows = []
             for ts in hours:
@@ -277,7 +282,7 @@ class _Stats:
                 current = sample.get(ts)
                 if len(references) >= 3:
                     reference, spread = _expected(references)
-                elif current is not None:
+                elif current is not None or not dims:
                     if fallback is None:
                         fallback = self.samples(
                             metric, _fallback_stamps(hours), segment, dims
@@ -384,8 +389,7 @@ def _expected(
         median_num * factors.num,
         median_den * (factors.den or 0) if median_den is not None else None,
     )
-    center = reference.value
-    if center is None:
+    if reference.value is None:
         return reference, None
     adjusted = (
         _Sample(
@@ -394,10 +398,11 @@ def _expected(
         )
         for row in rows
     )
-    deviations = [
-        abs(value - center) for row in adjusted if (value := row.value) is not None
-    ]
-    return reference, median(deviations) * 1.4826 if deviations else None
+    values = [value for row in adjusted if (value := row.value) is not None]
+    if not values:
+        return reference, None
+    center = median(values)
+    return reference, median(abs(value - center) for value in values) * 1.4826
 
 
 def expected(
