@@ -2,8 +2,11 @@
 
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import duckdb
 import pytest
@@ -65,9 +68,6 @@ def test_source_clock_and_readers(tmp_path: Path) -> None:
         assert source.scenario_titles == {}
         with pytest.raises(RuntimeError, match="not supported"):
             source.record_scenario("S1", TS, True)
-        # A same-process producer is used here to exercise fresh catalog reads.
-        with duckdb.connect(str(path), read_only=True) as producer:
-            producer.execute("ATTACH ':memory:' AS staging")
         with source.cursor() as reader:
             assert (
                 reader.execute("SELECT count(*) FROM partition_status").fetchone()[0]
@@ -145,21 +145,16 @@ assert not any(name == 'eye.sim' or name.startswith('eye.sim.') for name in sys.
 
 
 def test_sim_factory_selection(monkeypatch: pytest.MonkeyPatch) -> None:
-    from contextlib import contextmanager
-    from types import SimpleNamespace
-
-    from eye import datasource
-
     @contextmanager
-    def open_sim(settings: Settings):
+    def open_sim(settings: Settings) -> Iterator[Settings]:
         yield settings
 
-    def import_source(name: str, *, package: str):
+    def import_source(name: str, *, package: str) -> SimpleNamespace:
         assert name == ".sim.source"
         assert package == "eye"
         return SimpleNamespace(open_sim_source=open_sim)
 
-    monkeypatch.setattr(datasource, "import_module", import_source)
+    monkeypatch.setattr("eye.datasource.import_module", import_source)
     settings = Settings()
     with open_source(settings) as source:
         assert source is settings

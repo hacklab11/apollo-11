@@ -19,12 +19,12 @@ from eye.agents.sentinel import Sentinel
 from eye.api.app import create_app
 from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, TrailStep
+from eye.datasource import open_source
 from eye.incidents.store import IncidentStore
 from eye.llm.client import BudgetExceeded, LLMClient, configure_client
 from eye.orchestrator import HOUR, Orchestrator, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
-from eye.datasource import open_source
 from eye.tools.stats import expected
 
 
