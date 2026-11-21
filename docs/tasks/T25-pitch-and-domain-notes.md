@@ -17,7 +17,7 @@ Also write the plain-English `description` of every metric in `docs/specs/05-met
 8 slides from `docs/specs/15-demo-and-pitch.md` §3. Charts from `uv run eye-sim export` files (ask Dev 1 to run it). One message per slide. Big numbers. No more than 25 words of text per slide.
 
 ## Part C (hours 20–22): rehearsal and video
-1. Run the 3-minute demo script (`docs/specs/15-demo-and-pitch.md` §1, S8) 3 times with a timer. Note every place where the story is unclear and fix the words, not the system. Replace the [X]/[Y] placeholders with the numbers from the best run.
+1. Run the 3-minute demo script (`docs/specs/15-demo-and-pitch.md` §1, S8) 3 times with a timer. Note every place where the story is unclear and fix the words, not the system. Replace the [X]/[Y]/[Z] placeholders with the numbers from the best run.
 2. Record the backup video on the third run. Upload it; keep a local copy on two laptops.
 
 ## Done when
