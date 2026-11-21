@@ -97,6 +97,7 @@ def test_deep_discount_drift_up(
     expected_mult: float,
 ) -> None:
     world = build_world(42, joined_ts=TS)
+    market = Market(world)
     offers = world.offers["E01"]
     for offer in offers:
         offer.stock = 0
@@ -106,7 +107,7 @@ def test_deep_discount_drift_up(
     a.price, b.price = ref * price_mult, ref * other_mult
     a.repricer_mode, b.repricer_mode = mode, "fixed"
     a.floor = None
-    Market(world).run_repricers()
+    market.run_repricers()
     expected = ref * expected_mult
     assert a.price == (
         expected if mode == "fixed" or not other_stock else round(expected, 2)
