@@ -150,7 +150,7 @@ async def test_parallel_tools_trail_and_request(harness):
     )
     assert first["tools"] == requests[1]["tools"]
     assert first["system"] == requests[1]["system"]
-    assert len(requests[1]["messages"][-1]["content"]) == 2
+    assert len(requests[1]["messages"][-1]["content"]) == 3
     calls = [s for s in steps if s.action == "tool_call"]
     assert [s.tool for s in calls] == ["increment", "double", "submit"]
     assert all(s.output_summary for s in calls)
@@ -249,6 +249,27 @@ async def test_empty_turns_and_budget(harness, stop):
         await run_agent(replace(spec(), max_steps=2), "go", "inv", discard)
     assert len(requests) == 2
     assert requests[1]["messages"][-1]["role"] == "user"
+    assert "final allowed turn" in requests[1]["messages"][-1]["content"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_steps", [1, 2])
+async def test_final_turn_notice_with_tool_results(harness, max_steps):
+    script = [final()]
+    if max_steps == 2:
+        script.insert(0, response([tool("double", {"value": 3})]))
+    _, requests = harness(script)
+    result = await run_agent(replace(spec(), max_steps=max_steps), "go", "inv", discard)
+    assert result.value == 9
+    content = requests[-1]["messages"][-1]["content"]
+    if max_steps == 2:
+        assert content[0]["type"] == "tool_result"
+        assert content[-1]["type"] == "text"
+        content = content[-1]["text"]
+        assert "2 LLM turn(s) remaining" in requests[0]["messages"][0]["content"]
+    assert "1 LLM turn(s) remaining" in content
+    assert "call submit now" in content
+    assert "Request independent tool calls in one turn" in content
 
 
 @pytest.mark.asyncio

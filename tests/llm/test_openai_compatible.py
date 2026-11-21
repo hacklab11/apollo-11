@@ -97,16 +97,17 @@ async def test_round_trip(transport):
         set(t["function"]) == {"name", "description", "parameters"}
         for t in first["tools"]
     )
-    assistant = second["messages"][-3]
+    assistant = second["messages"][-4]
     assert assistant["role"] == "assistant"
     assert len(assistant["tool_calls"]) == 2
     assert json.loads(assistant["tool_calls"][0]["function"]["arguments"]) == {
         "value": 2
     }
-    results = second["messages"][-2:]
+    results = second["messages"][-3:-1]
     assert [r["role"] for r in results] == ["tool", "tool"]
     assert [r["tool_call_id"] for r in results] == ["t1", "t2"]
     assert [json.loads(r["content"])["value"] for r in results] == [3, 6]
+    assert "4 LLM turn(s) remaining" in second["messages"][-1]["content"]
     assert client.status()["tokens_in"] == 20
     assert client.status()["tokens_out"] == 10
 
@@ -162,7 +163,7 @@ def test_thinking_dropped():
 async def test_invalid_json_returns_tool_error(transport, arguments):
     _, requests = transport([completion([call("submit", arguments)]), final()])
     assert (await run_agent(spec(), "go", "inv", discard)).value == 9
-    error = requests[1]["messages"][-1]
+    error = requests[1]["messages"][-2]
     assert error["role"] == "tool"
     assert "ValidationError" in error["content"]
     assert "Field required" in error["content"]

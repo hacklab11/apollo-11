@@ -364,6 +364,12 @@ async def test_refinement_is_cached(
     await cartographer.refine_causal_seeds()
     await cartographer.refine_causal_seeds()
     assert run.call_count == 1
+    spec, payload, *_ = run.call_args.args
+    prompt = Path(spec.system_prompt_file).read_text()
+    assert "assess all seeds" in prompt
+    assert "Do not call get_graph once per seed" in prompt
+    assert json.loads(payload)["mode"] == "refine_seeds"
+    assert "numbers" in json.loads(payload)["seeds"][0]
     assert cartographer.graph.edges()[0].status == "ambiguous"
 
 

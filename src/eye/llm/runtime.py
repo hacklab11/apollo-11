@@ -183,7 +183,23 @@ async def run_agent(
             output if block.name == "submit" else None,
         )
 
-    for _ in range(spec.max_steps):
+    for turn in range(spec.max_steps):
+        remaining = spec.max_steps - turn
+        notice = (
+            f"Runtime budget: {remaining} LLM turn(s) remaining, including this turn. "
+            "Request independent tool calls in one turn. "
+            + (
+                "This is the final allowed turn: call submit now with the evidence "
+                "you have. State uncertainty rather than inventing findings."
+                if remaining == 1
+                else "Reserve a turn to call submit with your final answer."
+            )
+        )
+        content = messages[-1]["content"]
+        if isinstance(content, str):
+            messages[-1]["content"] = content + "\n\n" + notice
+        else:
+            content.append({"type": "text", "text": notice})
         started = time.monotonic()
         try:
             response = await get_client().create(
