@@ -25,6 +25,8 @@ from eye.orchestrator import Status
 
 HOUR = timedelta(hours=1)
 WAIT_HOURS = 8
+NORMAL_TICKS = 3
+OPEN_STATUSES = {"open", "persisting"}
 SCENARIOS = TypeAdapter(list[ScenarioState])
 INCIDENTS = TypeAdapter(list[Incident])
 DECISIONS = TypeAdapter(list[SentinelDecision])
@@ -132,7 +134,7 @@ async def find_incident(
 ) -> Incident | None:
     response = await request(client, "GET", "/api/incidents")
     for item in INCIDENTS.validate_json(response.content):
-        if item.status not in {"open", "persisting"} or item.entry.ts < injected:
+        if item.status not in OPEN_STATUSES or item.entry.ts < injected:
             continue
         incident = await get_incident(client, item.id)
         root = incident.root_cause
@@ -207,6 +209,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
             decision
             for decision in await decisions(client, injected)
             if decision.action == "defer"
+            and decision.anomaly.ts == injected
             and decision.anomaly.segment.get("category") == "electronics"
         ]
         if deferred:
@@ -245,6 +248,10 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
         )
         since = status.sim_ts + HOUR
         async for current in incident_updates(client, incident.id, seconds):
+            if current.status not in OPEN_STATUSES:
+                raise RuntimeError(
+                    "the S8 incident closed before fee_per_order attached"
+                )
             if any(
                 decision.action == "attach"
                 and decision.attach_to_incident == current.id
@@ -267,6 +274,10 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
         "5. Show SellerOS confirming the error and reverting the price; follow the same incident to resolution."
     ):
         async for current in incident_updates(client, incident.id, seconds):
+            if current.status not in OPEN_STATUSES:
+                raise RuntimeError(
+                    "the S8 incident closed before SellerOS acknowledged the revert"
+                )
             if current.verdict == "CONFIRMED" and seller_reverted(current):
                 incident = current
                 break
@@ -274,12 +285,22 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
             raise RuntimeError(
                 "the S8 incident did not show confirmation and a SellerOS price-revert acknowledgement"
             )
-        await set_scenario(client, "S8", "clear")
+        cleared = (await set_scenario(client, "S8", "clear")).cleared_ts
+        if cleared is None:
+            raise RuntimeError("S8 did not clear")
         async for current in incident_updates(client, incident.id, seconds):
             say(
                 f"  {current.id}: {current.status}; normal ticks={current.normal_ticks}; occurrences={current.occurrences}."
             )
             if current.status == "resolved":
+                if (
+                    current.resolved_ts is None
+                    or current.resolved_ts < cleared + (NORMAL_TICKS - 1) * HOUR
+                    or current.normal_ticks < NORMAL_TICKS
+                ):
+                    raise RuntimeError(
+                        "the S8 incident resolved before three normal recovery ticks"
+                    )
                 break
         else:
             raise RuntimeError(
