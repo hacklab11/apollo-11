@@ -238,6 +238,18 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         assert client.get("/api/metrics/no_such_metric").status_code == 404
 
 
+def test_llm_mode_cannot_change_at_runtime(
+    service: tuple[FastAPI, Settings, Orchestrator],
+) -> None:
+    app, settings, _ = service
+    with TestClient(app) as client:
+        response = client.post("/api/llm/mode", json={"mode": "replay"})
+        status = Status.model_validate(client.get("/api/status").json())
+    assert response.status_code in {404, 405}
+    assert "/api/llm/mode" not in {getattr(route, "path", "") for route in app.routes}
+    assert status.llm_mode == settings.llm.mode == "live"
+
+
 def test_incident_symptoms(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
     app, _, orchestrator = service
     item = orchestrator.incidents.all()[0]

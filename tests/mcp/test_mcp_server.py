@@ -5,18 +5,24 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import httpx
 import pytest
 import pytest_asyncio
 import uvicorn
 from mcp import Client
 from mcp.server import MCPServer
 from mcp.types import CallToolResult, TextContent
-from mcp_fake_core import Calls
+from mcp_fake_core import Calls, fake_core
 from pydantic import TypeAdapter
 
 from eye.api.app import MetricDefinition
 from eye.contracts import AddMetricResult, GraphView, ScenarioState, Series
-from eye.mcp_server import IncidentDetail, IncidentSummary, create_server
+from eye.mcp_server import (
+    SCENARIO_TOOLS,
+    IncidentDetail,
+    IncidentSummary,
+    create_server,
+)
 
 TOOLS = {
     "system_status",
@@ -30,6 +36,11 @@ TOOLS = {
     "inject_scenario",
     "clear_scenario",
 }
+
+
+def core_calls(calls: Calls) -> Calls:
+    """Drop the scenario-source probe that every tool listing makes."""
+    return [call for call in calls if call != ("/api/scenarios", {})]
 
 
 def text(result: CallToolResult) -> str:
@@ -84,6 +95,28 @@ async def test_streamable_http_lists_ten_described_tools(http_url: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenarios",
+    [[], {"detail": "not a catalogue"}, None],
+    ids=["no-scenario-source", "invalid-catalogue", "core-unavailable"],
+)
+async def test_scenario_tools_hidden_without_scenario_source(
+    scenarios: object,
+) -> None:
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("core down", request=request)
+
+    transport = (
+        httpx.ASGITransport(app=fake_core([], scenario_list=scenarios))
+        if scenarios is not None
+        else httpx.MockTransport(unavailable)
+    )
+    async with Client(create_server("http://core", transport=transport)) as client:
+        tools = (await client.list_tools()).tools
+    assert {tool.name for tool in tools} == TOOLS - SCENARIO_TOOLS
+
+
+@pytest.mark.asyncio
 async def test_list_incidents_returns_valid_json(
     server: MCPServer, calls: Calls
 ) -> None:
@@ -94,7 +127,7 @@ async def test_list_incidents_returns_valid_json(
     incidents = TypeAdapter(list[IncidentSummary]).validate_python(payload(result))
     assert [incident.id for incident in incidents] == ["inc_s6", "inc_s7"]
     assert text(result).startswith("2 of 2 incidents with status open")
-    assert calls == [("/api/incidents", {"status": "open"})]
+    assert core_calls(calls) == [("/api/incidents", {"status": "open"})]
 
 
 @pytest.mark.asyncio
@@ -122,7 +155,7 @@ async def test_inject_and_clear_scenario(server: MCPServer, calls: Calls) -> Non
         cleared = payload(await client.call_tool("clear_scenario", {"id": "S8"}))
     assert ScenarioState.model_validate(injected).active
     assert not ScenarioState.model_validate(cleared).active
-    assert [path for path, _ in calls] == [
+    assert [path for path, _ in core_calls(calls)] == [
         "/api/scenarios/S8/inject",
         "/api/scenarios/S8/clear",
     ]
@@ -180,7 +213,7 @@ async def test_query_metric_defaults_to_48_hours_before_sim_time(
             "query_metric", {"name": "orders", "segment": {"country": "DE"}}
         )
     assert Series.model_validate(payload(result)).metric == "orders"
-    path, params = calls[-1]
+    path, params = core_calls(calls)[-1]
     end = datetime(2026, 11, 27, 14, tzinfo=UTC)
     assert path == "/api/metrics/orders"
     assert datetime.fromisoformat(params["start"]) == end - timedelta(hours=48)

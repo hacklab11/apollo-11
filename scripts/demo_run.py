@@ -169,7 +169,7 @@ def seller_reverted(incident: Incident) -> bool:
     return False
 
 
-async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
+async def demo(client: httpx.AsyncClient, seconds: float) -> None:
     previous = Status.model_validate_json(
         (await request(client, "GET", "/api/status")).content
     )
@@ -177,13 +177,6 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
         (await request(client, "POST", "/api/clock/pause")).content
     )
     with stage("Prepare the 09:00 starting point (not part of the pitch):"):
-        if record:
-            response = await request(
-                client, "POST", "/api/llm/mode", json={"mode": "record"}
-            )
-            say(
-                f"  Core LLM mode: {Status.model_validate_json(response.content).llm_mode}"
-            )
         await prepare(client, paused)
 
     started = monotonic()
@@ -324,7 +317,7 @@ def seconds_per_hour(value: str) -> float:
 
 async def run(args: argparse.Namespace) -> None:
     async with httpx.AsyncClient(base_url=args.base_url, timeout=300.0) as client:
-        await demo(client, args.speed, args.record)
+        await demo(client, args.speed)
 
 
 def main() -> int:
@@ -336,9 +329,6 @@ def main() -> int:
         type=seconds_per_hour,
         default=5.0,
         help="seconds per simulated hour (default: 5)",
-    )
-    parser.add_argument(
-        "--record", action="store_true", help="record core LLM responses for replay"
     )
     args = parser.parse_args()
     try:
