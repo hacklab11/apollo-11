@@ -70,6 +70,25 @@ def test_average_breakdown_pools_weights(weighted_engine: MetricEngine) -> None:
     assert result.evidence["n"] == 1
 
 
+@pytest.mark.parametrize(
+    "num, den, passed",
+    [(0, 0, True), (10, 0, False), (None, 0, False), (0, None, False)],
+)
+def test_breakdown_zero_denominator_segment(
+    weighted_engine: MetricEngine, num: float | None, den: float | None, passed: bool
+) -> None:
+    weighted_engine._con.execute(
+        "UPDATE facts SET num = ?, den = ? WHERE country = 'FR'", [num, den]
+    )
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    result = validate_breakdown(
+        weighted_engine, "aov", "country", start, start + timedelta(hours=1)
+    )
+    assert result.passed is passed
+    if passed:
+        assert result.evidence["n"] == 1
+
+
 def test_validation_defaults_to_simulated_data_clock(
     weighted_engine: MetricEngine,
 ) -> None:

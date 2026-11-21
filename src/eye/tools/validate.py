@@ -175,12 +175,7 @@ def validate_breakdown(
     excluded = set(scenario_hours or [])
     total = _points(engine, metric, start, end, {}, excluded)
     series = engine.query_metric(metric, start, end, group_by=[dim])
-    valid = {
-        p.ts
-        for s in series
-        for p in s.points
-        if p.completeness < 0.9 or p.value is None
-    }
+    valid = {p.ts for s in series for p in s.points if p.completeness < 0.9}
     sums: dict[datetime, float] = {}
     if (
         engine._registry.has_den.get(metric)
@@ -191,6 +186,9 @@ def validate_breakdown(
         nd: dict[datetime, list[float]] = {}
         for points in raw.values():
             for ts, (num, den) in points.items():
+                if num is None or den is None or (den == 0 and num != 0):
+                    valid.add(ts)
+                    continue
                 pair = nd.setdefault(ts, [0.0, 0.0])
                 pair[0] += num or 0
                 pair[1] += den or 0
@@ -200,6 +198,8 @@ def validate_breakdown(
             for p in s.points:
                 if p.value is not None:
                     sums[p.ts] = sums.get(p.ts, 0) + p.value
+                else:
+                    valid.add(p.ts)
     residuals = [
         abs(v - sums[ts]) / abs(v) if v else (0.0 if sums[ts] == 0 else float("inf"))
         for ts, v in total.items()
