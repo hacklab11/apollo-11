@@ -216,7 +216,11 @@ def test_default_window_on_fresh_simulator_baseline(
 ) -> None:
     path, _ = baseline
     with duckdb.connect(str(path), read_only=True) as con:
-        assert con.execute("SELECT count(*) FROM partition_status").fetchone()[0] == 0
+        partitions, incomplete = con.execute(
+            "SELECT count(*), count(*) FILTER (loaded_rows < expected_rows) "
+            "FROM partition_status"
+        ).fetchone()
+        assert partitions > 0 and incomplete == 0
         engine = MetricEngine(con, load_registry(con))
         result = validate_breakdown(engine, "orders", "country")
         assert result.passed
