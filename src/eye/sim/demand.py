@@ -10,8 +10,9 @@ from numpy.random import Generator
 from numpy.typing import NDArray
 
 from eye.contracts import Channel, Country, Platform
+from eye.sim.market import buy_box
 from eye.sim.store import Batches
-from eye.sim.world import CATEGORIES, CATEGORY_SHARES, Offer, World
+from eye.sim.world import CATEGORIES, CATEGORY_SHARES, World
 
 COUNTRIES: tuple[Country, ...] = ("DE", "FR")
 PLATFORMS: tuple[Platform, ...] = ("android", "ios", "web")
@@ -61,14 +62,6 @@ class DemandModifiers:
     psp_latency: dict[str, float] = field(default_factory=dict)
 
 
-def _cheapest_available(offers: list[Offer]) -> Offer | None:
-    return min(
-        (offer for offer in offers if offer.stock > 0),
-        key=lambda offer: (offer.price, offer.seller_id),
-        default=None,
-    )
-
-
 def _retry_unavailable(
     rng: Generator, clicks: NDArray[np.int64], available: NDArray[np.bool_]
 ) -> NDArray[np.int64]:
@@ -112,7 +105,7 @@ def generate_demand(
     category_index = np.array([CATEGORIES.index(sku.category) for sku in skus])
     popularity = np.array([sku.popularity for sku in skus])
     attractiveness = np.array([sku.attractiveness for sku in skus])
-    offers = [_cheapest_available(world.offers[sku.sku]) for sku in skus]
+    offers = [buy_box(world, sku.sku) for sku in skus]
     available = np.array([offer is not None for offer in offers])
     prices = np.array(
         [
@@ -155,6 +148,15 @@ def generate_demand(
     )
     starts = rng.binomial(carts, 0.75 * checkout_ok[:, None, None])
     attempts = rng.binomial(starts, 0.90)
+    for index, offer in enumerate(offers):
+        if offer is None:
+            continue
+        requested = attempts[:, :, index].copy().ravel()
+        cumulative = np.cumsum(requested)
+        allocated = np.minimum(
+            requested, np.maximum(0, offer.stock - cumulative + requested)
+        )
+        attempts[:, :, index] = allocated.reshape(len(_SEGMENTS), len(CHANNELS))
     psp_1 = rng.binomial(attempts, 0.60)
     psp_attempts = np.stack((psp_1, attempts - psp_1), axis=-1)
     rates = np.array(
@@ -164,6 +166,9 @@ def generate_demand(
         ]
     )
     psp_successes = rng.binomial(psp_attempts, rates)
+    for index, offer in enumerate(offers):
+        if offer is not None:
+            offer.stock -= int(psp_successes[:, :, index, :].sum())
     # Aggregate the very same successes into both payment facts and order facts.
     units = psp_successes.sum(axis=-1)
     psp_attempt_totals = psp_attempts.sum(axis=(1, 2))

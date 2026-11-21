@@ -212,7 +212,11 @@ def build_world(seed: int, *, joined_ts: datetime) -> World:
         if index == len(advertisers):
             return True
         adv = list(advertisers.values())[index]
-        eligible = {skus[sku].category for sku in catalogs[adv.seller_id]}
+        eligible = {
+            skus[sku].category
+            for sku in catalogs[adv.seller_id]
+            if sku not in HYPED_SKUS
+        }
         for category in sorted(eligible, key=lambda c: (c != adv.category, c)):
             if remaining[category]:
                 remaining[category] -= 1

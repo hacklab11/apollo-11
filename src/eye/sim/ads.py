@@ -15,10 +15,25 @@ from eye.sim.demand import (
     SEARCHES_PER_SESSION,
 )
 from eye.sim.store import Batches
-from eye.sim.world import CATEGORIES, CATEGORY_SHARES, World
+from eye.sim.world import CATEGORIES, CATEGORY_SHARES, Sku, World
 
 _IMPRESSION_FACTOR = 0.9
 _CTR = 0.02
+
+
+def _eligible_skus(world: World) -> dict[str, list[Sku]]:
+    return {
+        adv.advertiser_id: [
+            sku
+            for sku in world.skus.values()
+            if sku.category == adv.category
+            and any(
+                offer.seller_id == adv.seller_id and offer.stock > 0
+                for offer in world.offers[sku.sku]
+            )
+        ]
+        for adv in world.advertisers.values()
+    }
 
 
 @dataclass
@@ -26,16 +41,17 @@ class Ads:
     version: str = "pacing-svc v4.0"
     spent: dict[str, float] = field(default_factory=dict)
     bids: dict[str, float] = field(default_factory=dict)
+    served_impressions: dict[tuple[str, str], int] = field(default_factory=dict)
     out_of_stock_hours: dict[str, int] = field(default_factory=dict)
     recovered_hours: dict[str, int] = field(default_factory=dict)
     day: date | None = None
 
     def calibrate_budgets(self, ts: datetime, world: World) -> None:
+        eligible = _eligible_skus(world)
         for category, share in zip(CATEGORIES, CATEGORY_SHARES, strict=True):
-            ranked = sorted(
-                (a for a in world.advertisers.values() if a.category == category),
-                key=lambda a: (-a.base_bid, a.advertiser_id),
-            )
+            advertisers = [
+                a for a in world.advertisers.values() if a.category == category
+            ]
             clicks = (
                 _BASE_SESSIONS.sum()
                 * sum(_HOUR_PROFILE)
@@ -46,9 +62,14 @@ class Ads:
                 * _IMPRESSION_FACTOR
                 * _CTR
             )
-            for rank, adv in enumerate(ranked):
+            for adv in advertisers:
+                ranked = sorted(
+                    (a for a in advertisers if eligible[a.advertiser_id] or a == adv),
+                    key=lambda a: (-self.bids[a.advertiser_id], a.advertiser_id),
+                )
+                rank = ranked.index(adv)
                 cpc = (
-                    max(0.10, ranked[rank + 1].base_bid + 0.01)
+                    max(0.10, self.bids[ranked[rank + 1].advertiser_id] + 0.01)
                     if rank + 1 < len(ranked)
                     else 0.10
                 )
@@ -63,13 +84,10 @@ class Ads:
         searches: np.ndarray,
         batches: Batches,
     ) -> dict[tuple[int, str], int]:
-        if self.day != ts.date():
-            self.calibrate_budgets(ts, world)
-            self.spent.clear()
-            self.day = ts.date()
         planned = sum(_HOUR_PROFILE[: ts.hour + 1]) / sum(_HOUR_PROFILE)
         landed: dict[tuple[int, str], int] = {}
         participants: dict[str, bool] = {}
+        eligible_skus = _eligible_skus(world)
         for adv in world.advertisers.values():
             hours = self.out_of_stock_hours.get(adv.seller_id, 0)
             bid = self.bids.get(adv.advertiser_id, adv.base_bid)
@@ -78,9 +96,15 @@ class Ads:
             elif self.recovered_hours.get(adv.seller_id, 0) >= 24:
                 bid = adv.base_bid
             self.bids[adv.advertiser_id] = bid
+        if self.day != ts.date():
+            self.calibrate_budgets(ts, world)
+            self.spent.clear()
+            self.day = ts.date()
+        for adv in world.advertisers.values():
             spent = self.spent.get(adv.advertiser_id, 0.0)
             participants[adv.advertiser_id] = (
-                spent < adv.daily_budget
+                bool(eligible_skus[adv.advertiser_id])
+                and spent < adv.daily_budget
                 and rng.random()
                 < np.clip(1 - (spent / adv.daily_budget - planned) * 5, 0, 1)
             )
@@ -111,8 +135,12 @@ class Ads:
                         if rank < 2
                         else 0
                     )
+                    key = (aid, country)
+                    previous = self.served_impressions.get(key, 0)
+                    self.served_impressions[key] = previous + impressions
                     clicks = min(
-                        int(rng.binomial(impressions, _CTR)),
+                        round(self.served_impressions[key] * _CTR)
+                        - round(previous * _CTR),
                         int((adv.daily_budget - self.spent.get(aid, 0)) / cpc),
                     )
                     spend = round(clicks * cpc, 2)
@@ -134,14 +162,7 @@ class Ads:
                             planned,
                         )
                     )
-                    eligible = [
-                        sku
-                        for sku in world.skus.values()
-                        if sku.category == category
-                        and any(
-                            o.seller_id == adv.seller_id for o in world.offers[sku.sku]
-                        )
-                    ]
+                    eligible = eligible_skus[aid]
                     if clicks and eligible and segments.sum():
                         allocation = rng.multinomial(clicks, segments / segments.sum())
                         weights = np.array([s.popularity for s in eligible])
