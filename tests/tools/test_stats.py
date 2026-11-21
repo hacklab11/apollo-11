@@ -221,11 +221,6 @@ def test_scans_rank_segments_and_keep_divergence_with_healthy_total(
     assert shift.share_expected == pytest.approx(0.6)
 
 
-def _has_s6() -> bool:
-    config = Path("config/scenarios.yaml")
-    return config.exists() and "S6" in yaml.safe_load(config.read_text())
-
-
 def test_point_scan_finds_joint_fee_drop_with_flat_marginals(
     world: duckdb.DuckDBPyConnection,
 ) -> None:
@@ -281,6 +276,34 @@ def test_point_scan_finds_joint_fee_drop_with_flat_marginals(
     )
     result = scan_anomalies(data, con=world, registry=registry)
     assert all(item.segment != joint.segment for item in result.anomalies)
+
+
+def test_point_scan_finds_joint_aov_drop_with_euro_volume(
+    world: duckdb.DuckDBPyConnection,
+) -> None:
+    world.execute(
+        """
+        UPDATE orders_hourly SET units = 100, gmv = 100 * CASE
+            WHEN ts < ? THEN 100 WHEN (country = 'DE') = (platform = 'web') THEN 50
+            ELSE 150 END
+        """,
+        [T0],
+    )
+    result = scan_anomalies(
+        ScanAnomaliesInput(ts=T0), con=world, registry=load_registry(world)
+    )
+    aov = [item for item in result.anomalies if item.metric == "aov"]
+    assert len(aov) == 4
+    assert all(set(item.segment) == {"country", "platform"} for item in aov)
+    de_web = next(
+        item for item in aov if item.segment == {"country": "DE", "platform": "web"}
+    )
+    assert (de_web.actual, de_web.expected) == (50, 100)
+
+
+def _has_s6() -> bool:
+    config = Path("config/scenarios.yaml")
+    return config.exists() and "S6" in yaml.safe_load(config.read_text())
 
 
 @pytest.mark.skipif(not _has_s6(), reason="T05 S6 scenario is not available")

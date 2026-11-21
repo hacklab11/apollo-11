@@ -118,9 +118,12 @@ class _Stats:
         registry: Registry,
         start: datetime,
         end: datetime,
+        *,
+        max_group_dims: int = 1,
     ) -> None:
         self.con = con
         self.registry = registry
+        self._max_group_dims = max_group_dims
         self._cache: dict[tuple, dict[SegmentKey, Samples]] = {}
         self._partitions: dict[tuple[str | None, datetime, str], list[int]] = (
             defaultdict(lambda: [0, 0])
@@ -156,8 +159,6 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension] = (),
-        *,
-        max_group_dims: int = 1,
     ) -> dict[SegmentKey, Samples]:
         unknown = (segment.keys() | set(dims)) - set(metric.dimensions)
         if unknown or segment.keys() & set(dims):
@@ -170,20 +171,12 @@ class _Stats:
             )
         if not stamps:
             return {}
-        key = (
-            metric.name,
-            stamps,
-            tuple(sorted(segment.items())),
-            tuple(dims),
-            max_group_dims,
-        )
+        key = metric.name, stamps, tuple(sorted(segment.items())), tuple(dims)
         if key not in self._cache:
             self._cache[key] = (
-                self._sql_samples(metric, stamps, segment, dims, max_group_dims)
+                self._sql_samples(metric, stamps, segment, dims)
                 if metric.kind == "sql"
-                else self._formula_samples(
-                    metric, stamps, segment, dims, max_group_dims
-                )
+                else self._formula_samples(metric, stamps, segment, dims)
             )
         return self._cache[key]
 
@@ -193,7 +186,6 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension],
-        max_group_dims: int,
     ) -> dict[SegmentKey, Samples]:
         has_den = self.registry.has_den[metric.name]
         keys = [f'"{dim}"' for dim in dims]
@@ -203,7 +195,7 @@ class _Stats:
             mask = (1 << len(dims)) - 1
             grouped_indexes = {
                 mask ^ sum(1 << (len(dims) - 1 - idx) for idx in indexes): indexes
-                for size in range(max_group_dims + 1)
+                for size in range(self._max_group_dims + 1)
                 for indexes in combinations(range(len(dims)), size)
             }
             select.append(f"GROUPING_ID({', '.join(keys)})")
@@ -249,18 +241,11 @@ class _Stats:
         stamps: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension],
-        max_group_dims: int,
     ) -> dict[SegmentKey, Samples]:
         assert metric.expression is not None
         expr = ast.parse(metric.expression, mode="eval").body
         inputs = {
-            name: self.samples(
-                self.registry.get(name),
-                stamps,
-                segment,
-                dims,
-                max_group_dims=max_group_dims,
-            )
+            name: self.samples(self.registry.get(name), stamps, segment, dims)
             for name in _names(expr)
         }
         result: dict[SegmentKey, Samples] = {}
@@ -290,16 +275,8 @@ class _Stats:
         hours: tuple[datetime, ...],
         segment: Segment,
         dims: Sequence[Dimension] = (),
-        *,
-        max_group_dims: int = 1,
     ) -> dict[SegmentKey, list[tuple[BaselinePoint, _Sample | None, _Sample | None]]]:
-        seasonal = self.samples(
-            metric,
-            _seasonal_stamps(hours),
-            segment,
-            dims,
-            max_group_dims=max_group_dims,
-        )
+        seasonal = self.samples(metric, _seasonal_stamps(hours), segment, dims)
         if not dims and not seasonal and hours:
             seasonal = {tuple(sorted(segment.items())): {}}
         fallback: dict[SegmentKey, Samples] | None = None
@@ -320,11 +297,7 @@ class _Stats:
                 elif current is not None or not dims:
                     if fallback is None:
                         fallback = self.samples(
-                            metric,
-                            _fallback_stamps(hours),
-                            segment,
-                            dims,
-                            max_group_dims=max_group_dims,
+                            metric, _fallback_stamps(hours), segment, dims
                         )
                     references = self._references(
                         metric,
@@ -342,7 +315,6 @@ class _Stats:
                                 ),
                                 segment,
                                 dims,
-                                max_group_dims=max_group_dims,
                             )
                         factors = self._weekday_factors(
                             metric, scope, daily.get(key, {}), ts
@@ -625,13 +597,13 @@ def scan_anomalies(
 ) -> ScanOutput:
     settings = settings or SentinelSettings()
     ts = data.ts.astimezone(UTC)
-    stats = _Stats(con, registry, ts - 29 * DAY, ts + HOUR)
+    stats = _Stats(con, registry, ts - 29 * DAY, ts + HOUR, max_group_dims=2)
     weights = _graph_weights(graph)
     margin, per_order = _impact_scale(stats, ts)
     anomalies = []
     for metric in registry.active:
         for key, [(point, _, reference)] in stats.baselines(
-            metric, (ts,), {}, metric.dimensions, max_group_dims=2
+            metric, (ts,), {}, metric.dimensions
         ).items():
             if (
                 point.actual is None
