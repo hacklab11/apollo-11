@@ -28,8 +28,9 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "llm"
 DAY = datetime(2026, 11, 27, tzinfo=UTC)
 BASELINE_DAY = DAY - timedelta(days=7)
 S7_TS = DAY + timedelta(hours=3)
-SCHEDULE = [0.02, 0.04, 0.07, 0.10, 0.14, 0.18, 0.23, 0.28, 0.33, 0.38, 0.43, 0.48]
-ADV3_SPENT = [80, 170, 270, 380, 500, 620, 740, 860, 950, 1000, 1000, 1000]
+SCHEDULE = [0.02, 0.04, 0.07, 0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42]
+# Cumulative spend at each hourly row; the 10:00 row exhausts the daily budget.
+ADV3_SPENT = [60, 140, 230, 330, 440, 560, 680, 790, 880, 950, 1000, 1000]
 
 
 def _ts(value: datetime) -> str:

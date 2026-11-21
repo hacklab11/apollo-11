@@ -56,7 +56,7 @@ async def answer(
         if step.action == "tool_call" and step.tool != "submit":
             steps.append({"tool": step.tool or "", "summary": step.output_summary})
             if step.output is not None:
-                used.add(step.tool or "")
+                used.add(step.output["endpoint"])
 
     spec = AgentSpec(
         name=specialist.NAME,
@@ -68,9 +68,9 @@ async def answer(
         max_steps=MAX_STEPS,
         max_tokens=settings.llm.max_tokens,
     )
-    result = await run_agent(
-        spec, request.model_dump_json(indent=2), request.investigation_id, on_step
-    )
+    # Protobuf Struct does not preserve key order; sorting keeps replay keys stable.
+    content = json.dumps(request.model_dump(mode="json"), indent=2, sort_keys=True)
+    result = await run_agent(spec, content, request.investigation_id, on_step)
     response = SpecialistResponse.model_validate(result.model_dump()).model_copy(
         update={"agent": specialist.NAME, "data_used": sorted(used)}
     )

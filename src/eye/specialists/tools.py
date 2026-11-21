@@ -48,7 +48,7 @@ class NewSellersInput(Window):
 
 
 class FeedExposureInput(Window):
-    top_n: int = Field(20, ge=1, le=MAX_ROWS)
+    top_n: int = Field(20, description=f"Number of SKUs, 1 to {MAX_ROWS}")
 
 
 class CheckoutFunnelInput(Window):

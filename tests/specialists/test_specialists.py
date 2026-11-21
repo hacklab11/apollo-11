@@ -107,9 +107,9 @@ async def test_discovery_replay_answers_s7(specialists, monkeypatch) -> None:
     assert response.answered and response.agent == "discovery"
     claims = " ".join(f.claim for f in response.findings)
     assert "checkout-web v5.8" in claims and "TypeError" in claims
+    # 4 broken hours x 15,500 checkout TypeErrors per platform in the S7 world.
     assert any(
-        "31,000" in f.claim or "31000" in f.claim or 31000 in f.numbers.values()
-        for f in response.findings
+        "62,000" in f.claim and 62000 in f.numbers.values() for f in response.findings
     )
     assert "errors" in response.data_used
     assert {s["tool"] for s in steps} >= {"errors", "checkout_funnel"}
