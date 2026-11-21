@@ -176,6 +176,31 @@ async def test_replay_miss_never_calls_sdk(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_trace_is_opt_in(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Response(BaseModel):
+        content: str = "response"
+
+    async def create(self: object, request: dict) -> Response:
+        return Response()
+
+    monkeypatch.setattr(harness.LLMClient, "create", create)
+    request = {
+        "model": "test",
+        "system": [],
+        "tools": [],
+        "messages": [{"role": "user", "content": "sensitive"}],
+    }
+    client = harness.EvalLLMClient(LlmSettings())
+    await client.create(request)
+    assert client.trace is None
+    trace = tmp_path / "trace.jsonl"
+    await harness.EvalLLMClient(LlmSettings(), trace).create(request)
+    assert "sensitive" in trace.read_text()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["live", "replay"])
 async def test_llm_run_totals_include_replay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str

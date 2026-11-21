@@ -86,7 +86,7 @@ def append_json(path: Path, value: dict) -> None:
 class EvalLLMClient(LLMClient):
     """Preserve request identities and prohibit replay's live fallback."""
 
-    def __init__(self, settings: Any, trace: Path) -> None:
+    def __init__(self, settings: Any, trace: Path | None = None) -> None:
         super().__init__(settings)
         self.trace = trace
         self.replay_misses = 0
@@ -96,7 +96,8 @@ class EvalLLMClient(LLMClient):
     async def create(self, request: dict) -> Any:
         identity = request_identity(request)
         key = digest(identity)
-        append_json(self.trace, {"key": key, "identity": identity})
+        if self.trace is not None:
+            append_json(self.trace, {"key": key, "identity": identity})
         if self.settings.mode == "replay":
             path = Path(self.settings.cache_path)
             keys = (
@@ -107,9 +108,7 @@ class EvalLLMClient(LLMClient):
             if key not in keys:
                 self.replay_misses += 1
                 print(json.dumps({"event": "replay_miss", "key": key}))
-                raise LLMUnavailable(
-                    f"Offline replay has no response for {key}; request saved to {self.trace}"
-                )
+                raise LLMUnavailable(f"Offline replay has no response for {key}")
         self.total_calls += 1
         response = await super().create(request)
         self.replayed_calls += self.settings.mode == "replay"
@@ -691,9 +690,14 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         else args.mode
     )
     settings.llm.cache_path = record
-    trace = ROOT / f"data/eval/{name}-{settings.llm.mode}-requests.jsonl"
-    trace.parent.mkdir(parents=True, exist_ok=True)
-    trace.write_text("")
+    trace = (
+        ROOT / f"data/eval/{name}-{settings.llm.mode}-requests.jsonl"
+        if getattr(args, "trace", False)
+        else None
+    )
+    if trace is not None:
+        trace.parent.mkdir(parents=True, exist_ok=True)
+        trace.write_text("")
     llm = EvalLLMClient(settings.llm, trace)
     configure_client(llm)
     with TemporaryDirectory(prefix="eye-eval-") as directory, ExitStack() as stack:
@@ -874,6 +878,11 @@ async def main() -> int:
     parser.add_argument("--record", type=Path)
     parser.add_argument("--record-dir", type=Path)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Opt in to sensitive full request traces under data/eval",
+    )
     args = parser.parse_args()
     oracle = load_oracle()
     if args.scenario and args.scenario not in oracle:
