@@ -72,11 +72,17 @@ class LLMClient:
             if self.settings.mode == "record":
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("a", encoding="utf-8") as cache:
-                    cache.write(json.dumps({
-                        "key": key,
-                        "request_digest": key,
-                        "response_json": response.model_dump(mode="json"),
-                    }, sort_keys=True) + "\n")
+                    cache.write(
+                        json.dumps(
+                            {
+                                "key": key,
+                                "request_digest": key,
+                                "response_json": response.model_dump(mode="json"),
+                            },
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    )
         usage = response.usage
         self.tokens_in += (
             usage.input_tokens

@@ -69,28 +69,52 @@ async def run_agent(
     if len(tools) != len(spec.tools) or "submit" in tools:
         raise ValueError("tool names must be unique and may not be submit")
     definitions = [
-        {"name": t.name, "description": t.description,
-         "input_schema": _schema(t.input_model), "strict": t.strict}
+        {
+            "name": t.name,
+            "description": t.description,
+            "input_schema": _schema(t.input_model),
+            "strict": t.strict,
+        }
         for t in spec.tools
     ]
-    definitions.append({"name": "submit", "description": "Submit the final answer.",
-                        "input_schema": _schema(spec.submit_model), "strict": True})
+    definitions.append(
+        {
+            "name": "submit",
+            "description": "Submit the final answer.",
+            "input_schema": _schema(spec.submit_model),
+            "strict": True,
+        }
+    )
     definitions.sort(key=lambda t: t["name"])
-    system = [{"type": "text", "text": Path(spec.system_prompt_file).read_text(),
-               "cache_control": {"type": "ephemeral"}}]
+    system = [
+        {
+            "type": "text",
+            "text": Path(spec.system_prompt_file).read_text(),
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
     messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
     n = 0
 
     async def emit(action: StepAction, summary: str, **kwargs: Any) -> None:
         nonlocal n
         n += 1
-        await on_step(TrailStep(
-            id=str(uuid4()), investigation_id=investigation_id, n=n,
-            real_ts=datetime.now(UTC), actor=spec.name, action=action,
-            output_summary=summary[:500] or "Completed", **kwargs,
-        ))
+        await on_step(
+            TrailStep(
+                id=str(uuid4()),
+                investigation_id=investigation_id,
+                n=n,
+                real_ts=datetime.now(UTC),
+                actor=spec.name,
+                action=action,
+                output_summary=summary[:500] or "Completed",
+                **kwargs,
+            )
+        )
 
-    async def execute(block: Any, reason: str) -> tuple[dict[str, Any], BaseModel | None]:
+    async def execute(
+        block: Any, reason: str
+    ) -> tuple[dict[str, Any], BaseModel | None]:
         started = time.monotonic()
         output = None
         error = False
@@ -112,38 +136,67 @@ async def run_agent(
             output = None
             summary = f"{type(exc).__name__}: tool {block.name} failed"
             content = summary
-        await emit("tool_call", summary, tool=block.name, input=block.input,
-                   output=output.model_dump(mode="json") if output else None,
-                   reason=reason, duration_ms=int((time.monotonic() - started) * 1000))
-        return ({"type": "tool_result", "tool_use_id": block.id,
-                 "content": content, "is_error": error}, output if block.name == "submit" else None)
+        await emit(
+            "tool_call",
+            summary,
+            tool=block.name,
+            input=block.input,
+            output=output.model_dump(mode="json") if output else None,
+            reason=reason,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
+        return (
+            {
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": content,
+                "is_error": error,
+            },
+            output if block.name == "submit" else None,
+        )
 
     for _ in range(spec.max_steps):
         started = time.monotonic()
         try:
-            response = await get_client().create({
-                "model": spec.model, "max_tokens": spec.max_tokens,
-                "system": system, "tools": definitions, "messages": messages,
-                "output_config": {"effort": spec.effort},
-                "tool_choice": {"type": "auto"},
-                "betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default",
-            })
+            response = await get_client().create(
+                {
+                    "model": spec.model,
+                    "max_tokens": spec.max_tokens,
+                    "system": system,
+                    "tools": definitions,
+                    "messages": messages,
+                    "output_config": {"effort": spec.effort},
+                    "tool_choice": {"type": "auto"},
+                    "betas": ["server-side-fallback-2026-07-01"],
+                    "fallbacks": "default",
+                }
+            )
         except (APIError, AnthropicError) as exc:
             await emit("note", "LLM unavailable after SDK retries")
             raise LLMUnavailable("LLM unavailable after SDK retries") from exc
         stop = response.stop_reason
         text = " ".join(b.text for b in response.content if b.type == "text")
-        await emit("llm_call", text or f"LLM stop: {stop}",
-                   tokens_in=response.usage.input_tokens + (response.usage.cache_creation_input_tokens or 0)
-                   + (response.usage.cache_read_input_tokens or 0),
-                   tokens_out=response.usage.output_tokens,
-                   duration_ms=int((time.monotonic() - started) * 1000))
+        await emit(
+            "llm_call",
+            text or f"LLM stop: {stop}",
+            tokens_in=response.usage.input_tokens
+            + (response.usage.cache_creation_input_tokens or 0)
+            + (response.usage.cache_read_input_tokens or 0),
+            tokens_out=response.usage.output_tokens,
+            duration_ms=int((time.monotonic() - started) * 1000),
+        )
         if stop == "refusal":
             await emit("note", "Agent refused")
             raise AgentRefused(spec.name)
-        messages.append({"role": "assistant", "content": [
-            b.model_dump(mode="json", exclude_none=True) for b in response.content
-        ]})
+        messages.append(
+            {
+                "role": "assistant",
+                "content": [
+                    b.model_dump(mode="json", exclude_none=True)
+                    for b in response.content
+                ],
+            }
+        )
         if stop == "max_tokens":
             await emit("note", "Maximum output tokens reached")
             messages.append({"role": "user", "content": "Continue. Be shorter."})
@@ -156,7 +209,9 @@ async def run_agent(
             elif block.type == "tool_use":
                 pending.append(execute(block, reason))
         if not pending:
-            messages.append({"role": "user", "content": "Call submit with your final answer."})
+            messages.append(
+                {"role": "user", "content": "Call submit with your final answer."}
+            )
             continue
         results = await asyncio.gather(*pending)
         for _, final in results:
