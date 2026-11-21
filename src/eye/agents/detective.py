@@ -218,6 +218,40 @@ def _contributions(rows: list[Contribution], delta: float) -> list[Contribution]
     ]
 
 
+def _publish_hypothesis_ids(
+    answer: _Submission, investigation_id: str, prior: dict[str, Hypothesis]
+) -> None:
+    ids = {}
+    for hypothesis in answer.hypotheses:
+        existing = prior.get(hypothesis.id)
+        same_cause = existing and (
+            existing.root_node,
+            existing.cause_type,
+            existing.segment,
+            existing.first_change_ts,
+        ) == (
+            hypothesis.root_node,
+            hypothesis.cause_type,
+            hypothesis.segment,
+            hypothesis.first_change_ts,
+        )
+        ids[hypothesis.id] = (
+            hypothesis.id if same_cause else f"{investigation_id}:{hypothesis.id}"
+        )
+    answer.trigger = ids.get(answer.trigger) if answer.trigger is not None else None
+    answer.hypotheses = [
+        hyp.model_copy(update={"id": ids[hyp.id]}) for hyp in answer.hypotheses
+    ]
+    if root := answer.root_cause:
+        answer.root_cause = root.model_copy(update={"id": ids[root.id]})
+    answer.contributions = [
+        row.model_copy(update={"factor": ids[row.factor]})
+        if row.factor in ids and row.kind != "residual"
+        else row
+        for row in answer.contributions
+    ]
+
+
 class Detective:
     def __init__(
         self,
@@ -572,6 +606,11 @@ class Detective:
         )
         graph = get_graph(_GraphInput())
         cards = await self._a2a.fetch_cards() if self._a2a is not None else {}
+        active_incidents = [
+            incident
+            for incident in open_incidents
+            if incident.status in {"investigating", "open", "persisting"}
+        ]
         payload = {
             "entry": anomaly.model_dump(mode="json"),
             "window_start": window.start.isoformat(),
@@ -586,8 +625,7 @@ class Detective:
                     if incident.root_cause
                     else None,
                 }
-                for incident in open_incidents
-                if incident.status in {"investigating", "open", "persisting"}
+                for incident in active_incidents
             ],
             "agents": {
                 name: card.skills for name, card in cards.items() if card.healthy
@@ -723,6 +761,15 @@ class Detective:
                     if key in evidence_steps:
                         evidence.step_id = evidence_steps[key]
         answer.contributions = _contributions(answer.contributions, anomaly.delta)
+        _publish_hypothesis_ids(
+            answer,
+            investigation_id,
+            {
+                incident.root_cause.id: incident.root_cause
+                for incident in active_incidents
+                if incident.root_cause is not None
+            },
+        )
         result = InvestigationResult(
             **answer.model_dump(),
             investigation_id=investigation_id,

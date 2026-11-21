@@ -380,7 +380,37 @@ async def test_budget_preserves_current_board(
     )
     assert result.verdict == "HYPOTHESIS"
     assert result.stop_reason == "budget"
-    assert result.hypotheses == [root]
+    assert result.hypotheses == [
+        root.model_copy(update={"id": f"{result.investigation_id}:{root.id}"})
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_hypothesis_ids_do_not_collide_across_investigations(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    async def run(*_: object) -> _Submission:
+        answer = submission(hypothesis(), "HYPOTHESIS")
+        answer.trigger = "H1"
+        answer.contributions[0].factor = "H1"
+        return answer
+
+    monkeypatch.setattr("eye.agents.detective.run_agent", run)
+    detective = Detective(world, registry, make_graph(registry, "s3"))
+    first = await detective.investigate(
+        anomaly("s3"), AsyncMock(), investigation_id="a"
+    )
+    second = await detective.investigate(
+        anomaly("s3"), AsyncMock(), investigation_id="b"
+    )
+    for result in (first, second):
+        assert result.root_cause is not None
+        assert result.trigger == result.root_cause.id == result.hypotheses[0].id
+        assert result.contributions[0].factor == result.trigger
+    assert first.trigger != second.trigger
 
 
 @pytest.mark.asyncio
@@ -417,7 +447,8 @@ async def test_loop_fills_missing_fields_from_measured_change_points(
         "search_conversion",
         "search_relevance",
     }
-    assert result.trigger == "H1"
+    assert result.root_cause is not None
+    assert result.trigger == result.root_cause.id
 
 
 @pytest.mark.asyncio
