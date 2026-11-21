@@ -72,6 +72,33 @@ def boundary_alert(action: str) -> SellerAlert:
     )
 
 
+@pytest.mark.parametrize("tail", [b'{"status":', b'{"status":\n', b"{}", b'{"x":"\xc3'])
+def test_interrupted_journal_tail(s8_store: FileSellerStore, tail: bytes) -> None:
+    s8_store.pause_repricer("before", "S-14", "E02")
+    path = s8_store.directory / "actions.jsonl"
+    complete = path.read_bytes()
+    path.write_bytes(complete + tail)
+    restarted = FileSellerStore(s8_store.directory)
+    assert restarted.paused_repricers() == {("S-14", "E02")}
+    assert receive_alert(restarted, boundary_alert("pause")).actions_taken == [
+        "paused repricer for S-14 on E04"
+    ]
+    assert FileSellerStore(s8_store.directory).paused_repricers() == {
+        ("S-14", "E02"),
+        ("S-14", "E04"),
+    }
+    assert len(path.read_bytes().splitlines()) == 2
+
+
+def test_corrupt_earlier_journal_record_raises(s8_store: FileSellerStore) -> None:
+    path = s8_store.directory / "actions.jsonl"
+    path.write_bytes(b'{"broken":\n{}\n')
+    with pytest.raises(json.JSONDecodeError):
+        s8_store.paused_repricers()
+    with pytest.raises(json.JSONDecodeError):
+        s8_store.pause_repricer("corrupt", "S-14", "E02")
+
+
 @pytest.mark.parametrize("action", ["pause", "revert manual price"])
 def test_actions_survive_restart(s8_store: FileSellerStore, action: str) -> None:
     alert = boundary_alert(action)

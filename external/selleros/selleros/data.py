@@ -135,10 +135,29 @@ class FileSellerStore:
 
     def _records(self) -> list[dict[str, Any]]:
         try:
-            lines = (self.directory / "actions.jsonl").read_text(encoding="utf-8")
+            content = (self.directory / "actions.jsonl").read_bytes()
         except FileNotFoundError:
             return []
-        return [json.loads(line) for line in lines.splitlines()]
+        return self._complete_records(content)[0]
+
+    @staticmethod
+    def _complete_records(content: bytes) -> tuple[list[dict[str, Any]], int]:
+        lines = content.splitlines(keepends=True)
+        records = []
+        end = 0
+        for index, line in enumerate(lines):
+            final = index == len(lines) - 1
+            if final and not line.endswith(b"\n"):
+                break
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                if final:
+                    break
+                raise
+            records.append(record)
+            end += len(line)
+        return records, end
 
     def paused_repricers(self) -> set[tuple[str, str]]:
         with self.lock:
@@ -157,8 +176,11 @@ class FileSellerStore:
             }
 
     def _append(self, record: dict[str, Any]) -> None:
-        with (self.directory / "actions.jsonl").open("a", encoding="utf-8") as log:
-            log.write(json.dumps(record) + "\n")
+        with (self.directory / "actions.jsonl").open("a+b") as log:
+            log.seek(0)
+            _, end = self._complete_records(log.read())
+            log.truncate(end)
+            log.write((json.dumps(record) + "\n").encode("utf-8"))
             log.flush()
             os.fsync(log.fileno())
 
