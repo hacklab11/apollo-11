@@ -10,6 +10,12 @@ def _by_ts(series) -> dict:
     return {p.ts: p.value for p in series.points}
 
 
+# One row per purchase-order event or per day, so most hours have no value.
+SPARSE_METRICS = {
+    "po_fill_rate", "po_qty_vs_forecast", "supplier_delay_hours", "fba_blocked_units",
+}  # fmt: skip
+
+
 def test_every_metric_runs_at_total_and_each_dimension(con, registry, day) -> None:
     # Pending metrics read empty tables today; run them anyway so their SQL is exercised.
     active = Registry(
@@ -26,7 +32,9 @@ def test_every_metric_runs_at_total_and_each_dimension(con, registry, day) -> No
     for metric in registry.metrics.values():
         total = engine.query_metric(metric.name, *day)
         if metric.status == "active":
-            assert len(total) == 1 and len(total[0].points) == 24, metric.name
+            assert len(total) == 1, metric.name
+            if metric.name not in SPARSE_METRICS:
+                assert len(total[0].points) == 24, metric.name
             assert any(p.value is not None for p in total[0].points), metric.name
         for dimension in metric.dimensions:
             for series in engine.query_metric(metric.name, *day, group_by=[dimension]):
