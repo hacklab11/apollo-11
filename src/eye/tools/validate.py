@@ -1,6 +1,6 @@
 """Deterministic graph evidence; scenario hours are supplied by the orchestrator."""
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from itertools import product
 from math import isfinite
 
@@ -25,8 +25,15 @@ class CorrelationResult(BaseModel):
     summary: str = Field(max_length=300)
 
 
-def _window(start: datetime | None, end: datetime | None) -> tuple[datetime, datetime]:
-    end = end or datetime.now(UTC)
+def _window(
+    engine: MetricEngine, start: datetime | None, end: datetime | None
+) -> tuple[datetime, datetime]:
+    if end is None:
+        with engine._con.cursor() as cur:
+            latest = cur.execute("SELECT max(ts) FROM partition_status").fetchone()[0]
+        if latest is None:
+            raise ValueError("cannot infer validation window without simulated history")
+        end = latest + timedelta(hours=1)
     start = start or end - timedelta(days=14)
     if start >= end:
         raise ValueError("start must precede end")
@@ -86,7 +93,7 @@ def validate_identity(
     segments: list[dict[str, str]] | None = None,
     scenario_hours: list[datetime] | None = None,
 ) -> ValidationResult:
-    start, end = _window(start, end)
+    start, end = _window(engine, start, end)
     parsed = parse_identity(identity)
     names = {parsed.target, *(t.name for t in parsed.terms)}
     shared = set.intersection(*(set(engine._registry.get(n).dimensions) for n in names))
@@ -157,7 +164,7 @@ def validate_breakdown(
     end: datetime | None = None,
     scenario_hours: list[datetime] | None = None,
 ) -> ValidationResult:
-    start, end = _window(start, end)
+    start, end = _window(engine, start, end)
     definition = engine._metric(metric, [dim])
     excluded = set(scenario_hours or [])
     total = _points(engine, metric, start, end, {}, excluded)
@@ -211,9 +218,9 @@ def lagged_correlation(
     segment: dict[str, str] | None = None,
     scenario_hours: list[datetime] | None = None,
 ) -> CorrelationResult:
-    start, end = _window(start, end)
     if max_lag < 0:
         raise ValueError("max_lag must be nonnegative")
+    start, end = _window(engine, start, end)
     excluded = set(scenario_hours or [])
 
     def differences(name: str) -> dict[datetime, float]:

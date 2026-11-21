@@ -70,6 +70,22 @@ def test_average_breakdown_pools_weights(weighted_engine: MetricEngine) -> None:
     assert result.evidence["n"] == 1
 
 
+def test_validation_defaults_to_simulated_data_clock(
+    weighted_engine: MetricEngine,
+) -> None:
+    weighted_engine._con.execute("CREATE TABLE partition_status (ts TIMESTAMPTZ)")
+    weighted_engine._con.execute("INSERT INTO partition_status VALUES ('2020-01-01')")
+    result = validate_breakdown(weighted_engine, "orders", "country")
+    assert result.passed
+    assert result.evidence["n"] == 1
+    assert result.evidence["skipped"] == 14 * 24 - 1
+    assert validate_identity(weighted_engine, "orders = orders").passed
+    assert lagged_correlation(weighted_engine, "orders", "orders").n == 0
+    weighted_engine._con.execute("DELETE FROM partition_status")
+    with pytest.raises(ValueError, match="without simulated history"):
+        validate_breakdown(weighted_engine, "orders", "country")
+
+
 @pytest.fixture(scope="module")
 def baseline(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, datetime]:
     settings = Settings()
