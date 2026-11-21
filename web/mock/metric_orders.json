@@ -1,0 +1,390 @@
+{
+  "metric": "orders",
+  "segment": {},
+  "points": [
+    {
+      "ts": "2026-11-25T15:00:00Z",
+      "value": 1187.0,
+      "expected": 1180.0,
+      "lower": 1121.0,
+      "upper": 1239.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T16:00:00Z",
+      "value": 1209.0,
+      "expected": 1195.0,
+      "lower": 1135.25,
+      "upper": 1254.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T17:00:00Z",
+      "value": 1196.0,
+      "expected": 1210.0,
+      "lower": 1149.5,
+      "upper": 1270.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T18:00:00Z",
+      "value": 1218.0,
+      "expected": 1225.0,
+      "lower": 1163.75,
+      "upper": 1286.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T19:00:00Z",
+      "value": 1240.0,
+      "expected": 1240.0,
+      "lower": 1178.0,
+      "upper": 1302.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T20:00:00Z",
+      "value": 1262.0,
+      "expected": 1255.0,
+      "lower": 1192.25,
+      "upper": 1317.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T21:00:00Z",
+      "value": 1284.0,
+      "expected": 1270.0,
+      "lower": 1206.5,
+      "upper": 1333.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T22:00:00Z",
+      "value": 1271.0,
+      "expected": 1285.0,
+      "lower": 1220.75,
+      "upper": 1349.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-25T23:00:00Z",
+      "value": 1293.0,
+      "expected": 1300.0,
+      "lower": 1235.0,
+      "upper": 1365.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T00:00:00Z",
+      "value": 1045.0,
+      "expected": 1045.0,
+      "lower": 992.75,
+      "upper": 1097.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T01:00:00Z",
+      "value": 1037.0,
+      "expected": 1030.0,
+      "lower": 978.5,
+      "upper": 1081.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T02:00:00Z",
+      "value": 1029.0,
+      "expected": 1015.0,
+      "lower": 964.25,
+      "upper": 1065.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T03:00:00Z",
+      "value": 986.0,
+      "expected": 1000.0,
+      "lower": 950.0,
+      "upper": 1050.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T04:00:00Z",
+      "value": 1008.0,
+      "expected": 1015.0,
+      "lower": 964.25,
+      "upper": 1065.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T05:00:00Z",
+      "value": 1030.0,
+      "expected": 1030.0,
+      "lower": 978.5,
+      "upper": 1081.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T06:00:00Z",
+      "value": 1052.0,
+      "expected": 1045.0,
+      "lower": 992.75,
+      "upper": 1097.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T07:00:00Z",
+      "value": 1074.0,
+      "expected": 1060.0,
+      "lower": 1007.0,
+      "upper": 1113.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T08:00:00Z",
+      "value": 1061.0,
+      "expected": 1075.0,
+      "lower": 1021.25,
+      "upper": 1128.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T09:00:00Z",
+      "value": 1083.0,
+      "expected": 1090.0,
+      "lower": 1035.5,
+      "upper": 1144.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T10:00:00Z",
+      "value": 1105.0,
+      "expected": 1105.0,
+      "lower": 1049.75,
+      "upper": 1160.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T11:00:00Z",
+      "value": 1127.0,
+      "expected": 1120.0,
+      "lower": 1064.0,
+      "upper": 1176.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T12:00:00Z",
+      "value": 1149.0,
+      "expected": 1135.0,
+      "lower": 1078.25,
+      "upper": 1191.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T13:00:00Z",
+      "value": 1136.0,
+      "expected": 1150.0,
+      "lower": 1092.5,
+      "upper": 1207.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T14:00:00Z",
+      "value": 1158.0,
+      "expected": 1165.0,
+      "lower": 1106.75,
+      "upper": 1223.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T15:00:00Z",
+      "value": 1180.0,
+      "expected": 1180.0,
+      "lower": 1121.0,
+      "upper": 1239.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T16:00:00Z",
+      "value": 1202.0,
+      "expected": 1195.0,
+      "lower": 1135.25,
+      "upper": 1254.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T17:00:00Z",
+      "value": 1224.0,
+      "expected": 1210.0,
+      "lower": 1149.5,
+      "upper": 1270.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T18:00:00Z",
+      "value": 1211.0,
+      "expected": 1225.0,
+      "lower": 1163.75,
+      "upper": 1286.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T19:00:00Z",
+      "value": 1233.0,
+      "expected": 1240.0,
+      "lower": 1178.0,
+      "upper": 1302.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T20:00:00Z",
+      "value": 1255.0,
+      "expected": 1255.0,
+      "lower": 1192.25,
+      "upper": 1317.75,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T21:00:00Z",
+      "value": 1277.0,
+      "expected": 1270.0,
+      "lower": 1206.5,
+      "upper": 1333.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T22:00:00Z",
+      "value": 1299.0,
+      "expected": 1285.0,
+      "lower": 1220.75,
+      "upper": 1349.25,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-26T23:00:00Z",
+      "value": 1286.0,
+      "expected": 1300.0,
+      "lower": 1235.0,
+      "upper": 1365.0,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T00:00:00Z",
+      "value": 1404.0,
+      "expected": 1411.0,
+      "lower": 1340.45,
+      "upper": 1481.55,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T01:00:00Z",
+      "value": 1390.0,
+      "expected": 1390.0,
+      "lower": 1320.5,
+      "upper": 1459.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T02:00:00Z",
+      "value": 1377.0,
+      "expected": 1370.0,
+      "lower": 1301.5,
+      "upper": 1438.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T03:00:00Z",
+      "value": 810.0,
+      "expected": 1350.0,
+      "lower": 1282.5,
+      "upper": 1417.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T04:00:00Z",
+      "value": 822.0,
+      "expected": 1370.0,
+      "lower": 1301.5,
+      "upper": 1438.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T05:00:00Z",
+      "value": 834.0,
+      "expected": 1390.0,
+      "lower": 1320.5,
+      "upper": 1459.5,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T06:00:00Z",
+      "value": 847.0,
+      "expected": 1411.0,
+      "lower": 1340.45,
+      "upper": 1481.55,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T07:00:00Z",
+      "value": 859.0,
+      "expected": 1431.0,
+      "lower": 1359.45,
+      "upper": 1502.55,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T08:00:00Z",
+      "value": 871.0,
+      "expected": 1451.0,
+      "lower": 1378.45,
+      "upper": 1523.55,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T09:00:00Z",
+      "value": 883.0,
+      "expected": 1472.0,
+      "lower": 1398.4,
+      "upper": 1545.6,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T10:00:00Z",
+      "value": 895.0,
+      "expected": 1492.0,
+      "lower": 1417.4,
+      "upper": 1566.6,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T11:00:00Z",
+      "value": 907.0,
+      "expected": 1512.0,
+      "lower": 1436.4,
+      "upper": 1587.6,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T12:00:00Z",
+      "value": 919.0,
+      "expected": 1532.0,
+      "lower": 1455.4,
+      "upper": 1608.6,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T13:00:00Z",
+      "value": 931.0,
+      "expected": 1552.0,
+      "lower": 1474.4,
+      "upper": 1629.6,
+      "completeness": 1.0
+    },
+    {
+      "ts": "2026-11-27T14:00:00Z",
+      "value": 944.0,
+      "expected": 1573.0,
+      "lower": 1494.35,
+      "upper": 1651.65,
+      "completeness": 1.0
+    }
+  ]
+}

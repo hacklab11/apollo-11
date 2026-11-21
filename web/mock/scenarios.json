@@ -1,0 +1,65 @@
+[
+  {
+    "id": "S1",
+    "title": "Ads pacing bug",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  },
+  {
+    "id": "S2",
+    "title": "Category sales fall, demand stable",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  },
+  {
+    "id": "S3",
+    "title": "German search regression",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  },
+  {
+    "id": "S4",
+    "title": "Feed relevance regression",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  },
+  {
+    "id": "S5",
+    "title": "Orders up, contribution down",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  },
+  {
+    "id": "S6",
+    "title": "Black Friday cascade",
+    "active": true,
+    "injected_ts": "2026-11-27T00:00:00Z",
+    "cleared_ts": null
+  },
+  {
+    "id": "S7",
+    "title": "Black Friday checkout outage",
+    "active": true,
+    "injected_ts": "2026-11-27T03:00:00Z",
+    "cleared_ts": null
+  },
+  {
+    "id": "I1",
+    "title": "Planned Black Friday campaign",
+    "active": true,
+    "injected_ts": "2026-11-27T00:00:00Z",
+    "cleared_ts": null
+  },
+  {
+    "id": "I2",
+    "title": "French data arrived late",
+    "active": false,
+    "injected_ts": null,
+    "cleared_ts": null
+  }
+]

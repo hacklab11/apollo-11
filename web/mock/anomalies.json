@@ -1,0 +1,52 @@
+[
+  {
+    "anomaly": {
+      "id": "anm_s7",
+      "ts": "2026-11-27T03:00:00Z",
+      "metric": "orders",
+      "segment": {},
+      "kind": "point",
+      "actual": 810.0,
+      "expected": 1350.0,
+      "z": -9.0,
+      "delta": -540.0,
+      "delta_pct": -40.0,
+      "window_hours": 1,
+      "total_z": null,
+      "share_now": null,
+      "share_expected": null,
+      "impact_eur_per_hour": 97200.0,
+      "completeness": 1.0,
+      "priority": 0.99
+    },
+    "action": "investigate",
+    "reason": "Orders missed the forecast by 40%.",
+    "attach_to_incident": null
+  },
+  {
+    "anomaly": {
+      "id": "anm_s6",
+      "ts": "2026-11-27T13:00:00Z",
+      "metric": "small_seller_gmv_share",
+      "segment": {
+        "category": "electronics"
+      },
+      "kind": "divergent_segment",
+      "actual": 0.18,
+      "expected": 0.3,
+      "z": -4.4,
+      "delta": -0.12,
+      "delta_pct": -40.0,
+      "window_hours": 6,
+      "total_z": 0.9,
+      "share_now": 0.18,
+      "share_expected": 0.3,
+      "impact_eur_per_hour": 4200.0,
+      "completeness": 1.0,
+      "priority": 0.85
+    },
+    "action": "investigate",
+    "reason": "Small-seller GMV share fell 12 percentage points in electronics.",
+    "attach_to_incident": null
+  }
+]

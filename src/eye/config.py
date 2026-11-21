@@ -177,7 +177,9 @@ def load_settings(path: str | Path = "config/settings.yaml") -> Settings:
     try:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
-        raise ValueError(f"invalid settings YAML in {path}: {exc}") from None
+        mark = getattr(exc, "problem_mark", None)
+        location = f":{mark.line + 1}:{mark.column + 1}" if mark else ""
+        raise ValueError(f"invalid settings YAML in {path}{location}") from None
 
     try:
         return Settings.model_validate({} if raw is None else raw)

@@ -1,0 +1,323 @@
+{
+  "nodes": [
+    {
+      "id": "orders",
+      "label": "Orders",
+      "domain": "orders",
+      "unit": "count",
+      "state": "incident",
+      "impact_weight": 1.0
+    },
+    {
+      "id": "sessions",
+      "label": "Sessions",
+      "domain": "traffic",
+      "unit": "count",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "carts",
+      "label": "Carts",
+      "domain": "orders",
+      "unit": "count",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "cart_to_checkout_rate",
+      "label": "Cart to checkout rate",
+      "domain": "orders",
+      "unit": "ratio",
+      "state": "anomaly",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "checkout_conversion",
+      "label": "Checkout conversion",
+      "domain": "orders",
+      "unit": "ratio",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "payment_success_rate",
+      "label": "Payment success rate",
+      "domain": "quality",
+      "unit": "ratio",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "client_error_rate",
+      "label": "Client error rate",
+      "domain": "quality",
+      "unit": "ratio",
+      "state": "anomaly",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "small_seller_gmv_share",
+      "label": "Small seller gmv share",
+      "domain": "marketplace",
+      "unit": "ratio",
+      "state": "incident",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "price_index_vs_1p",
+      "label": "Price index vs 1p",
+      "domain": "marketplace",
+      "unit": "index",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "buybox_share",
+      "label": "Buybox share",
+      "domain": "marketplace",
+      "unit": "ratio",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "in_stock_rate",
+      "label": "In stock rate",
+      "domain": "supply",
+      "unit": "ratio",
+      "state": "normal",
+      "impact_weight": 0.0
+    },
+    {
+      "id": "avg_cpc",
+      "label": "Avg cpc",
+      "domain": "ads",
+      "unit": "eur",
+      "state": "watch",
+      "impact_weight": 0.0
+    }
+  ],
+  "edges": [
+    {
+      "id": "edg_sessions_carts",
+      "src": "sessions",
+      "dst": "carts",
+      "type": "formula",
+      "status": "validated",
+      "identity": "carts = sessions * cart_rate",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_cart_to_checkout_rate_checkout_conversion",
+      "src": "cart_to_checkout_rate",
+      "dst": "checkout_conversion",
+      "type": "formula",
+      "status": "validated",
+      "identity": "checkout_conversion = cart_to_checkout_rate * checkout_to_payment_rate * payment_success_rate",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_payment_success_rate_checkout_conversion",
+      "src": "payment_success_rate",
+      "dst": "checkout_conversion",
+      "type": "formula",
+      "status": "validated",
+      "identity": "checkout_conversion = cart_to_checkout_rate * checkout_to_payment_rate * payment_success_rate",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_carts_orders",
+      "src": "carts",
+      "dst": "orders",
+      "type": "formula",
+      "status": "validated",
+      "identity": "orders = carts * checkout_conversion",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_checkout_conversion_orders",
+      "src": "checkout_conversion",
+      "dst": "orders",
+      "type": "formula",
+      "status": "validated",
+      "identity": "orders = carts * checkout_conversion",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_cart_to_checkout_rate_orders",
+      "src": "cart_to_checkout_rate",
+      "dst": "orders",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 0,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_client_error_rate_cart_to_checkout_rate",
+      "src": "client_error_rate",
+      "dst": "cart_to_checkout_rate",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 0,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_price_index_vs_1p_buybox_share",
+      "src": "price_index_vs_1p",
+      "dst": "buybox_share",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 1,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_buybox_share_in_stock_rate",
+      "src": "buybox_share",
+      "dst": "in_stock_rate",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 6,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_in_stock_rate_price_index_vs_1p",
+      "src": "in_stock_rate",
+      "dst": "price_index_vs_1p",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 1,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_in_stock_rate_avg_cpc",
+      "src": "in_stock_rate",
+      "dst": "avg_cpc",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 2,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_buybox_share_small_seller_gmv_share",
+      "src": "buybox_share",
+      "dst": "small_seller_gmv_share",
+      "type": "causal_hypothesis",
+      "status": "hypothesis",
+      "identity": null,
+      "dimension": null,
+      "lag_hours": 0,
+      "confidence": 0.8,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_orders_orders_country",
+      "src": "orders",
+      "dst": "orders",
+      "type": "breakdown",
+      "status": "validated",
+      "identity": null,
+      "dimension": "country",
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_orders_orders_platform",
+      "src": "orders",
+      "dst": "orders",
+      "type": "breakdown",
+      "status": "validated",
+      "identity": null,
+      "dimension": "platform",
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_orders_orders_category",
+      "src": "orders",
+      "dst": "orders",
+      "type": "breakdown",
+      "status": "validated",
+      "identity": null,
+      "dimension": "category",
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_orders_orders_seller_tier",
+      "src": "orders",
+      "dst": "orders",
+      "type": "breakdown",
+      "status": "validated",
+      "identity": null,
+      "dimension": "seller_tier",
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    },
+    {
+      "id": "edg_orders_orders_channel",
+      "src": "orders",
+      "dst": "orders",
+      "type": "breakdown",
+      "status": "validated",
+      "identity": null,
+      "dimension": "channel",
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "bootstrap"
+    }
+  ]
+}

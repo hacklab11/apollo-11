@@ -1,0 +1,51 @@
+{
+  "metric": {
+    "name": "orders_per_session",
+    "description": "Orders divided by marketplace sessions.",
+    "unit": "ratio",
+    "domain": "orders",
+    "kind": "formula",
+    "sql": null,
+    "expression": "orders / sessions",
+    "dimensions": [
+      "country",
+      "platform"
+    ],
+    "higher_is_better": null,
+    "impact_weight": 0.0,
+    "added_by": "user",
+    "status": "active"
+  },
+  "accepted": [
+    {
+      "id": "edg_orders_orders_per_session",
+      "src": "orders",
+      "dst": "orders_per_session",
+      "type": "formula",
+      "status": "validated",
+      "identity": "orders_per_session = orders / sessions",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "cartographer"
+    },
+    {
+      "id": "edg_sessions_orders_per_session",
+      "src": "sessions",
+      "dst": "orders_per_session",
+      "type": "formula",
+      "status": "validated",
+      "identity": "orders_per_session = orders / sessions",
+      "dimension": null,
+      "lag_hours": null,
+      "confidence": 1.0,
+      "evidence": {},
+      "created_by": "cartographer"
+    }
+  ],
+  "ambiguous": [],
+  "rejected": [],
+  "notes": "Validated both formula inputs at the total, country and platform levels.",
+  "trail_investigation_id": "inv_add_orders_per_session"
+}
