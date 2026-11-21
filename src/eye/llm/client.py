@@ -234,6 +234,9 @@ class LLMClient:
         if self.settings.provider != "anthropic":
             identity["provider"] = self.settings.provider
             identity["base_url"] = self.settings.base_url
+        tool_choice = request.get("tool_choice", {"type": "auto"})
+        if tool_choice["type"] != "auto":
+            identity["tool_choice"] = tool_choice
         digest = json.dumps(identity, sort_keys=True, separators=(",", ":"))
         key = hashlib.sha256(digest.encode()).hexdigest()
         path = Path(self.settings.cache_path)
