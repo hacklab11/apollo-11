@@ -239,6 +239,38 @@ def test_new_seller_without_offers_in_window(
     assert response.json()["rows"][0]["offer_ts"] is None
 
 
+def test_new_sellers_since_before_window_start(
+    connection: duckdb.DuckDBPyConnection, client: TestClient
+) -> None:
+    connection.execute("""
+        INSERT INTO sellers VALUES
+            ('S-02','small_3P',4.5,'2026-11-26'),
+            ('S-03','small_3P',4.5,'2026-11-25'),
+            ('S-04','small_3P',4.5,'2026-11-24'),
+            ('S-05','small_3P',4.5,'2026-11-27 01:00:00');
+        INSERT INTO offers_hourly
+        SELECT ts, sku, 'S-02', seller_tier, category, price, stock, in_stock, is_buybox
+        FROM offers_hourly;
+        INSERT INTO offers_hourly
+        SELECT ts - INTERVAL '1 day', sku, seller_id, seller_tier, category,
+               price, stock, in_stock, is_buybox
+        FROM offers_hourly WHERE seller_id='S-02';
+    """)
+    response = client.get(
+        "/data/sellers/new", params={**WINDOW, "since": "2026-11-25T00:00:00Z"}
+    )
+    assert response.status_code == 200, response.text
+    rows = response.json()["rows"]
+    assert [row["seller_id"] for row in rows] == ["S-03", "S-02", "S-01"]
+    assert rows[0]["offer_ts"] is None
+    assert rows[1]["sku"] == "E01"
+    assert rows[1]["offer_ts"] == rows[2]["offer_ts"]
+    assert [
+        row["seller_id"]
+        for row in client.get("/data/sellers/new", params=WINDOW).json()["rows"]
+    ] == ["S-01"]
+
+
 def test_auction_slot_capacity(
     connection: duckdb.DuckDBPyConnection, client: TestClient
 ) -> None:

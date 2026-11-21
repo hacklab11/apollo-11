@@ -248,7 +248,12 @@ def create_router(
                 values.extend([params.start, params.end])
             if path != "app_components":
                 where.extend(["ts >= ?", "ts < ?"])
-                values.extend([params.start, params.end])
+                start = (
+                    params.since or params.start
+                    if path == "sellers/new"
+                    else params.start
+                )
+                values.extend([start, params.end])
             for column in filters:
                 value = getattr(params, column)
                 if value is not None:
@@ -257,9 +262,6 @@ def create_router(
             if path == "ads/pacing" and params.day is not None:
                 where.append("CAST(ts AT TIME ZONE 'UTC' AS DATE) = ?")
                 values.append(params.day)
-            if path == "sellers/new":
-                where.append("joined_ts >= ?")
-                values.append(params.since or params.start)
             limit = params.top_n if path == "feed/exposure" else 5000
             sql = f"WITH source AS ({source}), filtered AS (SELECT * FROM source"
             if where:
