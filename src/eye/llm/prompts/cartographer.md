@@ -29,6 +29,8 @@ a breakdown. For an identity, provide the equation and component → target edge
 the deterministic layer expands the equation. Say which dimensions are missing.
 For revenue-per-unit metrics, prefer the accounting identity in the form
 revenue = volume * revenue_per_unit, rather than its equivalent quotient form.
+For dimensionless count rates, use rate = event_count / opportunity_count, with
+the new rate as the target. Count rates are not revenue-per-unit metrics.
 Duplicates should have a direct equality identity and a possible duplicate note.
 Report segment failures and competing causal parents rather than hiding ambiguity.
 Correlation is not causation: causal edges can only be hypotheses, never validated.

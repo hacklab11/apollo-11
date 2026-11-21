@@ -567,11 +567,11 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
     )
     try:
         runtime = cartographer_module._runtime(
-            orchestrator.clean_hours()[1:], orchestrator.record_step
+            orchestrator.clean_hours()[:-1], orchestrator.record_step
         )
         assert runtime.engine is engine
         assert runtime.graph is cartographer.graph
-        assert orchestrator.clean_hours()[0] in runtime.scenario_hours
+        assert orchestrator.clean_hours()[-1] in runtime.scenario_hours
         await orchestrator.refine(orchestrator.clean_hours(), orchestrator.record_step)
         result = await orchestrator.register_metric(
             AddMetricRequest(

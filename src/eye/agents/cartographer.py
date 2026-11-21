@@ -584,7 +584,7 @@ def _runtime(
     engine = getattr(getattr(owner, "invalidate", None), "__self__", None)
     graph = getattr(getattr(owner, "sentinel", None), "_graph", None)
     if not isinstance(engine, MetricEngine) or not isinstance(graph, GraphStore):
-        raise ValueError("Cartographer requires the orchestrator's engine and graph")
+        raise TypeError("Cartographer requires the orchestrator's engine and graph")
     _, end = _window(engine, None, None, list(engine._registry.metrics))
     clean = set(clean_hours)
     hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
