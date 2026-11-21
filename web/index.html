@@ -52,8 +52,9 @@
     <div class="scenario-bar">
       <span class="eyebrow">DEMO SCENARIOS</span>
       <div id="scenarios" class="scenario-buttons"></div>
-      <span class="mock-label">MOCK DATA · NO LIVE CALLS</span>
+      <span id="mode-label" class="mock-label"></span>
     </div>
+    <div id="core-notice" class="notice" role="status" hidden>core not reachable</div>
     <div id="notice" class="notice" role="status" hidden></div>
     <main id="main" tabindex="-1">
       <div class="workspace-heading">
@@ -199,7 +200,7 @@
               required
             ></textarea>
             <div class="chat-send">
-              <span>Mock answer · tools via MCP</span
+              <span>Mock answer · example tool calls</span
               ><button class="primary" id="chat-submit" type="submit">
                 Send ↗
               </button>
@@ -210,11 +211,9 @@
       <section class="panel feed-panel" aria-labelledby="feed-title">
         <div class="panel-heading">
           <h3 id="feed-title"><i class="dot healthy"></i> Live activity</h3>
-          <span class="muted"
-            >Replay · one event every 2 seconds · last 30</span
-          >
+          <span id="feed-caption" class="muted">Live stream · last 30</span>
         </div>
-        <ol id="feed" aria-label="Replayed events" tabindex="0"></ol>
+        <ol id="feed" aria-label="Live events" tabindex="0"></ol>
       </section>
       <footer>
         Eye of the System

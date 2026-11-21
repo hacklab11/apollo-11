@@ -30,7 +30,9 @@ const time = (value) =>
     minute: "2-digit",
   });
 const badge = (verdict) =>
-  `<span class="badge verdict-${escapeHtml(verdict)}">${escapeHtml(verdict)}</span>`;
+  verdict
+    ? `<span class="badge verdict-${escapeHtml(verdict)}">${escapeHtml(verdict)}</span>`
+    : '<span class="badge neutral">Pending</span>';
 const actorLetters = {
   sentinel: "S",
   detective: "D",
@@ -47,8 +49,6 @@ const actorLetters = {
 
 const fixtures = new Map();
 async function fixture(file, json = true) {
-  if (!mockMode)
-    throw new Error("Live mode belongs to T22. Open this page with ?mock=1.");
   if (!fixtures.has(file)) {
     fixtures.set(
       file,
@@ -70,9 +70,7 @@ async function fixture(file, json = true) {
 let mockStatus;
 let mockScenarios;
 
-// T22 can replace this endpoint boundary without changing panel rendering.
-// No request from this client reaches a live API, even without ?mock=1.
-export const api = {
+const mockApi = {
   async getStatus() {
     return (mockStatus ??= await fixture("status.json"));
   },
@@ -156,6 +154,61 @@ export const api = {
   getTruth: () => fixture("truth.json"),
 };
 
+async function request(path, { method = "GET", query = {}, body } = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value != null)
+      search.set(key, typeof value === "object" ? JSON.stringify(value) : value);
+  }
+  let response;
+  try {
+    response = await fetch(`/api${path}${search.size ? `?${search}` : ""}`, {
+      method,
+      ...(body === undefined ? {} : {
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    });
+  } catch {
+    $("#core-notice").hidden = false;
+    throw new Error("core not reachable");
+  }
+  if (!response.ok) {
+    const failure = await response.json().catch(() => null);
+    throw new Error(
+      typeof failure?.detail === "string"
+        ? failure.detail
+        : `${method} ${path} failed (${response.status}).`,
+    );
+  }
+  return response.json();
+}
+
+const post = (path, body) => request(path, { method: "POST", body });
+const metricPath = (name) => `/metrics/${encodeURIComponent(name)}`;
+const incidentPath = (id) => `/incidents/${encodeURIComponent(id)}`;
+
+export const api = mockMode ? mockApi : {
+  getStatus: () => request("/status"),
+  getGraph: (query) => request("/graph", { query }),
+  getMetrics: () => request("/metrics"),
+  getMetric: (name, query) => request(metricPath(name), { query }),
+  getMetricDefinition: (name) => request(`${metricPath(name)}/definition`),
+  addMetric: (body) => post("/metrics", body),
+  getAnomalies: (since) => request("/anomalies", { query: { since } }),
+  getIncidents: (status) => request("/incidents", { query: { status } }),
+  getIncident: (id) => request(incidentPath(id)),
+  getTrail: (id) => request(`${incidentPath(id)}/trail`),
+  getScenarios: () => request("/scenarios"),
+  injectScenario: (id) => post(`/scenarios/${encodeURIComponent(id)}/inject`),
+  clearScenario: (id) => post(`/scenarios/${encodeURIComponent(id)}/clear`),
+  pauseClock: () => post("/clock/pause"),
+  resumeClock: () => post("/clock/resume"),
+  stepClock: () => post("/clock/step"),
+  chat: mockApi.chat,
+  getTruth: () => request("/demo/truth"),
+};
+
 async function setScenario(id, active) {
   const scenarios = await api.getScenarios();
   const scenario = scenarios.find((item) => item.id === id);
@@ -183,6 +236,7 @@ const state = {
   chart: null,
   cy: null,
   trail: [],
+  newEdges: new Set(),
 };
 
 function notify(message) {
@@ -194,7 +248,7 @@ async function attempt(action) {
   try {
     await action();
   } catch (error) {
-    notify(error.message);
+    if (error.message !== "core not reachable") notify(error.message);
   }
 }
 
@@ -207,8 +261,8 @@ function renderStatus() {
   $("#clock-toggle").setAttribute(
     "aria-label",
     status.paused
-      ? "Resume simulation and event replay"
-      : "Pause simulation and event replay",
+      ? "Resume simulation"
+      : "Pause simulation",
   );
   $("#llm-mode").textContent = String(status.llm_mode).toUpperCase();
   $("#usage").textContent =
@@ -414,7 +468,16 @@ function renderGraph() {
     .run();
   state.cy.nodes().unselect();
   state.cy.getElementById(state.selectedMetric).select();
+  for (const id of state.newEdges)
+    state.cy.getElementById(id).addClass("new-edge");
   setRejectedVisibility();
+}
+
+async function refreshGraph() {
+  const [graph, metrics] = await Promise.all([api.getGraph(), api.getMetrics()]);
+  Object.assign(state, { graph, metrics });
+  renderGraph();
+  renderIncidents();
 }
 
 function setRejectedVisibility() {
@@ -429,7 +492,7 @@ async function selectMetric(name) {
   $("#metric-select").value = name;
   state.cy?.nodes().unselect();
   state.cy?.getElementById(name).select();
-  const node = state.graph.nodes.find((item) => item.id === name);
+  const node = state.graph?.nodes.find((item) => item.id === name);
   $("#metric-title").textContent = node?.label ?? readable(name);
   const [series, definition] = await Promise.all([
     api.getMetric(name),
@@ -452,7 +515,7 @@ async function selectMetric(name) {
     : `${metric.unit ?? "count"} / hour`;
   $("#fixture-note").textContent = reference
     ? `No ${readable(name)} series fixture exists. Showing the Orders reference, not measurements for this metric.`
-    : "Actual vs expected · shaded forecast range · release marker at 27 Nov, 03:00 UTC";
+    : `Actual vs expected · shaded forecast range${mockMode ? " · release marker at 27 Nov, 03:00 UTC" : ""}`;
   renderChart(series);
 }
 
@@ -460,11 +523,11 @@ function renderChart(series) {
   const points = series.points;
   const last = points.at(-1);
   const delta =
-    last && last.expected
+    last?.value != null && last.expected
       ? ((last.value - last.expected) / last.expected) * 100
       : null;
   $("#chart-summary").textContent =
-    `${readable(series.metric)}: latest ${number(last?.value ?? 0)}, expected ${number(last?.expected ?? 0)}${delta === null ? "" : ` (${signed(delta)}%)`}. Shading shows the expected lower–upper range. Vertical marker: checkout-web v5.8 release.`;
+    `${readable(series.metric)}: latest ${last?.value == null ? "no data" : number(last.value)}, expected ${last?.expected == null ? "unavailable" : number(last.expected)}${delta === null ? "" : ` (${signed(delta)}%)`}. Shading shows the expected lower–upper range.${mockMode ? " Vertical marker: checkout-web v5.8 release." : ""}`;
   $("#metric-chart").setAttribute(
     "aria-label",
     $("#chart-summary").textContent,
@@ -505,7 +568,7 @@ function renderChart(series) {
           pointRadius: 0,
         },
         {
-          label: "Actual orders",
+          label: `Actual ${readable(series.metric)}`,
           data: points.map((point) => point.value),
           borderColor: "#b7323e",
           borderWidth: 2,
@@ -546,7 +609,7 @@ function renderChart(series) {
             color: "#536775",
             font: { size: 9 },
             callback: (value) =>
-              `${new Date(points[value].ts).getUTCDate()} Nov ${time(points[value].ts)}`,
+              `${new Date(points[value].ts).toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "short" })} ${time(points[value].ts)}`,
           },
         },
         y: {
@@ -556,7 +619,7 @@ function renderChart(series) {
         },
       },
     },
-    plugins: [
+    plugins: mockMode ? [
       {
         id: "release-marker",
         afterDatasetsDraw(chart) {
@@ -585,7 +648,7 @@ function renderChart(series) {
           ctx.restore();
         },
       },
-    ],
+    ] : [],
   });
 }
 
@@ -608,7 +671,7 @@ function renderIncidents() {
             `<button type="button" class="incident-row" data-incident="${escapeHtml(incident.id)}" aria-pressed="${state.incident?.id === incident.id}"><i class="dot incident" aria-hidden="true"></i><span class="row-title">${escapeHtml(incident.title)}<small>${escapeHtml(incident.id)} · ${time(incident.opened_ts)} UTC · ${euro(incident.impact_eur_per_hour)}/h</small></span>${badge(incident.verdict)}</button>`,
         )
         .join("")
-    : `<p class="empty">No ${escapeHtml(state.filter)} incidents in this mock dataset.</p>`;
+    : `<p class="empty">${state.filter === "open" ? `No open incidents. The system is watching ${state.metrics.length} metrics.` : `No ${escapeHtml(state.filter)} incidents.`}</p>`;
   if (focusedIncident) {
     [...document.querySelectorAll("[data-incident]")]
       .find((button) => button.dataset.incident === focusedIncident)
@@ -710,7 +773,7 @@ async function sendChat(event) {
     const message = renderMessage("assistant", response.answer);
     message.insertAdjacentHTML(
       "beforeend",
-      `<details><summary>Tool calls (${response.tool_calls.length})</summary>${response.tool_calls.map((call) => `<p><strong>${escapeHtml(call.tool)}</strong> · ${escapeHtml(call.summary)}</p><pre>${escapeHtml(JSON.stringify(call.input, null, 2))}</pre>`).join("")}</details>${response.incident_ids.map((id) => `<button class="incident-link" type="button" data-chat-incident="${escapeHtml(id)}">View ${escapeHtml(id)} ↗</button>`).join("")}`,
+      `<details><summary>Tool calls (${response.tool_calls.length})</summary>${response.tool_calls.map((call) => `<p><strong>${escapeHtml(call.tool)}</strong> · ${escapeHtml(call.summary)}</p><pre>${escapeHtml(JSON.stringify(call.input, null, 2))}</pre>`).join("")}</details>${mockMode ? response.incident_ids.map((id) => `<button class="incident-link" type="button" data-chat-incident="${escapeHtml(id)}">View ${escapeHtml(id)} ↗</button>`).join("") : ""}`,
     );
     $("#messages").scrollTop = $("#messages").scrollHeight;
   } catch (error) {
@@ -734,40 +797,43 @@ async function submitMetric(event) {
   try {
     const request = Object.fromEntries(new FormData(event.target));
     const result = await api.addMetric(request);
-    if (!state.metrics.some((metric) => metric.name === result.metric.name))
-      state.metrics.push(result.metric);
     const edges = [...result.accepted, ...result.ambiguous, ...result.rejected];
-    const ids = new Set(state.graph.nodes.map((node) => node.id));
-    for (const id of new Set([
-      result.metric.name,
-      ...edges.flatMap((edge) => [edge.src, edge.dst]),
-    ])) {
-      if (!ids.has(id)) {
-        const metric = state.metrics.find((item) => item.name === id);
-        state.graph.nodes.push({
-          id,
-          label: readable(id),
-          domain: metric?.domain,
-          unit: metric?.unit,
-          state: "normal",
-        });
-        ids.add(id);
-      }
-    }
-    for (const edge of edges)
-      if (!state.graph.edges.some((item) => item.id === edge.id))
-        state.graph.edges.push(edge);
-    renderGraph();
-    for (const edge of edges)
-      state.cy?.getElementById(edge.id).addClass("new-edge");
+    state.newEdges = new Set(edges.map((edge) => edge.id));
+    if (mockMode) applyMockMetric(result.metric, edges);
+    else await refreshGraph();
     $("#metric-result").innerHTML =
-      `<strong>Mock metric mapped: ${escapeHtml(result.metric.name)}</strong><p>${escapeHtml(result.notes)}</p>${["accepted", "ambiguous", "rejected"].map((group) => `<h4>${readable(group)} (${result[group].length})</h4><ul>${result[group].map((edge) => `<li>${escapeHtml(edge.src)} → ${escapeHtml(edge.dst)} · ${escapeHtml(readable(edge.type))}</li>`).join("") || "<li>None</li>"}</ul>`).join("")}<p>New relationships are highlighted in the graph.</p><details><summary>Full AddMetricResult</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>`;
+      `<strong>${mockMode ? "Mock metric" : "Metric"} mapped: ${escapeHtml(result.metric.name)}</strong><p>${escapeHtml(result.notes)}</p>${["accepted", "ambiguous", "rejected"].map((group) => `<h4>${readable(group)} (${result[group].length})</h4><ul>${result[group].map((edge) => `<li>${escapeHtml(edge.src)} → ${escapeHtml(edge.dst)} · ${escapeHtml(readable(edge.type))}</li>`).join("") || "<li>None</li>"}</ul>`).join("")}<p>New relationships are highlighted in the graph.</p><details><summary>Full AddMetricResult</summary><pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre></details>`;
   } catch (error) {
     $("#metric-result").textContent = error.message;
   } finally {
     submit.disabled = false;
     submit.textContent = "Ask Cartographer";
   }
+}
+
+function applyMockMetric(metric, edges) {
+  if (!state.metrics.some((item) => item.name === metric.name))
+    state.metrics.push(metric);
+  const ids = new Set(state.graph.nodes.map((node) => node.id));
+  for (const id of new Set([
+    metric.name,
+    ...edges.flatMap((edge) => [edge.src, edge.dst]),
+  ])) {
+    if (ids.has(id)) continue;
+    const definition = state.metrics.find((item) => item.name === id);
+    state.graph.nodes.push({
+      id,
+      label: readable(id),
+      domain: definition?.domain,
+      unit: definition?.unit,
+      state: "normal",
+    });
+  }
+  for (const edge of edges)
+    if (!state.graph.edges.some((item) => item.id === edge.id))
+      state.graph.edges.push(edge);
+  renderGraph();
+  renderIncidents();
 }
 
 function bindControls() {
@@ -788,7 +854,7 @@ function bindControls() {
     attempt(async () => {
       state.status = await api.stepClock();
       renderStatus();
-      appendEvent({
+      if (mockMode) appendEvent({
         type: "tick",
         sim_ts: state.status.sim_ts,
         payload: { tick: state.status.tick },
@@ -811,7 +877,7 @@ function bindControls() {
       );
       button.textContent = `${scenario.id}${scenario.active ? " ·" : ""}`;
       notify(
-        `${scenario.id} ${scenario.active ? "injected" : "cleared"} locally. Mock incident and chart fixtures remain unchanged.`,
+        `${scenario.id} ${scenario.active ? "injected" : "cleared"}${mockMode ? " locally. Mock incident and chart fixtures remain unchanged." : "."}`,
       );
     }),
   );
@@ -866,18 +932,14 @@ function bindControls() {
 }
 
 async function init() {
-  if (!mockMode) {
-    notify("This build uses mock data only.");
-    const link = document.createElement("a");
-    link.href = "?mock=1";
-    link.textContent = " Open mock observatory →";
-    $("#notice").append(link);
-    document
-      .querySelectorAll("button, input, select, textarea")
-      .forEach((control) => {
-        control.disabled = true;
-      });
-    return;
+  $("#mode-label").textContent = mockMode ? "MOCK DATA · NO LIVE CALLS" : "LIVE API";
+  if (mockMode) {
+    $("#feed-caption").textContent = "Replay · one event every 2 seconds · last 30";
+    $("#feed").setAttribute("aria-label", "Replayed events");
+  } else {
+    $(".mock-callout").hidden = true;
+    for (const field of $("#metric-form").querySelectorAll("input, textarea"))
+      field.value = "";
   }
   const [status, graph, metrics, incidents, scenarios, events] =
     await Promise.all([
@@ -886,14 +948,22 @@ async function init() {
       api.getMetrics(),
       api.getIncidents(),
       api.getScenarios(),
-      api.getEvents(),
+      mockMode ? api.getEvents() : [],
     ]);
   Object.assign(state, { status, graph, metrics, incidents, events });
   bindControls();
   renderStatus();
   renderScenarios(scenarios);
   renderGraph();
-  await Promise.all([selectMetric("orders"), openIncident("inc_s7")]);
+  renderIncidents();
+  const first = filteredIncidents()[0];
+  await Promise.all([
+    state.graph.nodes.some((node) => node.id === "orders")
+      ? selectMetric("orders")
+      : state.graph.nodes[0] && selectMetric(state.graph.nodes[0].id),
+    first && openIncident(first.id),
+  ]);
+  if (!mockMode) return;
   replayNext();
   setInterval(() => {
     if (!state.status.paused) replayNext();
