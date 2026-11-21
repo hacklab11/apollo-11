@@ -24,7 +24,7 @@ from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
 from eye.api.app import create_app
-from eye.config import load_settings
+from eye.config import LlmSettings, load_settings
 from eye.contracts import (
     AddMetricRequest,
     Incident,
@@ -63,13 +63,30 @@ GROUP BY ts, country, platform, category, seller_tier, channel""",
 }
 
 
-def request_identity(request: dict) -> dict:
-    return {
+def request_identity(request: dict, settings: LlmSettings | None = None) -> dict:
+    identity = {
         "model": request["model"],
         "system": "".join(b["text"] for b in request["system"]),
         "tools": [t["name"] for t in request["tools"]],
         "messages": request["messages"],
     }
+    if settings is not None and settings.provider != "anthropic":
+        identity["provider"] = settings.provider
+        identity["base_url"] = settings.base_url
+    return identity
+
+
+def override_llm(
+    settings: LlmSettings, provider: str | None, model: str | None
+) -> None:
+    if provider is not None:
+        settings.provider = provider
+        if provider == "openai_compatible":
+            settings.base_url = "https://openrouter.ai/api/v1"
+            settings.api_key_env = "OPENROUTER_API_KEY"
+            model = model or "nvidia/nemotron-3-ultra-550b-a55b:free"
+    if model is not None:
+        settings.models = {"default": model}
 
 
 def digest(value: Any) -> str:
@@ -101,7 +118,7 @@ class EvalLLMClient(LLMClient):
         self.replayed_calls = 0
 
     async def create(self, request: dict) -> Any:
-        identity = request_identity(request)
+        identity = request_identity(request, self.settings)
         key = digest(identity)
         if self.trace is not None:
             append_json(self.trace, {"key": key, "identity": identity})
@@ -803,6 +820,9 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "trails": [],
         }
     settings = load_settings(ROOT / "config/settings.yaml")
+    override_llm(
+        settings.llm, getattr(args, "provider", None), getattr(args, "model", None)
+    )
     settings.sim.seed = args.seed
     settings.sim.autostart = False
     settings.orchestrator.max_concurrent_investigations = 1
@@ -1028,6 +1048,8 @@ async def main() -> int:
     selection.add_argument("--scenario")
     selection.add_argument("--all", action="store_true")
     parser.add_argument("--mode", choices=["live", "replay"], default="replay")
+    parser.add_argument("--provider", choices=["anthropic", "openai_compatible"])
+    parser.add_argument("--model")
     parser.add_argument("--record", type=Path)
     parser.add_argument("--record-dir", type=Path)
     parser.add_argument("--seed", type=int, default=42)

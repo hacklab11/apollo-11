@@ -43,6 +43,77 @@ def test_oracle_ids() -> None:
     assert next(iter(oracle)) == "D6"
 
 
+@pytest.mark.parametrize(
+    "provider,model,expected_provider,expected_model",
+    [
+        (None, None, "anthropic", "original"),
+        (
+            "openai_compatible",
+            None,
+            "openai_compatible",
+            "nvidia/nemotron-3-ultra-550b-a55b:free",
+        ),
+        ("openai_compatible", "custom/model", "openai_compatible", "custom/model"),
+        (None, "custom/model", "anthropic", "custom/model"),
+    ],
+)
+def test_provider_and_model_overrides(
+    provider: str | None, model: str | None, expected_provider: str, expected_model: str
+) -> None:
+    settings = LlmSettings(models={"default": "original", "sentinel": "original"})
+    harness.override_llm(settings, provider, model)
+    assert settings.provider == expected_provider
+    assert settings.model_for("sentinel") == expected_model
+    if provider == "openai_compatible":
+        assert settings.base_url == "https://openrouter.ai/api/v1"
+        assert settings.api_key_env == "OPENROUTER_API_KEY"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_recording_replays_with_matching_provider_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = []
+
+    def respond(request: harness.httpx.Request) -> harness.httpx.Response:
+        calls.append(request)
+        return harness.httpx.Response(
+            200,
+            json={
+                "id": "offline",
+                "choices": [{"message": {"content": "OK"}, "finish_reason": "stop"}],
+                "usage": {"prompt_tokens": 2, "completion_tokens": 1},
+            },
+        )
+
+    settings = LlmSettings(mode="record", cache_path=tmp_path / "fixture.jsonl")
+    harness.override_llm(settings, "openai_compatible", None)
+    request = {
+        "model": settings.model_for("sentinel"),
+        "max_tokens": 1024,
+        "system": [],
+        "tools": [],
+        "messages": [],
+    }
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test")
+    client = harness.EvalLLMClient(settings)
+    async with harness.httpx.AsyncClient(
+        transport=harness.httpx.MockTransport(respond)
+    ) as http:
+        client._http_client = http
+        expected = await client.create(request)
+    entry = harness.json.loads(settings.cache_path.read_text())
+    assert entry["key"] == harness.digest(harness.request_identity(request, settings))
+    assert entry["key"] != harness.digest(harness.request_identity(request))
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    settings.mode = "replay"
+    replay = harness.EvalLLMClient(settings)
+    assert await replay.create(request) == expected
+    assert replay.replay_misses == 0
+    assert replay.replayed_calls == 1
+    assert len(calls) == 1
+
+
 def test_recording_replaces_old_responses_without_touching_replay(
     tmp_path: Path,
 ) -> None:
