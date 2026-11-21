@@ -4,29 +4,54 @@ Eye of the System monitors a graph of metrics without waiting for someone to ask
 
 ## Observatory
 
-![Marketplace observatory showing the metric graph, an orders forecast, and the checkout incident using mock data](docs/assets/observatory-mock.png)
-
-*Browser screenshot of [mock mode](web/README.md), with fixture data rather than live results.*
-
-[Live API preview after injecting I1 and S7](docs/assets/observatory-live.png): the chart uses simulated orders from Core, with live UI wiring previewed from T22. This partial run did not include LLM verdicts or specialist responses.
+The [live observatory](web/README.md) is served by Core. [Earlier API preview](docs/assets/observatory-live.png): the chart shows simulated orders after injecting I1 and S7, not results from the headphones rehearsal.
 
 ## Run it
 
-### UI preview (no credentials)
+### Local stack and rehearsal
+
+From a fresh checkout of `main` on a machine with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```sh
 uv python install 3.13
-uv sync
-uv run python -m http.server --bind 127.0.0.1 --directory web 5500
+uv sync --locked
 ```
 
-Open `http://localhost:5500/?mock=1` for the graph, sample incidents, and investigation trail.
+In your local `config/settings.yaml`, set `sim.autostart: false` (nested under `sim`). Leave `sim.start_ts` unchanged so recordings still match. Start with no existing simulator data; use a fresh checkout or worktree for another run so the clock and incidents are reset.
 
-### Local stack and rehearsal
+**Claude (default):** Set `ANTHROPIC_API_KEY` from a funded workspace in the environment that starts the stack. Core, the specialists, and SellerOS use Claude by default.
 
-For live or record mode with the default Claude provider, set `ANTHROPIC_API_KEY` in your environment. To rehearse with OpenRouter instead, follow the [provider setup](src/eye/llm/prompts/README.md#openai-compatible-providers) in a local checkout and set `OPENROUTER_API_KEY` in your environment.
+**OpenRouter (alternative):** Set `OPENROUTER_API_KEY` in the stack's environment. Change these values in your local `llm` section; keep the rest of the file unchanged:
 
-Start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings). Leave `sim.start_ts` unchanged so replay fixtures still match. Start the services with `./scripts/dev.sh`; Core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status` and open the observatory at `http://localhost:8000/`.
+```yaml
+llm:
+  provider: openai_compatible
+  models:
+    default: nvidia/nemotron-3.5-lightning:free
+```
+
+SellerOS does not read Core's settings. Before starting the stack, set its [provider and model](external/selleros/README.md) in the same shell:
+
+```sh
+export SELLEROS_PROVIDER=openai_compatible
+export SELLEROS_MODEL=nvidia/nemotron-3.5-lightning:free
+```
+
+Both default to the OpenRouter URL and `OPENROUTER_API_KEY` when configured this way. Do not put either provider's key in settings or commit the local changes. The free-model D6 eval did not pass; see [Eval results](#eval-results).
+
+Start all services in the first terminal:
+
+```sh
+./scripts/dev.sh
+```
+
+Core generates 28 days of history and initializes the graph before the API is ready. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
+
+```sh
+curl -fsS http://127.0.0.1:8000/api/status
+```
+
+Once ready, open [the observatory](http://127.0.0.1:8000/) and run:
 
 ```sh
 uv run python scripts/demo_run.py --script demo
@@ -105,7 +130,11 @@ The [scenario eval card](docs/tasks/T23-oracle-and-eval.md) defines the harness;
 | Run | Result | Ticks to detect | LLM calls |
 | --- | --- | --- | --- |
 | S3 (offline replay) | Failed: 4 cache misses; no incident to score | — | 0 |
+| S8 (OpenRouter free) | Failed: no matching incident | — | 180 |
+| D6 (OpenRouter free) | Failed: no matching incident | — | 118 |
 | Other scenarios and combined runs | Not yet measured | — | — |
+
+The [S8 and D6 evals](https://github.com/hacklab11/apollo-11/pull/46) used `nvidia/nemotron-3-ultra-550b-a55b:free`. Sentinel logged `LLMUnavailable` after S8 was injected. These are eval harness results, not a passing local stack rehearsal.
 
 ## Limitations
 
