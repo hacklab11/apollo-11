@@ -572,7 +572,7 @@ async def test_downstream_symptoms(
 ) -> None:
     seed(world, "s3")
     world.execute(
-        "UPDATE orders_hourly SET orders = 128, gmv = 2560 WHERE ts = ? AND country = 'DE'",
+        "UPDATE orders_hourly SET units = 128, gmv = 2560 WHERE ts = ? AND country = 'DE'",
         [START],
     )
     registry = load_registry(world)
@@ -609,7 +609,8 @@ async def test_downstream_symptoms(
     async def trail(step: TrailStep) -> None:
         steps.append(step)
 
-    result = await Detective(world, registry, graph).investigate(anomaly("s3"), trail)
+    entry = anomaly("s3").model_copy(update={"ts": END})
+    result = await Detective(world, registry, graph).investigate(entry, trail)
     symptoms = [item.model_dump(mode="json") for item in result.symptoms]
     print("symptoms=" + json.dumps(symptoms, sort_keys=True))
     expected = [] if cause_mode == "none" else ["gmv", "orders", "search_conversion"]
