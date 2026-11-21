@@ -41,7 +41,7 @@ Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `style
 ### 3.1 Layout (one page, desktop 1440 × 900 first)
 
 ```
-┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots · scenario buttons (S1..S8, I1..I3) ┐
+┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots · S8 scenario button ┐
 ├───────────────┬────────────────────────────────────────┬──────────────────────┤
 │ Graph         │ Metric chart (selected node)           │ Chat                 │
 │ (Cytoscape)   │ actual line, expected band, markers    │ messages             │
@@ -56,6 +56,8 @@ Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `style
 └──────────────────────────────────────────────────────────────────────────────────────────┘
 + "Add metric" modal (name, description, SQL) → shows AddMetricResult and highlights new edges
 ```
+
+S8 is the only scenario control in the Observatory. The API still lists the supported scenarios and allows explicit injection, including I3 for the €9 demo.
 
 ### 3.2 Visual rules
 

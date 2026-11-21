@@ -169,27 +169,19 @@ function updateStatus(status, reset = false) {
   renderStatus();
 }
 
-function renderScenarios(scenarios) {
-  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
-  const ids = new Set(["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "I1", "I2", "I3", ...byId.keys()]);
-  const titles = { S6: "Black Friday cascade", S8: "The €9 headphones", I3: "Electronics coupon day" };
-  $("#scenarios").innerHTML = [...ids].map((id) => {
-    const scenario = byId.get(id);
-    const key = escapeHtml(id);
-    if (!scenario) {
-      const label = `${key}${titles[id] ? `: ${titles[id]}` : ""} (unavailable)`;
-      return `<button type="button" data-scenario="${key}" aria-label="${label}" title="${label}" disabled>${key}</button>`;
-    }
-    const title = escapeHtml(scenario.title);
-    return `<button type="button" data-scenario="${key}" aria-pressed="${scenario.active}" aria-label="${scenario.active ? "Clear" : "Inject"} ${key}: ${title}" title="${title}">${key}${scenario.active ? " ·" : ""}</button>`;
-  }).join("");
-}
-
 function renderScenario(scenario) {
-  const button = [...$("#scenarios").children].find(
-    (item) => item.dataset.scenario === scenario.id,
-  );
-  if (!button) return;
+  const button = $("#scenarios [data-scenario]");
+  const id = button.dataset.scenario;
+  if (!scenario) {
+    const label = `${id}: The €9 headphones (unavailable)`;
+    button.disabled = true;
+    button.title = label;
+    button.removeAttribute("aria-pressed");
+    button.setAttribute("aria-label", label);
+    button.textContent = id;
+    return;
+  }
+  if (scenario.id !== id) return;
   button.disabled = false;
   button.title = scenario.title;
   button.setAttribute("aria-pressed", String(scenario.active));
@@ -805,7 +797,10 @@ async function refreshLive(reconnect = false) {
     graph,
     refreshIncidents(reconnect),
     api.getAnomalies().then(rememberAttachments),
-    api.getScenarios().then(renderScenarios),
+    api.getScenarios().then((scenarios) => {
+      const id = $("#scenarios [data-scenario]").dataset.scenario;
+      renderScenario(scenarios.find((scenario) => scenario.id === id));
+    }),
     reconnect && graph.then(refreshChart),
   ]);
 }
