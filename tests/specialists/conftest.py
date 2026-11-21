@@ -38,46 +38,35 @@ def _ts(value: datetime) -> str:
 
 
 def _ads(con: duckdb.DuckDBPyConnection) -> None:
+    baseline = [round(1000 * share * 1.02, 2) for share in SCHEDULE]
+    control = [round(500 * share * 0.98, 2) for share in SCHEDULE]
+    advertisers = [
+        (DAY, "ADV-3", "S-03", 1000.0, 1.25, ADV3_SPENT),
+        (BASELINE_DAY, "ADV-3", "S-03", 1000.0, 1.25, baseline),
+        (DAY, "ADV-1", "S-01", 500.0, 1.0, control),
+        (BASELINE_DAY, "ADV-1", "S-01", 500.0, 1.0, control),
+    ]
     rows = []
-    for day, spent in ((DAY, ADV3_SPENT), (BASELINE_DAY, None)):
+    for day, advertiser, seller, budget, cpc, cumulative in advertisers:
         previous = 0.0
-        for hour, share in enumerate(SCHEDULE):
-            total = spent[hour] if spent else round(1000 * share * 1.02, 2)
-            spend = total - previous
+        for hour, (share, total) in enumerate(zip(SCHEDULE, cumulative, strict=True)):
+            spend = round(total - previous, 2)
             previous = total
-            clicks = round(spend / 1.25)
+            clicks = round(spend / cpc)
             rows.append(
                 (
                     _ts(day + timedelta(hours=hour)),
-                    "ADV-3",
+                    advertiser,
                     "DE",
-                    "S-03",
+                    seller,
                     "electronics",
                     clicks * 20,
                     clicks,
                     spend,
-                    1.25 if clicks else 0,
-                    1.4,
-                    1000.0,
+                    cpc if clicks else 0.0,
+                    cpc + 0.15,
+                    budget,
                     total,
-                    share,
-                )
-            )
-            control = round(500 * share * 0.98, 2)
-            rows.append(
-                (
-                    _ts(day + timedelta(hours=hour)),
-                    "ADV-1",
-                    "DE",
-                    "S-01",
-                    "electronics",
-                    400,
-                    20,
-                    500 * 0.04,
-                    1.0,
-                    1.1,
-                    500.0,
-                    control,
                     share,
                 )
             )
