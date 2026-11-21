@@ -21,6 +21,7 @@ from eye.contracts import (
     MetricDef,
     TrailStep,
 )
+from eye.graph.bootstrap import _mean_shares
 from eye.graph.store import GraphStore
 from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.engine import MetricEngine
@@ -191,6 +192,7 @@ class Cartographer:
         status = "ambiguous"
         confidence = 0.0
         pairs = [(proposal.src, proposal.dst)]
+        shares: dict[str, float] = {}
         if proposal.type == "formula":
             parsed = parse_identity(proposal.identity or "")
             result = self._identity(engine, proposal.identity)
@@ -208,6 +210,10 @@ class Cartographer:
             ):
                 status = "ambiguous"
             pairs = [(t.name, parsed.target) for t in parsed.terms]
+            if parsed.kind == "sum":
+                shares = _mean_shares(
+                    engine, parsed.target, [t.name for t in parsed.terms]
+                )
             if len(parsed.terms) == 1 and result.passed:
                 status = "ambiguous"
                 evidence["note"] = f"possible duplicate of {parsed.terms[0].name}"
@@ -252,7 +258,10 @@ class Cartographer:
                 dimension=proposal.dimension,
                 lag_hours=proposal.lag_hours,
                 confidence=confidence,
-                evidence=evidence,
+                evidence={
+                    **evidence,
+                    **({"mean_share": shares[src]} if src in shares else {}),
+                },
                 created_by="cartographer",
             )
             for src, dst in pairs
