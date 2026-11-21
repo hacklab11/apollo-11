@@ -8,7 +8,11 @@ from pathlib import Path
 from numpy.random import Generator, default_rng
 
 from eye.config import Settings
+from eye.sim.ads import Ads, marketing
+from eye.sim.apps import Apps
+from eye.sim.changelog import noise
 from eye.sim.demand import DemandModifiers, generate_demand
+from eye.sim.pipeline import Pipeline
 from eye.sim.store import WORLD_DB, Batches, Store
 from eye.sim.world import build_world
 
@@ -34,6 +38,9 @@ class Simulator:
         self._history_start = self._start - timedelta(days=settings.sim.history_days)
         self._next_history = self._history_start
         self.world = build_world(settings.sim.seed, joined_ts=self._history_start)
+        self.ads = Ads()
+        self.apps = Apps()
+        self.pipeline = Pipeline()
         self.pre_demand_hooks: list[Hook] = []
         self.post_demand_hooks: list[Hook] = []
         self.store = Store(db_path)
@@ -65,11 +72,21 @@ class Simulator:
         for hook in self.pre_demand_hooks:
             hook(self, hour)
         for table, rows in generate_demand(
-            hour.ts, hour.rng, self.world, hour.demand
+            hour.ts,
+            hour.rng,
+            self.world,
+            hour.demand,
+            lambda searches: self.ads.auction(
+                hour.ts, hour.rng, self.world, searches, hour.batches
+            ),
         ).items():
             hour.batches.setdefault(table, []).extend(rows)
         for hook in self.post_demand_hooks:
             hook(self, hour)
+        marketing(hour.ts, hour.batches, hour.demand.marketing_mult)
+        self.apps.errors(hour.ts, hour.rng, hour.batches)
+        noise(hour.ts, hour.rng, hour.batches)
+        self.pipeline.partitions(hour.ts, hour.batches)
         self.store.append(hour.batches)
         self.now += _HOUR
 

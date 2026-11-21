@@ -1,5 +1,6 @@
 """Generate one hour of traffic and order counts without per-shopper draws."""
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import product
@@ -75,7 +76,11 @@ def _retry_unavailable(
 
 
 def generate_demand(
-    ts: datetime, rng: Generator, world: World, modifiers: DemandModifiers
+    ts: datetime,
+    rng: Generator,
+    world: World,
+    modifiers: DemandModifiers,
+    sponsored: Callable[[NDArray[np.int64]], dict[tuple[int, str], int]] | None = None,
 ) -> Batches:
     """Return one batch per fact table. Funnel arrays are segment × channel × SKU."""
     count = np.rint(
@@ -99,6 +104,7 @@ def generate_demand(
     )
     relevance_factor = relevance[:, None] / _RELEVANCE
     result_clicks = rng.binomial(searches, np.clip(0.45 * relevance_factor, 0, 1))
+    ad_clicks = sponsored(searches) if sponsored is not None else {}
 
     skus = list(world.skus.values())
     category_index = np.array([CATEGORIES.index(sku.category) for sku in skus])
@@ -126,6 +132,11 @@ def generate_demand(
         in_stock = available[mask]
         weight = popularity[mask] * np.where(in_stock, 1.0, 0.30)
         landed = rng.multinomial(result_clicks[:, k], weight / weight.sum())
+        for local, sku in enumerate(s for s in skus if s.category == CATEGORIES[k]):
+            for segment in range(len(_SEGMENTS)):
+                extra = ad_clicks.get((segment, sku.sku), 0)
+                landed[segment, local] += extra
+                result_clicks[segment, k] += extra
         search = _retry_unavailable(rng, landed, in_stock)
         feed = _retry_unavailable(rng, feed_clicks[:, mask], in_stock)
         probability = 0.12 * price_factor[mask]
