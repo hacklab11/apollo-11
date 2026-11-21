@@ -120,12 +120,16 @@ def test_global_clock_resolves_only_existing_sources(
     assert result.evidence["n"] == 1
 
 
+@pytest.mark.parametrize("relation", ["table", "view"])
 def test_daily_metric_default_window_uses_hourly_clock(
     weighted_engine: MetricEngine,
+    relation: str,
 ) -> None:
     con = weighted_engine._con
-    con.execute("CREATE TABLE clock_hourly (ts TIMESTAMPTZ)")
-    con.execute("INSERT INTO clock_hourly VALUES ('2020-01-16 12:00:00+00')")
+    con.execute(
+        f"CREATE {relation} clock_hourly AS "
+        "SELECT TIMESTAMPTZ '2020-01-16 12:00:00+00' AS ts"
+    )
     con.execute("CREATE TABLE capacity_daily (day DATE, country VARCHAR, num DOUBLE)")
     con.execute(
         "INSERT INTO capacity_daily VALUES ('2020-01-02', 'DE', 11), ('2020-01-15', 'DE', 22)"
