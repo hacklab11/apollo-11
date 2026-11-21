@@ -680,6 +680,12 @@ class Detective:
                 "HYPOTHESIS": "error",
             }[answer.verdict]
 
+        if answer.trigger is not None:
+            candidates = [h for h in answer.hypotheses if h.status != "refuted"]
+            if not any(h.id == answer.trigger for h in candidates):
+                matches = [h.id for h in candidates if h.root_node == answer.trigger]
+                answer.trigger = matches[0] if len(matches) == 1 else None
+
         if not answer.loop or not answer.trigger:
             nodes = [
                 anomaly.metric,
@@ -738,18 +744,6 @@ class Detective:
                             )
                         )
                     answer.trigger = trigger
-
-        if answer.loop and answer.trigger in answer.loop:
-            trigger = next(
-                (
-                    hyp.id
-                    for hyp in answer.hypotheses
-                    if hyp.root_node == answer.trigger and hyp.status != "refuted"
-                ),
-                None,
-            )
-            if trigger is not None:
-                answer.trigger = trigger
 
         for hypothesis in [*answer.hypotheses, answer.root_cause]:
             if hypothesis:

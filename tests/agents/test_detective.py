@@ -228,6 +228,7 @@ async def scenario(
     assert root.root_node == (
         "search_relevance" if case == "s3" else "cart_to_checkout_rate"
     )
+    assert result.trigger is None or result.trigger in {h.id for h in result.hypotheses}
     assert len({e.group for e in root.evidence_for}) >= 2
     assert sum(row.share for row in result.contributions) == pytest.approx(1, abs=0.02)
     assert [step.n for step in steps] == list(range(1, len(steps) + 1))
@@ -414,8 +415,11 @@ async def test_local_hypothesis_ids_do_not_collide_across_investigations(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("trigger", [None, "search_relevance", "ranker release"])
 async def test_loop_fills_missing_fields_from_measured_change_points(
-    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    trigger: str | None,
 ) -> None:
     seed(world, "s3")
     world.execute(
@@ -436,9 +440,10 @@ async def test_loop_fills_missing_fields_from_measured_change_points(
             created_by="seed",
         )
     )
+    answer = submission(hypothesis(), "HYPOTHESIS")
+    answer.trigger = trigger
     monkeypatch.setattr(
-        "eye.agents.detective.run_agent",
-        AsyncMock(return_value=submission(hypothesis(), "HYPOTHESIS")),
+        "eye.agents.detective.run_agent", AsyncMock(return_value=answer)
     )
     result = await Detective(world, registry, graph).investigate(
         anomaly("s3"), AsyncMock()
