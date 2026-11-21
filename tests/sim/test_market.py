@@ -107,7 +107,10 @@ def test_deep_discount_drift_up(
     a.repricer_mode, b.repricer_mode = mode, "fixed"
     a.floor = None
     Market(world).run_repricers()
-    assert a.price == round(ref * expected_mult, 2)
+    expected = ref * expected_mult
+    assert a.price == (
+        expected if mode == "fixed" or not other_stock else round(expected, 2)
+    )
 
 
 def test_restock_capacity_and_delivery() -> None:
