@@ -94,6 +94,21 @@ def test_missing_table_marks_metric_pending(writable) -> None:
     )
 
 
+@pytest.mark.parametrize("prefix", ["", "main.", "{catalog}.main."])
+def test_contract_view_metric_is_active(writable, tmp_path, prefix) -> None:
+    writable.execute("ALTER TABLE traffic_hourly RENAME TO traffic_facts")
+    writable.execute("CREATE VIEW traffic_hourly AS SELECT * FROM traffic_facts")
+    catalog = writable.execute("SELECT current_database()").fetchone()[0]
+    table = prefix.format(catalog=catalog) + "traffic_hourly"
+    metric = {
+        **_seed("sessions"),
+        "sql": f"SELECT ts, sessions AS num FROM {table}",
+        "dimensions": [],
+    }
+    registry = load_registry(writable, _config(tmp_path, [metric]))
+    assert registry.metrics["sessions"].status == "active"
+
+
 def test_source_tables_from_from_and_join() -> None:
     sql = _seed("po_qty_vs_forecast")["sql"]
     assert source_tables(sql) == (

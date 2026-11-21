@@ -28,7 +28,7 @@ from eye.contracts import (
     TrailStep,
 )
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient
+from eye.llm.client import LLMClient, LLMUnavailable
 
 HOUR = timedelta(hours=1)
 log = logging.getLogger(__name__)
@@ -100,6 +100,11 @@ def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> No
                 "event": event,
                 "incident_id": incident_id,
                 "error": type(exc).__name__,
+                **(
+                    {"detail": str(exc)[:500]}
+                    if isinstance(exc, LLMUnavailable)
+                    else {}
+                ),
             }
         )
     )

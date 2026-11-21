@@ -8,11 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from eye.config import Settings
-from eye.main import _world
 from eye.sim import engine
 from eye.sim.engine import Simulator
 from eye.sim.market import Market
 from eye.sim.seller_actions import JournalSellerActionFeed, SellerAction
+from eye.sim.source import _world
 from eye.sim.world import World, build_world
 
 TS = datetime(2026, 11, 27, tzinfo=UTC)
