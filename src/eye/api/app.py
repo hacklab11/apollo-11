@@ -252,9 +252,15 @@ def create_app(
 
     @app.get("/api/demo/truth")
     def truth() -> list[TruthRow]:
-        if not orchestrator.settings.demo.show_truth:
+        if not orchestrator.settings.demo.show_truth or orchestrator.scenarios is None:
             raise HTTPException(404, "not found")
         with connection.cursor() as cursor:
+            if not cursor.execute(
+                "SELECT 1 FROM information_schema.tables "
+                "WHERE table_catalog = current_database() AND table_schema = 'main' "
+                "AND table_name = 'scenario_log'"
+            ).fetchone():
+                raise HTTPException(404, "not found")
             rows = cursor.execute(
                 "SELECT id, ts, scenario_id, action, CAST(params AS JSON) FROM scenario_log ORDER BY ts, id"
             ).fetchall()

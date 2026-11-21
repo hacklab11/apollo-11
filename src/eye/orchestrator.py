@@ -54,6 +54,8 @@ type EventType = Literal[
 
 class ClockSource(Protocol):
     now: datetime
+    history_start: datetime
+    live_start: datetime
 
     def step(self) -> None: ...
 
@@ -147,7 +149,7 @@ class Orchestrator:
         self.record_scenario = record_scenario
         self.events = EventBus()
         self.decisions: deque[SentinelDecision] = deque(maxlen=2_000)
-        self.tick = max(0, (sim.now - settings.sim.start_ts) // HOUR)
+        self.tick = max(0, (sim.now - sim.live_start) // HOUR)
         self.sim_ts = sim.now - HOUR if self.tick else sim.now
         self.paused = not settings.sim.autostart
         self._agents = {
@@ -301,21 +303,10 @@ class Orchestrator:
             return state
 
     def clean_hours(self) -> list[datetime]:
-        start = self.settings.sim.start_ts - timedelta(
-            days=self.settings.sim.history_days
-        )
-        timeline = self.scenarios.timeline() if self.scenarios else []
+        start = self.sim.history_start
+        excluded = self.incidents.excluded_hours(self.sim.now)
         hours = (start + i * HOUR for i in range((self.sim.now - start) // HOUR))
-        return [
-            hour
-            for hour in hours
-            if not any(
-                state.injected_ts is not None
-                and state.injected_ts <= hour
-                and (state.cleared_ts is None or hour < state.cleared_ts)
-                for state in timeline
-            )
-        ]
+        return [hour for hour in hours if hour not in excluded]
 
     async def register_metric(self, request: AddMetricRequest) -> AddMetricResult:
         if self.add_metric is None:
@@ -341,6 +332,8 @@ class Orchestrator:
             before = self.scenario_states()
             ts = self.sim.now
             await asyncio.to_thread(self.sim.step)
+            if self.sim.now == ts:
+                return self.status()
             self.invalidate()
             self.sim_ts = ts
             self.tick += 1

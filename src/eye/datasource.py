@@ -17,6 +17,8 @@ from eye.schema import validate_schema
 
 class DataSource(Protocol):
     now: datetime
+    history_start: datetime
+    live_start: datetime
     scenarios: Scenarios | None
     scenario_titles: dict[ScenarioId, str]
 
@@ -35,15 +37,17 @@ class DuckDBSource:
         self._con = duckdb.connect(str(path), read_only=True)
         try:
             validate_schema(self._con)
-            latest = self._con.execute(
-                "SELECT max(ts) FROM (SELECT ts FROM partition_status GROUP BY ts "
+            earliest, latest = self._con.execute(
+                "SELECT min(ts), max(ts) FROM (SELECT ts FROM partition_status GROUP BY ts "
                 "HAVING bool_and(coalesce(loaded_rows >= expected_rows, false)))"
-            ).fetchone()[0]
+            ).fetchone()
             if latest is None:
                 raise ValueError(
                     "Warehouse has no fully loaded hour in partition_status"
                 )
             self.now = latest + HOUR
+            self.history_start = earliest
+            self.live_start = self.now
         except BaseException:
             self.close()
             raise

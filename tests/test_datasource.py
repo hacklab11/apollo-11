@@ -62,6 +62,8 @@ def test_source_clock_and_readers(tmp_path: Path) -> None:
     source = DuckDBSource(path)
     try:
         assert source.now == TS + 3 * HOUR
+        assert source.history_start == TS
+        assert source.live_start == TS + 3 * HOUR
         source.step()
         assert source.now == TS + 3 * HOUR
         assert source.scenarios is None

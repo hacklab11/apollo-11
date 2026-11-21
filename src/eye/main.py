@@ -22,7 +22,7 @@ from eye.contracts import InvestigationResult, TrailStep
 from eye.datasource import open_source
 from eye.incidents.store import IncidentStore
 from eye.llm.client import BudgetExceeded, LLMClient, configure_client
-from eye.orchestrator import HOUR, Orchestrator, StepSink
+from eye.orchestrator import Orchestrator, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.tools.stats import expected
@@ -132,13 +132,18 @@ def main() -> None:
         connection = stack.enter_context(source.cursor())
         registry = load_registry(connection)
         engine = MetricEngine(connection, registry)
-        scenario_hours = [
-            start + i * HOUR
-            for state in (scenarios.timeline() if scenarios else [])
-            if (start := state.injected_ts) is not None
-            for i in range(((state.cleared_ts or source.now) - start) // HOUR)
-        ]
-        graph = bootstrap.load_or_bootstrap(engine, scenario_hours=scenario_hours)
+        incidents = stack.enter_context(
+            closing(
+                IncidentStore(
+                    path_exists=lambda src, dst: graph.path_exists(src, dst),
+                    notify=lambda alert: a2a.notify_seller_os(alert),
+                    settings=settings.reporter,
+                )
+            )
+        )
+        graph = bootstrap.load_or_bootstrap(
+            engine, scenario_hours=sorted(incidents.excluded_hours(source.now))
+        )
         cart = (
             cartographer.Cartographer(engine, graph, llm=settings.llm)
             if cartographer is not None
@@ -172,15 +177,6 @@ def main() -> None:
             ).investigate
             if detective is not None
             else None
-        )
-        incidents = stack.enter_context(
-            closing(
-                IncidentStore(
-                    path_exists=graph.path_exists,
-                    notify=a2a.notify_seller_os,
-                    settings=settings.reporter,
-                )
-            )
         )
 
         def z_lookup(

@@ -47,6 +47,119 @@ def test_canonical_and_fingerprint():
     )
 
 
+@pytest.mark.parametrize("status", ["resolved", "open", "innocent"])
+def test_excluded_hours(store: IncidentStore, status: str) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.entry.ts = start + timedelta(minutes=30)
+    incident.status = status
+    incident.resolved_ts = start + timedelta(hours=2) if status == "resolved" else None
+    store._save(incident)
+    until = start + timedelta(hours=4)
+    expected = (
+        set()
+        if status == "innocent"
+        else {
+            start + timedelta(hours=i) for i in range(2 if status == "resolved" else 4)
+        }
+    )
+    assert store.excluded_hours(until) == expected
+    assert store.excluded_hours(start) == set()
+    assert store.excluded_hours(start + timedelta(hours=1)) == (
+        set() if status == "innocent" else {start}
+    )
+
+
+def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
+    assert store.excluded_hours(make_incident_s7().entry.ts) == set()
+
+
+@pytest.mark.parametrize("chain", [False, True])
+def test_merged_incident_exclusion_ends_at_survivor_resolution(
+    store: IncidentStore, chain: bool
+) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.opened_ts = incident.entry.ts = start
+    incident.status = "open"
+    incident.resolved_ts = None
+    incident.last_seen_ts = start + timedelta(hours=2)
+    incident.merged_into = "inc_keeper"
+    store._save(incident)
+    keeper = incident.model_copy(deep=True)
+    keeper.id = "inc_keeper"
+    keeper.opened_ts = keeper.entry.ts = start + timedelta(hours=5)
+    keeper.last_seen_ts = start + timedelta(hours=6)
+    keeper.status = "resolved"
+    keeper.resolved_ts = start + timedelta(hours=8)
+    keeper.merged_into = None
+    if chain:
+        survivor = keeper.model_copy(deep=True)
+        survivor.id = "inc_survivor"
+        store._save(survivor)
+        keeper.merged_into = survivor.id
+        keeper.resolved_ts = None
+    store._save(keeper)
+    assert store.excluded_hours(start + timedelta(hours=10)) == {
+        start + timedelta(hours=i) for i in range(8)
+    }
+    assert store.excluded_hours(start + timedelta(hours=1)) == {start}
+
+
+@pytest.mark.parametrize("target", ["missing", "cycle"])
+def test_broken_merge_chain_excludes_conservatively(
+    store: IncidentStore, target: str
+) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.opened_ts = incident.entry.ts = start
+    incident.merged_into = incident.id if target == "cycle" else "inc_missing"
+    store._save(incident)
+    assert store.excluded_hours(start + timedelta(hours=2)) == {
+        start,
+        start + timedelta(hours=1),
+    }
+
+
+@pytest.mark.parametrize("chain", [False, True])
+def test_innocent_survivor_excludes_no_cluster_hours(
+    store: IncidentStore, chain: bool
+) -> None:
+    child = make_incident_s7()
+    start = child.entry.ts.replace(minute=0, second=0, microsecond=0)
+    child.opened_ts = child.entry.ts = start
+    child.status = "open"
+    child.resolved_ts = None
+    child.merged_into = "inc_survivor"
+    survivor = child.model_copy(deep=True)
+    survivor.id = "inc_survivor"
+    survivor.status = "innocent"
+    survivor.merged_into = None
+    if chain:
+        middle = child.model_copy(deep=True)
+        middle.id = "inc_middle"
+        store._save(middle)
+        child.merged_into = middle.id
+    store._save(child)
+    store._save(survivor)
+    assert store.excluded_hours(start + timedelta(hours=10)) == set()
+
+
+@pytest.mark.asyncio
+async def test_exclusions_keep_original_start_after_upsert_and_merge(
+    store: IncidentStore,
+) -> None:
+    first = await store.upsert(result("first"))
+    opened = first.opened_ts
+    updated = await store.upsert(result("second", hours=2))
+    assert updated.id == first.id
+    assert updated.opened_ts == opened
+    assert updated.entry.ts == opened + timedelta(hours=2)
+    assert store.excluded_hours(opened + timedelta(hours=4)) == {
+        opened + timedelta(hours=i) for i in range(4)
+    }
+
+
 @pytest.mark.asyncio
 async def test_symptoms_persist_and_merge(tmp_path):
     path = tmp_path / "symptoms.duckdb"

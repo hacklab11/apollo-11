@@ -79,6 +79,33 @@ class IncidentStore:
         ).fetchone()
         return Incident.model_validate_json(row[0]) if row else None
 
+    def excluded_hours(self, until: datetime) -> set[datetime]:
+        hours: set[datetime] = set()
+        incidents = {incident.id: incident for incident in self.all()}
+        for incident in incidents.values():
+            if incident.status == "innocent":
+                continue
+            hour = min(incident.opened_ts, incident.entry.ts).replace(
+                minute=0, second=0, microsecond=0
+            )
+            survivor = incident
+            visited = {incident.id}
+            while survivor.merged_into is not None:
+                target = survivor.merged_into
+                if target in visited or target not in incidents:
+                    end = until
+                    break
+                visited.add(target)
+                survivor = incidents[target]
+            else:
+                if survivor.status == "innocent":
+                    continue
+                end = min(survivor.resolved_ts or until, until)
+            while hour < end:
+                hours.add(hour)
+                hour += timedelta(hours=1)
+        return hours
+
     def _save(self, incident: Incident) -> None:
         self.db.execute(
             "INSERT INTO incidents (id, incident) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET incident = excluded.incident",

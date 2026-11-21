@@ -21,6 +21,7 @@ def test_sim_source_ignores_warehouse_path(
         {"data": {"source": "sim", "path": str(warehouse)}}
     )
     sim = Mock(spec=Simulator)
+    sim.settings = settings
 
     @contextmanager
     def world(

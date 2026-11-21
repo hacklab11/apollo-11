@@ -3,7 +3,9 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
+import duckdb
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 
@@ -18,10 +20,69 @@ from eye.contracts import (
     ScenarioState,
     SentinelDecision,
 )
+from eye.datasource import DuckDBSource
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable
 from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator, StepSink
+from eye.schema import create_tables
+
+
+@pytest.mark.asyncio
+async def test_duckdb_ticks_only_on_complete_ingestion(tmp_path: Path) -> None:
+    settings = Settings(sim={"autostart": False})
+    ts = settings.sim.start_ts
+    partitions = tmp_path / "partitions.parquet"
+    path = tmp_path / "warehouse.duckdb"
+
+    def publish(loaded: int) -> None:
+        with duckdb.connect() as con:
+            con.execute(
+                "COPY (SELECT 'traffic_hourly' AS table_name, 'DE' AS country, "
+                "?::TIMESTAMPTZ AS ts, 10::BIGINT AS expected_rows, "
+                "10::BIGINT AS loaded_rows, ?::TIMESTAMPTZ AS loaded_at "
+                "UNION ALL SELECT 'traffic_hourly', 'DE', ?, 10, ?, ?) TO ? (FORMAT PARQUET)",
+                [ts, ts + HOUR, ts + HOUR, loaded, ts + 2 * HOUR, str(partitions)],
+            )
+
+    publish(9)
+    with duckdb.connect(str(path)) as con:
+        create_tables(con)
+        con.execute("DROP TABLE partition_status")
+        con.execute(
+            f"CREATE VIEW partition_status AS SELECT * FROM read_parquet('{partitions}')"
+        )
+    source = DuckDBSource(path)
+    store = IncidentStore(":memory:")
+    core = Orchestrator(
+        settings, source, Sentinel(0), store, LLMClient(settings.llm), lambda *_: 0
+    )
+    calls: list[datetime] = []
+    events: asyncio.Queue[Event] = asyncio.Queue()
+    core.events._subscribers.add(events)
+    original = core.sentinel.run
+
+    async def run(stamp: datetime, **kwargs) -> list[SentinelDecision]:
+        calls.append(stamp)
+        return await original(stamp, **kwargs)
+
+    core.sentinel.run = run
+    try:
+        assert core.sim_ts == source.live_start
+        assert source.history_start == ts
+        assert (await core.step_once()).tick == 0
+        assert calls == [] and events.empty()
+        publish(10)
+        assert (await core.step_once()).tick == 1
+        assert calls == [ts + HOUR]
+        assert events.get_nowait().type == "tick"
+        assert events.empty()
+        assert (await core.step_once()).tick == 1
+        assert calls == [ts + HOUR] and events.empty()
+    finally:
+        await core.close()
+        store.close()
+        source.close()
 
 
 @pytest.mark.asyncio
@@ -73,6 +134,10 @@ async def test_reporter_budget_exhaustion_still_finishes_incident() -> None:
 @dataclass
 class Clock:
     now: datetime
+
+    def __post_init__(self) -> None:
+        self.live_start = self.now
+        self.history_start = self.now - 28 * 24 * HOUR
 
     def step(self) -> None:
         self.now += HOUR
@@ -168,7 +233,10 @@ async def test_failed_sentinel_logs_reason_and_scans_next_hour(caplog):
 
 
 @pytest.mark.asyncio
-async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) -> None:
+@pytest.mark.parametrize("manual", [True, False])
+async def test_start_retries_interrupted_investigation_with_its_trail(
+    tmp_path, manual: bool
+) -> None:
     settings = Settings(sim={"autostart": False})
     decision = SentinelDecision(
         anomaly=make_anomaly(), action="investigate", reason="Outage"
@@ -186,6 +254,7 @@ async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) 
     first_process.close()
 
     async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
+        assert orchestrator.sim.now == incident.entry.ts + HOUR
         await on_step(previous_step.model_copy(update={"id": "stp_retried"}))
         return InvestigationResult(
             investigation_id="inv_fake",
@@ -213,7 +282,11 @@ async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) 
     )
     try:
         await orchestrator.start()
-        await orchestrator.step_once()
+        status = await orchestrator._step(manual=manual)
+        if not manual:
+            assert status.tick == 0 and orchestrator.paused
+            assert status.investigations_running == 1
+            await asyncio.gather(*orchestrator._tasks)
         (final,) = store.all()
         assert final.id == incident.id and final.status == "open"
         assert final.investigation_ids == ["inv_interrupted"]
@@ -308,7 +381,8 @@ async def test_step_investigates_upserts_and_resolves_after_clear(
         assert incident.status == "resolved"
         assert incident.resolved_ts == orchestrator.sim_ts
         assert injected.injected_ts not in orchestrator.clean_hours()
-        assert cleared.cleared_ts in orchestrator.clean_hours()
+        assert cleared.cleared_ts not in orchestrator.clean_hours()
+        assert incident.resolved_ts in orchestrator.clean_hours()
     finally:
         await stream.aclose()
         await orchestrator.close()
