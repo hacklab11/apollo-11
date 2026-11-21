@@ -1,5 +1,6 @@
 """Messages transport, replay storage, and process-local usage counters."""
 
+import asyncio
 import hashlib
 import json
 import time
@@ -19,6 +20,16 @@ class BudgetExceeded(Exception):
 
 class LLMUnavailable(Exception):
     """The SDK exhausted its retries."""
+
+
+def _append_record(path: Path, entry: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as cache:
+        cache.write(json.dumps(entry, sort_keys=True) + "\n")
+
+
+def _read_records(path: Path) -> str:
+    return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 class LLMClient:
@@ -54,8 +65,9 @@ class LLMClient:
         path = Path(self.settings.cache_path)
         response = None
         if self.settings.mode == "replay":
-            if path.exists():
-                for line in path.read_text(encoding="utf-8").splitlines():
+            records = await asyncio.to_thread(_read_records, path)
+            if records:
+                for line in records.splitlines():
                     entry = json.loads(line)
                     if entry["key"] == key:
                         response = BetaMessage.model_validate(entry["response_json"])
@@ -70,19 +82,15 @@ class LLMClient:
                 self._sdk = AsyncAnthropic(max_retries=2)
             response = await self._sdk.beta.messages.create(**request)
             if self.settings.mode == "record":
-                path.parent.mkdir(parents=True, exist_ok=True)
-                with path.open("a", encoding="utf-8") as cache:
-                    cache.write(
-                        json.dumps(
-                            {
-                                "key": key,
-                                "request_digest": key,
-                                "response_json": response.model_dump(mode="json"),
-                            },
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    )
+                await asyncio.to_thread(
+                    _append_record,
+                    path,
+                    {
+                        "key": key,
+                        "request_digest": key,
+                        "response_json": response.model_dump(mode="json"),
+                    },
+                )
         usage = response.usage
         self.tokens_in += (
             usage.input_tokens

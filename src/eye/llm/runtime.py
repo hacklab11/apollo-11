@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from anthropic import APIError, AnthropicError
+from anthropic import AnthropicError
 from pydantic import BaseModel
 
 from eye.contracts import Actor, StepAction, TrailStep
@@ -89,7 +89,9 @@ async def run_agent(
     system = [
         {
             "type": "text",
-            "text": Path(spec.system_prompt_file).read_text(),
+            "text": await asyncio.to_thread(
+                Path(spec.system_prompt_file).read_text, encoding="utf-8"
+            ),
             "cache_control": {"type": "ephemeral"},
         }
     ]
@@ -131,7 +133,7 @@ async def run_agent(
                     raise TypeError("tool output must be a BaseModel")
             content = output.model_dump_json()
             summary = str(getattr(output, "summary", "Submitted final answer"))
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 -- tool failures are returned to the model
             error = True
             output = None
             summary = f"{type(exc).__name__}: tool {block.name} failed"
@@ -171,7 +173,7 @@ async def run_agent(
                     "fallbacks": "default",
                 }
             )
-        except (APIError, AnthropicError) as exc:
+        except AnthropicError as exc:
             await emit("note", "LLM unavailable after SDK retries")
             raise LLMUnavailable("LLM unavailable after SDK retries") from exc
         stop = response.stop_reason
