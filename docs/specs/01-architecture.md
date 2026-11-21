@@ -27,8 +27,8 @@ apollo-11/
     contracts/src/eye/           # contracts.py, config.py
     data/src/eye/                # schema.py, registry/, graph/, tools/
     llm/src/eye/llm/             # interim runtime, client, prompts/*.md
-    agents/src/eye/agents/       # Sentinel, Detective, Skeptic, Reporter, Cartographer
-    orchestrator/src/eye/        # orchestrator.py, incidents/, api/, a2a_client.py,
+    agents/src/eye/              # agents/ (five core agents), a2a_client.py
+    orchestrator/src/eye/        # orchestrator.py, incidents/, api/,
                                 # datasource.py, main.py (eye-core)
     specialists/src/eye/specialists/ # eye-specialists A2A service
     mcp/src/eye/mcp_server.py    # eye-mcp service

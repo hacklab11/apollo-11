@@ -124,7 +124,6 @@ forbidden_modules = [
     "eye.orchestrator",
     "eye.incidents",
     "eye.api",
-    "eye.a2a_client",
     "eye.datasource",
     "eye.main",
     "eye.mcp_server",
@@ -141,13 +140,9 @@ forbidden_modules = [
     "eye.orchestrator",
     "eye.incidents",
     "eye.api",
-    "eye.a2a_client",
     "eye.datasource",
     "eye.main",
     "eye.mcp_server",
-]
-ignore_imports = [
-    "eye.agents.detective -> eye.a2a_client", # wave 3 removes this existing edge
 ]
 
 [[tool.importlinter.contracts]]
