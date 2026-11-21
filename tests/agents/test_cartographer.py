@@ -2,7 +2,7 @@ import asyncio
 import copy
 import json
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,7 +29,7 @@ from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, Trail
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore
 from eye.llm.client import BudgetExceeded, LLMClient, LLMUnavailable
-from eye.llm.runtime import AgentRefused
+from eye.llm.runtime import AgentRefused, AgentSpec
 from eye.main import _refine_causal_seeds
 from eye.orchestrator import Orchestrator
 from eye.registry.engine import MetricEngine
@@ -602,18 +602,25 @@ async def test_startup_serves_while_refining_and_caches_only_success(
     )
     cartographer.graph.add_edge(seed)
     engine = cartographer.engine
-    end = engine._con.execute("SELECT max(ts) FROM orders_hourly").fetchone()[0]
+    end = engine._con.execute(
+        "SELECT max(ts) + INTERVAL 1 HOUR FROM orders_hourly"
+    ).fetchone()[0]
     settings = Settings(sim={"autostart": False})
     entered = asyncio.Event()
     release = asyncio.Event()
     stopped = asyncio.Event()
 
-    async def submit(*_args: object) -> SeedSubmission:
+    async def submit(spec: AgentSpec, *_args: object) -> SeedSubmission:
         entered.set()
         try:
             await release.wait()
         finally:
             stopped.set()
+        for tool in spec.tools:
+            if tool.name == "query_metric":
+                tool.fn(tool.input_model(metric="orders"))
+            elif tool.name == "lagged_correlation":
+                tool.fn(tool.input_model(src="orders", dst="refunds"))
         return SeedSubmission(
             seeds=[
                 SeedDecision(
@@ -624,7 +631,14 @@ async def test_startup_serves_while_refining_and_caches_only_success(
                     rationale="Plausible lagged mechanism.",
                 )
             ],
-            edges=[],
+            edges=[
+                EdgeProposal(
+                    src="refunds",
+                    dst="orders",
+                    type="causal_hypothesis",
+                    rationale="Possible reverse relationship.",
+                )
+            ],
             notes="Reviewed",
         )
 
@@ -665,9 +679,20 @@ async def test_startup_serves_while_refining_and_caches_only_success(
             await core.start()
             assert core._seed_refinement is pending
             if not cancel:
+                engine._con.execute(
+                    "INSERT INTO orders_hourly VALUES (?, 'DE', 'electronics', 'small_3P', 9000, 900)",
+                    [end],
+                )
+                engine.invalidate()
+                query = Mock(wraps=engine.query_metric)
+                monkeypatch.setattr(engine, "query_metric", query)
                 release.set()
                 await pending
-                assert GraphStore.load(graph_path).edges()[0].evidence["llm_refined"]
+                cached_edges = GraphStore.load(graph_path).edges()
+                assert len(cached_edges) == 2
+                assert cached_edges[0].evidence["llm_refined"]
+                assert query.call_args_list
+                assert {call.args[2] for call in query.call_args_list} == {end}
 
         assert stopped.is_set()
         if cancel:
@@ -995,9 +1020,16 @@ async def test_pending_seed_does_not_abort_other_refinement(
         )
     original = cartographer._correlation
 
-    def correlate(engine: MetricEngine, src: str, dst: str, lag: int = 96):
+    def correlate(
+        engine: MetricEngine,
+        src: str,
+        dst: str,
+        lag: int = 96,
+        *,
+        end: datetime | None = None,
+    ):
         assert dst != "pending_refunds", "pending seed must not be queried"
-        return original(engine, src, dst, lag)
+        return original(engine, src, dst, lag, end=end)
 
     async def submit(spec: object, content: str, *args: object) -> SeedSubmission:
         payload = json.loads(content)["seeds"]
