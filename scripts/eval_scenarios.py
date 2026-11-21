@@ -45,7 +45,7 @@ from eye.sim.engine import Simulator
 from eye.sim.scenarios import _TITLES, ScenarioManager
 from eye.specialists.app import SPECIALISTS
 from eye.specialists.app import answer as answer_specialist
-from eye.specialists.tools import DataClient
+from eye.specialists.tools import DataApiUnavailable, DataClient
 from eye.tools.stats import expected
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -142,6 +142,8 @@ class EvalA2AClient(A2AClient):
             ):
                 entry = json.loads(line)
                 if entry["key"] == key:
+                    if "error" in entry:
+                        raise ValueError(entry["error"]["message"])
                     return entry["response_json"]
             self.replay_misses += 1
             print(json.dumps({"event": "replay_miss", "kind": "a2a", "key": key}))
@@ -174,9 +176,26 @@ class EvalA2AClient(A2AClient):
             module = next(
                 module for module in SPECIALISTS if module.NAME == args["agent"]
             )
-            response, _ = await answer_specialist(
-                module, self.local_data, args["request"], self.local_settings
-            )
+            try:
+                response, _ = await answer_specialist(
+                    module, self.local_data, args["request"], self.local_settings
+                )
+            except Exception as exc:  # noqa: BLE001 -- mirror failed A2A tasks
+                detail = (
+                    str(exc)
+                    if isinstance(exc, DataApiUnavailable)
+                    else type(exc).__name__
+                )
+                message = f"{module.TITLE} failed: {detail}"
+                if self.mode == "record":
+                    append_json(
+                        self.path,
+                        {
+                            "key": key,
+                            "error": {"type": "ValueError", "message": message},
+                        },
+                    )
+                raise ValueError(message) from exc
             value = response.model_dump(mode="json")
         elif method == "fetch_cards":
             value = {

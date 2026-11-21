@@ -481,6 +481,72 @@ async def test_local_specialist_uses_bound_eval_data(
         await client.aclose()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["live", "record"])
+@pytest.mark.parametrize(
+    "error",
+    [
+        RuntimeError("private exception detail"),
+        harness.DataApiUnavailable("core data API unavailable"),
+    ],
+)
+async def test_local_specialist_failure_records_and_replays(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str, error: Exception
+) -> None:
+    async def answer(*args: object) -> None:
+        raise error
+
+    async def forbidden(*args: object) -> None:
+        raise AssertionError("replay reached specialist")
+
+    monkeypatch.setattr(harness, "answer_specialist", answer)
+    monkeypatch.setattr(harness.A2AClient, "ask", forbidden)
+    request = harness.SpecialistRequest(
+        investigation_id="eval",
+        question="Why?",
+        metric="orders",
+        segment={},
+        window_start_ts=CAMPAIGN_TS,
+        window_end_ts=CAMPAIGN_TS + harness.HOUR,
+        baseline_start_ts=CAMPAIGN_TS - harness.HOUR,
+        baseline_end_ts=CAMPAIGN_TS,
+        context="eval",
+    )
+    module = next(
+        module for module in harness.SPECIALISTS if module.NAME == "discovery"
+    )
+    detail = (
+        str(error)
+        if isinstance(error, harness.DataApiUnavailable)
+        else type(error).__name__
+    )
+    expected = f"{module.TITLE} failed: {detail}"
+    path = tmp_path / "fixture.jsonl"
+    client = harness.EvalA2AClient(A2aSettings(), mode, path)
+    client.local_data, client.local_settings = object(), object()
+    try:
+        with pytest.raises(ValueError) as caught:
+            await client.ask("discovery", request)
+        assert str(caught.value) == expected
+    finally:
+        await client.aclose()
+    if mode == "live":
+        assert not path.exists()
+        return
+    entry = harness.json.loads(path.read_text())
+    assert entry["error"] == {"type": "ValueError", "message": expected}
+    assert "private exception detail" not in path.read_text()
+    monkeypatch.setattr(harness, "answer_specialist", forbidden)
+    replay = harness.EvalA2AClient(A2aSettings(), "replay", path)
+    try:
+        with pytest.raises(ValueError) as caught:
+            await replay.ask("discovery", request)
+        assert str(caught.value) == expected
+        assert replay.replay_misses == 0
+    finally:
+        await replay.aclose()
+
+
 def test_seeded_identity_streams() -> None:
     def values(seed: int) -> list:
         stream = harness.seeded_ids(seed, "S3", "detective")
