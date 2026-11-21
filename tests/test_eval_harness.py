@@ -43,6 +43,55 @@ def test_oracle_ids() -> None:
     assert next(iter(oracle)) == "D6"
 
 
+@pytest.mark.parametrize("include_audit", [True, False])
+def test_scenario_audit_supplies_injection_and_seller_evidence(
+    include_audit: bool,
+) -> None:
+    incident = make_incident_s7()
+    root = incident.root_cause.model_copy(update={"first_change_ts": CAMPAIGN_TS})
+    incident = incident.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS,
+            "summary": "Price mistake for S-42",
+            "root_cause": root,
+        }
+    )
+    state = harness.ScenarioState(
+        id="S8",
+        title="Price typo",
+        active=True,
+        injected_ts=CAMPAIGN_TS,
+        cleared_ts=None,
+    )
+    audit = harness.scenario_audit(state, {"seller_id": "S-42"})
+    defer = TrailStep(
+        id="partial",
+        investigation_id="sentinel:partial",
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="sentinel",
+        action="decision",
+        output_summary="Partial hour",
+        output={
+            "action": "defer",
+            "anomaly": {"ts": CAMPAIGN_TS.isoformat(), "completeness": 0.5},
+        },
+    )
+    entry = {
+        "play": ["S8@0"],
+        "expect": {
+            "first_change_at_inject": "S8",
+            "first_hour_deferred": "S8",
+            "first_hour_completeness": {"scenario": "S8", "value": 0.5},
+            "must_mention_scenario_seller": "S8",
+        },
+    }
+    results = harness.evaluate(
+        entry, [incident], [defer, audit] if include_audit else [defer]
+    )
+    assert all(c["passed"] == include_audit for c in results)
+
+
 @pytest.mark.parametrize(
     "provider,model,expected_provider,expected_model",
     [

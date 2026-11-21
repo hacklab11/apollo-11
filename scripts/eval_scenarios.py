@@ -28,6 +28,7 @@ from eye.config import LlmSettings, load_settings
 from eye.contracts import (
     AddMetricRequest,
     Incident,
+    ScenarioState,
     SellerAlertAck,
     SpecialistRequest,
     SpecialistResponse,
@@ -104,6 +105,23 @@ def append_json(path: Path, value: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as output:
         output.write(json.dumps(value, sort_keys=True) + "\n")
+
+
+def scenario_audit(state: ScenarioState, params: dict) -> TrailStep:
+    return TrailStep(
+        id=f"eval:scenario:{state.id}:{state.injected_ts.isoformat()}",
+        investigation_id="eval:scenarios",
+        n=1,
+        real_ts=state.injected_ts,
+        actor="orchestrator",
+        action="decision",
+        output_summary=f"Injected {state.id}",
+        output={
+            "scenario_id": state.id,
+            "inject_ts": state.injected_ts.isoformat(),
+            "scenario_seller": params.get("seller_id"),
+        },
+    )
 
 
 class EvalLLMClient(LLMClient):
@@ -674,7 +692,11 @@ def evaluate(
         deadline = spec.get("max_ticks_to_detect")
         spec = spec.get("expect", spec)
         candidates = matching_incidents(entry, raw, steps, spec, scenario)
-        sentinel_steps = [t for t in steps if t["actor"] == "sentinel"]
+        sentinel_steps = [
+            t
+            for t in steps
+            if t["actor"] == "sentinel" or t["investigation_id"] == "eval:scenarios"
+        ]
         choices = [
             (
                 i,
@@ -988,9 +1010,15 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                     action, at = command.rsplit("@", 1)
                     if int(at) == hour:
                         clear = action.startswith("clear(")
-                        await core.set_scenario(
+                        state = await core.set_scenario(
                             action[6:-1] if clear else action, active=not clear
                         )
+                        if not clear:
+                            await core.record_step(
+                                scenario_audit(
+                                    state, core.scenarios.params.get(action, {})
+                                )
+                            )
                 await core.step_once()
                 for decision in core.decisions:
                     if decision.anomaly.ts == core.sim_ts:
