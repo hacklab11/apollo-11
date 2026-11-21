@@ -68,7 +68,8 @@ def tools(client: DataClient) -> list[ToolSpec]:
             "new_sellers",
             "sellers/new",
             NewSellersInput,
-            "Sellers that joined since a time, with their offers in the window.",
+            "Sellers that joined inside the window (and after since, if given), "
+            "with their offers in the window.",
         ),
         metric_tool(client),
         changes_tool(client),

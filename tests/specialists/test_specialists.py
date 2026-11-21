@@ -158,3 +158,14 @@ async def test_record_fixture(agent: str, world, monkeypatch) -> None:
         task.status
     )
     assert Path(fixture).read_text().strip()
+
+
+@pytest.mark.asyncio
+async def test_truncated_rows_are_flagged_in_summary() -> None:
+    rows = [{"ts": f"2026-11-27T{i % 24:02d}:00:00Z", "n": i} for i in range(250)]
+    transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"rows": rows}))
+    async with httpx.AsyncClient(transport=transport) as http:
+        result = await DataClient(http, "http://core/data").get("offers", {})
+    assert result.total_rows == 250 and len(result.rows) == 200
+    assert "only the first 200 shown" in result.summary
+    assert "narrow the window" in result.summary

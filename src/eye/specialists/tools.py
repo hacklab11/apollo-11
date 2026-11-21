@@ -1,16 +1,19 @@
 """Specialist domain tools: read-only HTTP calls to the core data API."""
 
 import json
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import AwareDatetime, BaseModel, Field
 
-from eye.contracts import Category, Country, Platform, SellerTier
+from eye.contracts import Category, Channel, Country, Platform, SellerTier
 from eye.llm.runtime import ToolSpec
 
 # The data API returns up to 5 000 rows; the model only needs enough to reason.
 MAX_ROWS = 200
+
+
+Psp = Literal["PSP-1", "PSP-2"]
 
 
 class Window(BaseModel):
@@ -57,7 +60,7 @@ class CheckoutFunnelInput(Window):
 
 
 class PaymentsInput(Window):
-    psp: str | None = Field(None, description="PSP-1 or PSP-2")
+    psp: Psp | None = None
 
 
 class ErrorsInput(Window):
@@ -76,6 +79,8 @@ class MetricInput(Window):
     platform: Platform | None = None
     category: Category | None = None
     seller_tier: SellerTier | None = None
+    channel: Channel | None = None
+    psp: Psp | None = None
     advertiser_id: str | None = None
 
 
@@ -104,11 +109,17 @@ class DataClient:
             )
         rows = response.json()["rows"]
         shown = rows[:MAX_ROWS]
+        summary = f"/data/{endpoint}: {len(rows)} rows"
+        if len(rows) > MAX_ROWS:
+            summary += f", only the first {MAX_ROWS} shown"
+            if "ts" in shown[-1]:
+                summary += f" (up to ts {shown[-1]['ts']})"
+            summary += "; narrow the window or add a filter to see the rest"
         return DataResult(
             endpoint=endpoint,
             rows=shown,
             total_rows=len(rows),
-            summary=f"/data/{endpoint}: {len(rows)} rows, {len(shown)} shown.",
+            summary=summary + ".",
         )
 
     async def check(self, start: AwareDatetime, end: AwareDatetime) -> None:
@@ -156,6 +167,8 @@ def metric_tool(client: DataClient) -> ToolSpec:
                 "platform",
                 "category",
                 "seller_tier",
+                "channel",
+                "psp",
                 "advertiser_id",
             )
             if key in params
