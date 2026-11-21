@@ -160,9 +160,9 @@ def build_world(seed: int, *, joined_ts: datetime) -> World:
     rng = np.random.default_rng(seed)
     suppliers = tuple(f"SUP-{i}" for i in range(1, 7))
     skus: dict[str, Sku] = {}
-    for category, (prefix, count, low, high, _) in _CATEGORIES.items():
+    for category, (prefix, count, low, high, share) in _CATEGORIES.items():
         weights = np.arange(1, count + 1) ** -1.1
-        weights /= weights.sum()
+        weights *= share / weights.sum()
         for rank, weight in enumerate(weights, 1):
             sku = f"{prefix}{rank:02d}"
             skus[sku] = Sku(
