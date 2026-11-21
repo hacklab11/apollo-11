@@ -223,6 +223,8 @@ class LLMClient:
         }
 
     async def create(self, request: dict[str, Any]) -> BetaMessage:
+        if self.settings.provider == "anthropic" and "tool_choice" in request:
+            request = {**request, "tool_choice": {"type": "auto"}}
         identity = {
             "model": request["model"],
             "system": "".join(b["text"] for b in request["system"]),
