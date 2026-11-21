@@ -6,10 +6,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import cast, get_args
+from typing import Self, cast, get_args
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from eye.config import LlmSettings
 from eye.contracts import (
@@ -538,7 +538,29 @@ class Cartographer:
                     "dst_description": self.engine._registry.get(edge.dst).description,
                 }
             )
-        spec = replace(self._spec(self.engine), submit_model=SeedSubmission)
+        required = {(edge.src, edge.dst) for edge in seeds}
+
+        class CompleteSeedSubmission(SeedSubmission):
+            @model_validator(mode="after")
+            def complete(self) -> Self:
+                pairs = [(decision.src, decision.dst) for decision in self.seeds]
+                supplied = set(pairs)
+                errors = []
+                for label, pairs_to_report in (
+                    ("Missing", required - supplied),
+                    ("Unexpected", supplied - required),
+                    ("Duplicate", {pair for pair in pairs if pairs.count(pair) > 1}),
+                ):
+                    if pairs_to_report:
+                        names = ", ".join(
+                            f"{src} -> {dst}" for src, dst in sorted(pairs_to_report)
+                        )
+                        errors.append(f"{label} seed decisions: {names}")
+                if errors:
+                    raise ValueError("; ".join(errors))
+                return self
+
+        spec = replace(self._spec(self.engine), submit_model=CompleteSeedSubmission)
         submission = cast(
             SeedSubmission,
             await run_agent(
@@ -549,7 +571,7 @@ class Cartographer:
             ),
         )
         decisions = {(d.src, d.dst): d for d in submission.seeds}
-        if set(decisions) != {(e.src, e.dst) for e in seeds}:
+        if set(decisions) != required or len(submission.seeds) != len(required):
             raise ValueError("refinement must decide every seed exactly once")
         updated = []
         for edge, data in zip(seeds, payload, strict=True):
