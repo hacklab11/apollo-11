@@ -128,6 +128,65 @@ class Sentinel:
 
 
 @pytest.mark.asyncio
+async def test_start_retries_interrupted_investigation_with_its_trail(tmp_path) -> None:
+    settings = Settings(sim={"autostart": False})
+    decision = SentinelDecision(
+        anomaly=make_anomaly(), action="investigate", reason="Outage"
+    )
+    path = tmp_path / "ops.duckdb"
+    first_process = IncidentStore(path)
+    incident = first_process.match(decision)
+    assert incident is not None
+    incident.investigation_ids = ["inv_interrupted"]
+    first_process._save(incident)
+    previous_step = make_trail_s7()[0].model_copy(
+        update={"investigation_id": "inv_interrupted", "n": 1}
+    )
+    first_process.add_step(previous_step)
+    first_process.close()
+
+    async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
+        await on_step(previous_step.model_copy(update={"id": "stp_retried"}))
+        return InvestigationResult(
+            investigation_id="inv_fake",
+            entry=anomaly,
+            verdict="HYPOTHESIS",
+            summary="No confirmed cause",
+            root_cause=None,
+            hypotheses=[],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=1,
+            stop_reason="budget",
+        )
+
+    store = IncidentStore(path)
+    orchestrator = Orchestrator(
+        settings,
+        Clock(incident.entry.ts + HOUR),
+        Sentinel(0),
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    try:
+        await orchestrator.start()
+        await orchestrator.step_once()
+        (final,) = store.all()
+        assert final.id == incident.id and final.status == "open"
+        assert final.investigation_ids == ["inv_interrupted"]
+        assert [(step.id, step.n) for step in store.trail("inv_interrupted")] == [
+            (previous_step.id, 1),
+            ("stp_retried", 2),
+        ]
+    finally:
+        await orchestrator.close()
+        store.close()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
 async def test_step_investigates_upserts_and_resolves_after_clear(
     failure: bool,

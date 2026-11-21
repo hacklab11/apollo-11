@@ -193,7 +193,7 @@ class Orchestrator:
             self._pending.extend(
                 item
                 for item in self._open_incidents()
-                if item.status == "investigating" and not item.investigation_ids
+                if item.status == "investigating"
             )
         await self.refresh_agents()
         if self.settings.sim.autostart:
@@ -424,11 +424,17 @@ class Orchestrator:
     async def _investigate(self, item: Incident) -> None:
         assert self.investigate is not None
         entry = item.entry
-        investigation_id = f"inv_{uuid4().hex}"
         current = self.incidents.get(item.id)
         assert current is not None
-        current.investigation_ids.append(investigation_id)
-        self.incidents._save(current)
+        if current.investigation_ids:
+            investigation_id = current.investigation_ids[-1]
+        else:
+            investigation_id = f"inv_{uuid4().hex}"
+            current.investigation_ids.append(investigation_id)
+            self.incidents._save(current)
+        step_offset = max(
+            (step.n for step in self.incidents.trail(investigation_id)), default=0
+        )
         self.emit(
             "investigation_started",
             {
@@ -441,7 +447,13 @@ class Orchestrator:
 
         async def on_step(step: TrailStep) -> None:
             await self.record_step(
-                step.model_copy(update={"investigation_id": investigation_id}), entry.ts
+                step.model_copy(
+                    update={
+                        "investigation_id": investigation_id,
+                        "n": step_offset + step.n,
+                    }
+                ),
+                entry.ts,
             )
 
         failure = None
