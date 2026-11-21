@@ -83,6 +83,11 @@ class Store:
                 for table, rows in batches.items():
                     if not rows:
                         continue
+                    if table == "purchase_orders":
+                        self._con.execute(
+                            "DELETE FROM purchase_orders WHERE po_id IN (SELECT unnest(?))",
+                            [[row[0] for row in rows]],
+                        )
                     columns = [list(column) for column in zip(*rows, strict=True)]
                     values = ", ".join("unnest(?)" for _ in columns)
                     self._con.execute(f"INSERT INTO {table} SELECT {values}", columns)
