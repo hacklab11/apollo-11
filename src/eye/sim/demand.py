@@ -17,6 +17,8 @@ COUNTRIES: tuple[Country, ...] = ("DE", "FR")
 PLATFORMS: tuple[Platform, ...] = ("android", "ios", "web")
 CHANNELS: tuple[Channel, ...] = ("search", "feed", "other")
 PSPS = ("PSP-1", "PSP-2")
+SEARCH_CHANNEL_SHARE = 0.55
+SEARCHES_PER_SESSION = 1.6
 _SEGMENTS = tuple(product(COUNTRIES, PLATFORMS))
 _BASE_SESSIONS = 20_000 * np.outer([0.60, 0.40], [0.45, 0.35, 0.20]).ravel()
 _HOUR_PROFILE = (
@@ -93,9 +95,9 @@ def generate_demand(
         )
         * rng.lognormal(0, 0.05, len(_SEGMENTS))
     ).astype(np.int64)
-    channels = rng.multinomial(count, [0.55, 0.25, 0.20])
+    channels = rng.multinomial(count, [SEARCH_CHANNEL_SHARE, 0.25, 0.20])
     searches = rng.multinomial(
-        np.rint(channels[:, 0] * 1.6).astype(np.int64), CATEGORY_SHARES
+        np.rint(channels[:, 0] * SEARCHES_PER_SESSION).astype(np.int64), CATEGORY_SHARES
     )
     relevance = np.repeat(
         [modifiers.relevance.get(country, _RELEVANCE) for country in COUNTRIES]

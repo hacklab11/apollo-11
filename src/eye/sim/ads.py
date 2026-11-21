@@ -6,9 +6,19 @@ from datetime import date, datetime
 import numpy as np
 from numpy.random import Generator
 
-from eye.sim.demand import _HOUR_PROFILE, _WEEKDAY_PROFILE, COUNTRIES
+from eye.sim.demand import (
+    _BASE_SESSIONS,
+    _HOUR_PROFILE,
+    _WEEKDAY_PROFILE,
+    COUNTRIES,
+    SEARCH_CHANNEL_SHARE,
+    SEARCHES_PER_SESSION,
+)
 from eye.sim.store import Batches
 from eye.sim.world import CATEGORIES, CATEGORY_SHARES, World
+
+_IMPRESSION_FACTOR = 0.9
+_CTR = 0.02
 
 
 @dataclass
@@ -27,14 +37,14 @@ class Ads:
                 key=lambda a: (-a.base_bid, a.advertiser_id),
             )
             clicks = (
-                20_000
+                _BASE_SESSIONS.sum()
                 * sum(_HOUR_PROFILE)
                 * _WEEKDAY_PROFILE[ts.weekday()]
-                * 0.55
-                * 1.6
+                * SEARCH_CHANNEL_SHARE
+                * SEARCHES_PER_SESSION
                 * share
-                * 0.9
-                * 0.02
+                * _IMPRESSION_FACTOR
+                * _CTR
             )
             for rank, adv in enumerate(ranked):
                 cpc = (
@@ -96,9 +106,13 @@ class Ads:
                 )
                 for c, country in enumerate(COUNTRIES):
                     segments = searches[c * 3 : c * 3 + 3, k]
-                    impressions = round(float(segments.sum()) * 0.9) if rank < 2 else 0
+                    impressions = (
+                        round(float(segments.sum()) * _IMPRESSION_FACTOR)
+                        if rank < 2
+                        else 0
+                    )
                     clicks = min(
-                        int(rng.binomial(impressions, 0.02)),
+                        int(rng.binomial(impressions, _CTR)),
                         int((adv.daily_budget - self.spent.get(aid, 0)) / cpc),
                     )
                     spend = round(clicks * cpc, 2)
