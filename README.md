@@ -1,6 +1,6 @@
 # Eye of the System
 
-Eye of the System watches a simulated marketplace without waiting for a human to ask a question. It ranks unusual changes by business impact, follows a graph of metrics to find causes, and publishes incidents with evidence, affected sellers or platforms, and suggested actions. The Black Friday demo contrasts a planned traffic surge, a checkout outage, and a seller cascade that marketplace totals can hide.
+Eye of the System monitors a graph of metrics without waiting for someone to ask a question. It ranks unusual changes by business impact, investigates possible causes, and publishes incidents with evidence and suggested actions. The platform is not tied to one use case: in [“The €9 headphones”](docs/specs/15-demo-and-pitch.md#1-demo-script-3-min-the-9-headphones), a simulated marketplace investigates one seller's unplanned price drop during a planned electronics coupon day.
 
 ## Observatory
 
@@ -24,13 +24,15 @@ Open `http://localhost:5500/?mock=1` for the graph, sample incidents, and invest
 
 ### Local stack and rehearsal
 
-For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or record mode. Start the services with `./scripts/dev.sh`; core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status`. Once [live UI wiring](docs/tasks/T22-ui-live.md) lands, open the observatory at `http://localhost:8000/`. For a rehearsal from Black Friday 00:00 UTC, start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings).
+For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or record mode. Start with a fresh simulator world and its clock paused (`sim.autostart: false` in local settings). Leave `sim.start_ts` unchanged so replay fixtures still match. Start the services with `./scripts/dev.sh`; Core prepares 28 days of history on first startup. Check `http://localhost:8000/api/status` and open the observatory at `http://localhost:8000/`.
 
 ```sh
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner injects I1 at the start, S7 at +3h, S6 at +6h, adds `refund_rate` at +10h, and clears S7 at +12h. It pauses the automatic clock and advances it through the API. `--speed 5` (the default) waits five real seconds before each simulated hour, plus processing time. On success the runner preserves the original pause state; on an API failure it stops without resuming or undoing changes. Advance the clock beyond the scripted window to show S-99 entering the market. Use a fresh world for another run.
+The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and shows the incomplete-hour decision. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / third-party seller anomaly to attach to that incident. It clears S8 after SellerOS acknowledges reverting the price, then waits for that incident to resolve.
+
+`--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
 Add `--record` to save **core** LLM responses to `data/llm_cache.jsonl`. Keep the cache out of git and use `llm.mode: replay` in your local settings for the next launch. Replay may still call the API on a cache miss. The HTTP mode switch affects only core, not the separately running specialists.
 
@@ -79,8 +81,10 @@ These are expected outcomes, not measured scores. See the [scenario spec](docs/s
 | S5 | Orders rise, but contribution falls | Separate planned growth from the margin fault |
 | S6 | Black Friday repricing and a hijacker squeeze small sellers | Mixed causes; notify SellerOS |
 | S7 | A checkout release breaks web and Android | Confirm the release fault; refute PSP-2 and recommend rollback |
+| S8 | One seller enters the wrong electronics price | Confirm the price error with SellerOS; track recovery |
 | I1 | Planned Black Friday campaign | Innocent; no business alert |
 | I2 | French orders arrive late | Defer or flag a data issue; no business alert |
+| I3 | Planned 10% electronics coupon day | Recognize the expected change; no business alert |
 
 ## A2A and MCP
 
@@ -90,7 +94,7 @@ These are expected outcomes, not measured scores. See the [scenario spec](docs/s
 | [A2A SellerOS](docs/specs/11-selleros-external.md) | `http://localhost:8300` |
 | [MCP, streamable HTTP](docs/specs/12-mcp-server.md) | `http://localhost:8100/mcp` |
 
-Append `/.well-known/agent-card.json` to an A2A base address to inspect its card. For the demo, ask an MCP client: “What is broken right now and who is affected?”
+Append `/.well-known/agent-card.json` to an A2A base address to inspect its card. In Q&A, try asking an MCP client: “What is broken right now and who is affected?”
 
 ## Eval results
 
@@ -98,8 +102,8 @@ No measured results yet. The [scenario eval card](docs/tasks/T23-oracle-and-eval
 
 | Run | Result | Ticks to detect | LLM calls |
 | --- | --- | --- | --- |
-| S1–S7, I1–I2, D1–D5 | Not yet measured | — | — |
+| S1–S8, I1–I3, D1–D6 | Not yet measured | — | — |
 
 ## Limitations
 
-The marketplace is synthetic. Causal links are hypotheses until corroborated; the system recommends interventions rather than applying production changes. The full rehearsal still requires the scenario, Cartographer, and MCP integrations, plus [live UI wiring](docs/tasks/T22-ui-live.md) for browser verification. See the [documentation index](docs/README.md) for the implementation plan and specs.
+The marketplace is synthetic: the five headphones and the €99 → €9 prices are narrative examples. The live run uses the affected electronics SKUs and their observed prices. Causal links are hypotheses until corroborated; the demo's SellerOS intervention changes only the simulated world. See the [documentation index](docs/README.md) for the implementation plan and specs.
