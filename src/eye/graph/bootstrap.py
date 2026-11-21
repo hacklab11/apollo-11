@@ -9,7 +9,7 @@ from pathlib import Path
 from eye.contracts import Edge
 from eye.graph.store import GRAPH_PATH, GraphStore
 from eye.registry.engine import MetricEngine
-from eye.registry.loader import CONFIG_DIR, Identity, Registry
+from eye.registry.loader import CONFIG_DIR, CausalSeed, Identity, Registry
 from eye.tools.identity import parse_identity
 from eye.tools.validate import (
     _window,
@@ -115,7 +115,7 @@ def _formula_edges(
                 )
             )
         if parsed.kind == "sum":
-            shares = _mean_shares(engine, parsed.target, names[1:], scenario_hours)
+            shares = _mean_shares(engine, parsed.target, names[1:])
     return [
         Edge(
             id=f"edg_formula_{identity.id}_{term.name}",
@@ -140,10 +140,8 @@ def _mean_shares(
     engine: MetricEngine,
     target: str,
     components: list[str],
-    scenario_hours: list[datetime] | None,
 ) -> dict[str, float]:
     """|component mean| / |target mean| over the validation window (06 §4)."""
-    del scenario_hours  # a window mean is not sensitive enough to need the exclusion
     start, end = _window(engine, None, None, [target, *components])
     total = engine.metric_window(target, start, end)
     if not total:
@@ -190,7 +188,7 @@ def _breakdown_edge(
 
 
 def _seed_edge(
-    engine: MetricEngine, seed, scenario_hours: list[datetime] | None
+    engine: MetricEngine, seed: CausalSeed, scenario_hours: list[datetime] | None
 ) -> Edge:
     evidence: dict = {"rationale": seed.rationale}
     if pending := _pending(engine._registry, [seed.src, seed.dst]):
