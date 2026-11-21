@@ -490,7 +490,12 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
             actual = [
                 t["output"]["verdict"]
                 for t in trails
-                if t.get("output") and "verdict" in t["output"]
+                if t["actor"] == "orchestrator"
+                and t["action"] == "decision"
+                and t["investigation_id"]
+                in {inv for i in items for inv in i["investigation_ids"]}
+                and t.get("output")
+                and "verdict" in t["output"]
             ]
             remaining = iter(actual)
             ok = all(any(value == verdict for value in remaining) for verdict in wanted)
@@ -770,19 +775,6 @@ def evaluate(
             campaign_id = (
                 "black-friday-2026" if name == "I1" else "coupon-day-electronics"
             )
-            start = (
-                datetime.fromisoformat(entry["start_ts"])
-                if "start_ts" in entry
-                else None
-            )
-            first_fault = min(
-                (
-                    int(p.rsplit("@", 1)[1])
-                    for p in entry.get("play", [])
-                    if p.startswith("S")
-                ),
-                default=0,
-            )
             other = [
                 i
                 for i in incidents
@@ -794,10 +786,6 @@ def evaluate(
                     in (
                         i.root_cause.statement if i.root_cause else i.summary
                     ).casefold()
-                    or (
-                        start is not None
-                        and start <= i.opened_ts < start + first_fault * HOUR
-                    )
                 )
             ]
             campaign_spec = spec.get("expect", spec)

@@ -483,6 +483,88 @@ GROUP BY ts, country, platform, category, seller_tier, channel"""
     )
 
 
+@pytest.mark.asyncio
+async def test_s8_registers_its_expected_demo_metric_on_open() -> None:
+    entry = deepcopy(harness.load_oracle()["S8"])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    actions = harness.ConditionalActions(entry, harness.DEMO_METRICS)
+    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    await actions.poll(core, [demo_incident()], [])
+    core.register_metric.assert_awaited_once_with(
+        harness.DEMO_METRICS[entry["expect"]["metric_attached"]["metric"]]
+    )
+
+
+@pytest.mark.parametrize("confirmed", [True, False])
+def test_verdict_sequence_uses_only_matching_investigation_snapshots(
+    confirmed: bool,
+) -> None:
+    incident = make_incident_s7()
+    step = TrailStep(
+        id="health",
+        investigation_id="sentinel",
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="sentinel",
+        action="tool_call",
+        tool="check_freshness",
+        output_summary="Fresh",
+        output={"verdict": "ok"},
+    )
+    hypothesis = step.model_copy(
+        update={
+            "id": "hypothesis",
+            "investigation_id": incident.investigation_ids[0],
+            "actor": "orchestrator",
+            "action": "decision",
+            "tool": None,
+            "output": {"verdict": "HYPOTHESIS"},
+        }
+    )
+    confirmation = hypothesis.model_copy(
+        update={
+            "id": "confirmation",
+            "output": {"verdict": "CONFIRMED"},
+            "investigation_id": incident.investigation_ids[0]
+            if confirmed
+            else "unrelated",
+        }
+    )
+    result = harness.evaluate(
+        {"expect": {"verdict_sequence": ["HYPOTHESIS", "CONFIRMED"]}},
+        [incident],
+        [step, hypothesis, confirmation],
+    )[0]
+    assert result["passed"] == confirmed
+    assert result["actual"] == (
+        ["HYPOTHESIS", "CONFIRMED"] if confirmed else ["HYPOTHESIS"]
+    )
+
+
+@pytest.mark.parametrize("name", ["S8", "D6"])
+def test_early_unrelated_alert_is_not_attributed_to_coupon_day(name: str) -> None:
+    entry = deepcopy(harness.load_oracle()[name])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    incident = make_incident_s7()
+    incident = incident.model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS,
+            "root_cause": None,
+            "hypotheses": [],
+            "summary": "Toys ad revenue share changed",
+            "entry": incident.entry.model_copy(
+                update={"metric": "ad_revenue", "segment": {"category": "toys"}}
+            ),
+        }
+    )
+    checks = {c["check"]: c for c in harness.evaluate(entry, [incident], [])}
+    assert checks["also.I3.status_any"] == {
+        "check": "also.I3.status_any",
+        "passed": True,
+        "actual": [],
+    }
+
+
 def test_mentions_report_only_found_and_missing_tokens() -> None:
     incident = make_incident_s7().model_copy(
         update={
