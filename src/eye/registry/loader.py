@@ -65,16 +65,16 @@ def formula_inputs(expression: str) -> list[str]:
         tree = ast.parse(expression, mode="eval")
     except SyntaxError:
         raise ValueError(f"invalid formula expression: {expression!r}") from None
-    names: list[str] = []
+    names: list[ast.Name] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
-            if node.id not in names:
-                names.append(node.id)
+            names.append(node)
         elif type(node) not in _FORMULA_NODES:
             raise ValueError(
                 f"formula may only use metric names, + - * / and parentheses: {expression!r}"
             )
-    return names
+    names.sort(key=lambda n: n.col_offset)
+    return list(dict.fromkeys(n.id for n in names))
 
 
 def source_tables(sql: str) -> tuple[str, ...]:
