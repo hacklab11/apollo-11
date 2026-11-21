@@ -59,7 +59,7 @@ def test_seed_registry_matches_spec(registry) -> None:
     assert list(registry.metrics) == SEED_METRICS
     assert all(m.added_by == "seed" for m in registry.metrics.values())
     assert [i.id for i in registry.identities] == [f"F{n}" for n in range(1, 9)]
-    assert len(registry.causal_seeds) == 25
+    assert len(registry.causal_seeds) == 26
     assert T01_METRICS <= {m.name for m in registry.active}
 
 

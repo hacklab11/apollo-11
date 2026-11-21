@@ -28,7 +28,7 @@ S8:
   # Other seeds use the same rule among SellerOS customers excluding S-03/S-07/S-12.
   seller_id: S-24
   price_mult: 0.10
-  stock_hours: 6 # Twice last week's same-hour SKU sales, scaled for the active I1 campaign.
+  stock_hours: 4 # Same-hour sales last week × 2; calibrated to target ~6 h sellout.
 I1:
   campaign_mult: 1.4 # Bible's +40% uplift, coupled cohort sampling to preserve conversion controls.
   discount: 0.1 # Platform-funded electronics coupon fraction.
@@ -37,3 +37,5 @@ I2:
   completeness: 0.4 # Fraction of FR order rows initially loaded.
   duration_hours: 3 # Number of affected event-time partitions.
   backfill_hours: 6 # Missing rows arrive six hours after their event time.
+I3:
+  discount: 0.1 # Electronics-only, platform-funded coupons for 24 h; no session uplift.

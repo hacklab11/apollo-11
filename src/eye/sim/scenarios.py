@@ -23,6 +23,7 @@ _TITLES = {
     "S8": "Price typo: the €9 headphones",
     "I1": "Planned Black Friday campaign",
     "I2": "Late FR order partitions",
+    "I3": "Electronics coupon day",
 }
 
 
@@ -85,7 +86,7 @@ class ScenarioManager:
         self._late_partitions = LatePartitions(
             tuple(p["countries"]), p["completeness"], p["backfill_hours"]
         )
-        self._s8_partitions = LatePartitions(("DE", "FR"), 0.6, 1)
+        self._s8_partitions = LatePartitions(("DE", "FR"), 0.5, 1)
         self._s8_original: list[
             tuple[Offer, float, Literal["fixed", "match", "beat"]]
         ] = []
@@ -343,6 +344,22 @@ class ScenarioManager:
                     "platform_discounts_eur_per_day": 25000,
                 },
             )
+        elif id == "I3":
+            add_change(
+                batches,
+                ts,
+                "growth",
+                kind="campaign",
+                planned=True,
+                scope={"category": "electronics"},
+                description="coupon-day-electronics",
+                expected_effect={
+                    "platform_discounts": (
+                        f"{p['discount']:.0%} of electronics reference-price GMV"
+                    ),
+                    "duration_hours": 24,
+                },
+            )
         elif id == "S7":
             change(
                 "checkout-web", "checkout-web v5.8: new Place Order button component"
@@ -372,6 +389,12 @@ class ScenarioManager:
                 batches[table] = [
                     (f"{r[0]}-{id}-{len(self._states)}", *r[1:]) for r in batches[table]
                 ]
+        if id == "I3":
+            identifier = "coupon-day-electronics"
+            if any(s.id == "I3" and s.cleared_ts is not None for s in self._states):
+                identifier += f"-{len(self._states)}-{ts.isoformat()}"
+            row = batches["change_log"][0]
+            batches["change_log"] = [(identifier, *row[1:])]
         self.sim.store.append(batches)
 
     def _reset_switches(self) -> None:
@@ -393,6 +416,12 @@ class ScenarioManager:
                 and self._pending[state.id] <= hour.ts
             ):
                 self._start(state)
+            if (
+                state.active
+                and state.id == "I3"
+                and hour.ts >= state.injected_ts + timedelta(hours=24)
+            ):
+                self.clear("I3")
         self._reset_switches()
         for state in self.active():
             id, p = state.id, self.params[state.id]
@@ -440,8 +469,8 @@ class ScenarioManager:
                     add_external_status(
                         hour.batches, hour.ts, "PSP-2", "ok", "latency recovered"
                     )
-            if id in ("I1", "S5"):
-                category = "electronics" if id == "I1" else "home"
+            if id in ("I1", "I3", "S5"):
+                category = "home" if id == "S5" else "electronics"
                 for sku in sim.world.skus.values():
                     if sku.category == category:
                         sim.finance.platform_discount[sku.sku] = (

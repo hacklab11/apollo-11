@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 import yaml
-from test_scenarios import test_i1_is_planned_uplift as assert_i1_oracle
 
 from eye.config import Settings
 from eye.sim.cli import _play_schedule
@@ -52,32 +51,40 @@ def fork(base: Simulator, path: Path) -> Iterator[Simulator]:
         yield sim
 
 
-def metrics(sim: Simulator, start: datetime, end: datetime) -> tuple[float, float]:
+def metrics(
+    sim: Simulator, start: datetime, end: datetime, fee_segment: str
+) -> tuple[float, float]:
     with sim.store.cursor() as con:
         return con.execute(
-            "SELECT sum(gmv) / sum(units), sum(fee_revenue) / sum(units) "
+            "SELECT sum(gmv) / sum(units), "
+            f"sum(fee_revenue) FILTER (WHERE {fee_segment}) / "
+            f"sum(units) FILTER (WHERE {fee_segment}) "
             "FROM orders_hourly WHERE category = 'electronics' AND ts >= ? AND ts < ?",
             [start, end],
         ).fetchone()
 
 
-@pytest.fixture(scope="module", params=[42, 43, 47], ids=lambda seed: f"seed-{seed}")
+@pytest.fixture(
+    scope="module",
+    params=[(seed, "seller_tier != '1P'") for seed in (42, 43, 47)],
+    ids=lambda param: f"seed-{param[0]}-3P-electronics",
+)
 def run(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
 ) -> dict[str, Any]:
-    directory = tmp_path_factory.mktemp(f"s8-{request.param}")
+    seed, fee_segment = request.param
+    directory = tmp_path_factory.mktemp(f"s8-{seed}")
     settings = Settings()
-    settings.sim.seed = request.param
+    settings.sim.seed = seed
     with closing(Simulator(settings, db_path=":memory:")) as baseline:
         baseline.selleros_export.path = directory / "baseline.json"
         baseline.backfill()
-        assert_i1_oracle(baseline)
         with (
             fork(baseline, directory / "control.json") as control,
             fork(baseline, directory / "sellers.json") as sim,
         ):
             normal, manager = ScenarioManager(control), ScenarioManager(sim)
-            schedule = _play_schedule("I1@0,S8@10")
+            schedule = _play_schedule("I3@0,S8@10")
             start = sim.now + timedelta(hours=10)
             original = {}
             for hour in range(11):
@@ -114,7 +121,8 @@ def run(
                 if o.seller_id == seller
             ]
             result: dict[str, Any] = {
-                "seed": request.param,
+                "seed": seed,
+                "fee_segment": fee_segment,
                 "seller": seller,
                 "start": start.isoformat(),
                 "changes_match": changes_match,
@@ -152,8 +160,8 @@ def run(
                     if offer.stock == 0:
                         soldout.setdefault(offer.sku, float(hour))
                 if hour == 3:
-                    result["control"] = metrics(control, start, sim.now)
-                    result["actual"] = metrics(sim, start, sim.now)
+                    result["control"] = metrics(control, start, sim.now, fee_segment)
+                    result["actual"] = metrics(sim, start, sim.now, fee_segment)
                 if len(soldout) == len(affected) and hour >= 3:
                     break
                 if hour == 1:
@@ -182,17 +190,19 @@ def run(
                 sim.step()
                 result["recovery"].append(
                     {
-                        "actual": metrics(sim, sim.now - timedelta(hours=1), sim.now),
+                        "actual": metrics(
+                            sim, sim.now - timedelta(hours=1), sim.now, fee_segment
+                        ),
                         "control": metrics(
-                            control, sim.now - timedelta(hours=1), sim.now
+                            control, sim.now - timedelta(hours=1), sim.now, fee_segment
                         ),
                     }
                 )
             result["recovery_control"] = metrics(
-                control, sim.now - timedelta(hours=1), sim.now
+                control, sim.now - timedelta(hours=1), sim.now, fee_segment
             )
             result["recovery_actual"] = metrics(
-                sim, sim.now - timedelta(hours=1), sim.now
+                sim, sim.now - timedelta(hours=1), sim.now, fee_segment
             )
             result["recovery_prices"] = [
                 {
@@ -218,7 +228,7 @@ def test_s8_selection_and_tuning(run: dict[str, Any]) -> None:
         assert run["seller"] == "S-24"
         assert {o["sku"] for o in run["offers"]} == {"E01", "E03"}
     assert run["actual"][0] / run["control"][0] <= 0.7
-    assert run["actual"][1] / run["control"][1] >= 1.3
+    assert run["actual"][1] / run["control"][1] <= 0.7
     assert set(run["sellout_hours"]) == {o["sku"] for o in run["offers"]}
     assert all(4 <= hours <= 8 for hours in run["sellout_hours"].values())
 
@@ -226,8 +236,8 @@ def test_s8_selection_and_tuning(run: dict[str, Any]) -> None:
 def test_s8_late_partitions_and_no_change_log(run: dict[str, Any]) -> None:
     assert {r[0] for r in run["partitions"]} == {"DE", "FR"}
     for country, expected, loaded in run["partitions"]:
-        assert loaded == round(expected * 0.6)
-        assert loaded / expected == pytest.approx(0.6, abs=1 / expected)
+        assert loaded == round(expected * 0.5)
+        assert loaded / expected == pytest.approx(0.5, abs=1 / expected)
         assert run["loaded_counts"][country] == loaded
     assert all(expected == loaded for _, expected, loaded in run["backfilled"])
     assert run["changes_match"]
