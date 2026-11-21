@@ -225,12 +225,6 @@ class LLMClient:
     async def _chat_post(
         self, client: httpx.AsyncClient, key: str, payload: dict[str, Any]
     ) -> BetaMessage:
-        remaining = self._cooldown_until - time.monotonic()
-        if remaining > 0:
-            raise LLMUnavailable(
-                f"Chat Completions rate-limit cooldown ({remaining:.0f}s remaining): "
-                + self._cooldown_reason
-            )
         for attempt in range(3):
             delay = 0.1 * (2**attempt)
             try:
@@ -331,6 +325,13 @@ class LLMClient:
             if response is None:
                 print(json.dumps({"event": "replay_miss", "key": key}))
         if response is None:
+            if self.settings.provider == "openai_compatible":
+                remaining = self._cooldown_until - time.monotonic()
+                if remaining > 0:
+                    raise LLMUnavailable(
+                        f"Chat Completions rate-limit cooldown ({remaining:.0f}s remaining): "
+                        + self._cooldown_reason
+                    )
             if self.status()["budget_paused"]:
                 raise BudgetExceeded("hourly call budget exhausted")
             self._calls.append(time.monotonic())

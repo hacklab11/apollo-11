@@ -296,6 +296,31 @@ async def test_rate_limit_diagnostic_and_cooldown(transport, monkeypatch, status
 
 
 @pytest.mark.asyncio
+async def test_cooldown_rejections_do_not_consume_hourly_budget(transport, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr("eye.llm.client.time.monotonic", lambda: clock[0])
+
+    async def sleep(seconds):
+        clock[0] += seconds
+
+    monkeypatch.setattr("eye.llm.client.asyncio.sleep", sleep)
+    client, requests = transport([429, 429, 429, final()], max_calls_per_hour=50)
+    client._calls.extend([clock[0]] * 48)
+    with pytest.raises(LLMUnavailable):
+        await run_agent(spec(), "go", "inv", discard)
+    for _ in range(4):
+        with pytest.raises(LLMUnavailable, match="cooldown"):
+            await run_agent(spec(), "go", "inv", discard)
+        assert client.status()["calls_per_hour"] == 49
+        assert not client.status()["budget_paused"]
+        assert len(requests) == 3
+    clock[0] += 61
+    assert (await run_agent(spec(), "go", "inv", discard)).value == 9
+    assert len(requests) == 4
+    assert client.status()["calls_per_hour"] == 50
+
+
+@pytest.mark.asyncio
 async def test_provider_error_envelope_retries_and_redacts(transport, monkeypatch):
     async def sleep(seconds):
         pass
