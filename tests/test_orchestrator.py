@@ -332,3 +332,61 @@ async def test_clock_pauses_for_investigations_and_dispatches_within_limit() -> 
         release.set()
         await orchestrator.close()
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_matching_during_reporter_preserves_occurrence_and_last_seen() -> None:
+    settings = Settings(orchestrator={"pause_sim_during_investigation": False})
+    reporting = asyncio.Event()
+    release = asyncio.Event()
+    sentinel = Sentinel(1)
+
+    async def reporter(result: InvestigationResult) -> tuple[str, str]:
+        reporting.set()
+        await release.wait()
+        return Reporter.template(result)
+
+    async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
+        return InvestigationResult(
+            investigation_id="inv_fake",
+            entry=anomaly,
+            verdict="HYPOTHESIS",
+            summary="No confirmed cause",
+            root_cause=None,
+            hypotheses=[],
+            contributions=[],
+            open_questions=[],
+            suggested_actions=[],
+            steps_used=0,
+            stop_reason="budget",
+        )
+
+    store = IncidentStore(":memory:", reporter=reporter)
+    orchestrator = Orchestrator(
+        settings,
+        Clock(settings.sim.start_ts),
+        sentinel,
+        store,
+        LLMClient(settings.llm),
+        lambda *_: 9,
+        investigate=investigate,
+    )
+    try:
+        await orchestrator._step(manual=False)
+        await asyncio.wait_for(reporting.wait(), 2)
+        sentinel.count = 1
+        await orchestrator._step(manual=False)
+        (pending,) = store.all()
+        assert pending.status == "investigating" and pending.occurrences == 2
+        assert pending.last_seen_ts == settings.sim.start_ts + HOUR
+        release.set()
+        await orchestrator.close()
+        (final,) = store.all()
+        assert final.status == "open"
+        assert final.occurrences == 2
+        assert final.last_seen_ts == pending.last_seen_ts
+        assert final.updated_ts >= pending.last_seen_ts
+    finally:
+        release.set()
+        await orchestrator.close()
+        store.close()

@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from eye.a2a_client import A2AClient
+from eye.agents.reporter import Reporter
 from eye.api.events import EventBus
 from eye.config import Settings
 from eye.contracts import (
@@ -480,7 +481,24 @@ class Orchestrator:
         )
         self.emit("investigation_finished", result, entry.ts)
         async with self._upsert_lock:
-            incident = await self.incidents.upsert(result)
+            reporter = self.incidents.reporter
+            narrative = await (reporter or Reporter().write)(result)
+
+            async def prepared_narrative(_: InvestigationResult) -> tuple[str, str]:
+                return narrative
+
+            # Upsert must read its snapshot after the asynchronous narrative call.
+            current = self.incidents.get(item.id)
+            assert current is not None
+            self.incidents.reporter = prepared_narrative
+            try:
+                incident = await self.incidents.upsert(result)
+            finally:
+                self.incidents.reporter = reporter
+            if current.last_seen_ts > incident.last_seen_ts:
+                incident.last_seen_ts = current.last_seen_ts
+                incident.updated_ts = max(incident.updated_ts, incident.last_seen_ts)
+                self.incidents._save(incident)
             if failure is not None:
                 incident.summary = failure
                 self.incidents._save(incident)
