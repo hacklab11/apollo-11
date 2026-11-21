@@ -193,6 +193,8 @@ class MetricEngine:
             if not by_ts and num is None and den is None:
                 continue
             ts = key_values.pop(0) if by_ts else start
+            if has_den and den is None:
+                den = 0  # All denominators NULL: the ratio is undefined, not num.
             out[tuple(str(v) for v in key_values)][ts] = (num, den)
         return dict(out)
 

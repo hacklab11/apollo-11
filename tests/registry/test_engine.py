@@ -162,3 +162,12 @@ def test_incomplete_hours_keep_value_and_lower_completeness(writable, day) -> No
         .completeness
         == 1.0
     )
+
+
+def test_null_denominators_give_no_value(writable, day) -> None:
+    start, end = day
+    writable.execute("UPDATE search_hourly SET searches = NULL WHERE country = 'DE'")
+    engine = MetricEngine(writable, load_registry(writable))
+    points = engine.query_metric("search_ctr", start, end, {"country": "DE"})[0].points
+    assert points and all(p.value is None for p in points)
+    assert engine.metric_window("search_ctr", start, end, {"country": "DE"}) is None
