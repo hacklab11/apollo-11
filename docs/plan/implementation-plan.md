@@ -40,9 +40,9 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
 | 6–9 | **T04**, **T07**, **T08** | **T13**, **T16**, **T18** | finish T21; test oracle wording against the sim data (with Dev 1) | |
 | 9–12 | **T09**, **T05** | **T14**, **T17** | **T22** UI live wiring (after T18) | |
 | 12 | | | | **Checkpoint 2**: S3 and S7 end to end live; trail in UI; I1 innocent |
-| 12–15 | **T10**, **T23 harness** | **T20**, **T24** | acceptance run of S1–S4, S7 with the harness; log failures as GitHub issues | |
+| 12–15 | **T10**, **T27**, **T23 harness** | **T20**, **T24** | acceptance run of S1–S4, S7 with the harness; log failures as GitHub issues | |
 | 15–17 | **T26** deployment; fix data issues | fix agent issues (prompts, stop rules) | T25 part B: slides | |
-| 17 | | | | **Checkpoint 3**: all acceptance criteria (`../specs/00-overview.md` §8) pass once; `eval_scenarios.py --all` table |
+| 17 | | | | **Checkpoint 3**: all acceptance criteria (`../specs/00-overview.md` §8) pass once; `eval_scenarios.py --all` table; D6 (live demo) passes |
 | 17–20 | tune scenario sizes; record replay fixtures; deploy on demo laptop + Codespaces | prompt tuning; README | slides, demo script rehearsal 1 | |
 | 20–22 | **All**: rehearsals 2 and 3, record backup video, freeze `main` (tag `demo-v1`) | | | demo frozen |
 | 22–24 | buffer / sleep | buffer / sleep | buffer / sleep | |
@@ -53,7 +53,7 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
 T00 ─┬─ T01 ─┬─ T02 ─┬─ T05
      │       │       └─ T17
      │       ├─ T03
-     │       ├─ T04 (needs T02, T03)
+     │       ├─ T04 (needs T02, T03) ─── T27 (S8, live demo)
      │       ├─ T06 ─┬─ T07 ─┬─ T13 (needs T11, T12)
      │       │       │       └─ T14 (needs T08, T11, T15, T16)
      │       │       ├─ T08 ─── T09 ─── T10 (needs T11)
@@ -82,6 +82,7 @@ uv run python scripts/eval_scenarios.py --scenario S3 --mode live
 
 # Checkpoint 3
 uv run python scripts/eval_scenarios.py --all --mode live --record-dir tests/fixtures/llm/
+uv run python scripts/eval_scenarios.py --scenario D6 --mode live
 ```
 
 ## 6. Cut order (cut from the top when late)
@@ -91,11 +92,11 @@ uv run python scripts/eval_scenarios.py --all --mode live --record-dir tests/fix
 3. Hijacker in S6 (keep the price loop, stockouts, CPC).
 4. Chart expected band in the UI.
 5. UI chat (keep MCP for Claude Code / Claude Desktop).
-6. I2 late data.
+6. I2 as a separate scenario (keep the late-partition hook: S8 uses it).
 7. S6 emergent from seller rules → S6 as scripted curves with the same timeline.
 8. Codespaces backup (keep the laptop + tunnel).
 
-Never cut: S1–S5, S7, I1, S6 in some form, `add_metric`, SellerOS over A2A, the MCP server, the trail in the UI.
+Never cut: S8 and run D6 (the live demo), S1–S5, S7, I1, S6 in some form, `add_metric`, SellerOS over A2A, the MCP server, the trail in the UI.
 
 ## 7. Risks
 

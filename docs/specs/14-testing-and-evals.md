@@ -22,7 +22,7 @@ uv run python scripts/eval_scenarios.py --all --mode replay
 
 ## 2. Scenario oracle (`tests/oracle/scenarios.yaml`, T23)
 
-Written by P3 from `04-scenarios.md`, one entry per scenario and per combined run (D1–D5):
+Written by P3 from `04-scenarios.md`, one entry per scenario and per combined run (D1–D6):
 
 ```yaml
 S7:

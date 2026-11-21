@@ -1,13 +1,147 @@
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import duckdb
 import numpy as np
 import pytest
 
+from eye.config import Settings
+from eye.registry.engine import MetricEngine
+from eye.registry.loader import load_registry
+from eye.sim import engine as sim_engine
 from eye.sim.apps import Apps
 from eye.sim.changelog import add_change, add_external_status
+from eye.sim.engine import Hour, Simulator
 from eye.sim.pipeline import Pipeline
-from eye.sim.store import Batches
+from eye.sim.store import TABLES, Batches
+
+
+def test_baseline_payment_latency_becomes_active(tmp_path: Path) -> None:
+    settings = Settings()
+    with closing(Simulator(settings, db_path=tmp_path / "latency.duckdb")) as sim:
+        with sim.store.cursor() as reader:
+            registry = load_registry(reader)
+            assert registry.get("payment_latency_p95").status == "pending"
+            with pytest.raises(ValueError, match="payment_latency_p95 is pending"):
+                MetricEngine(reader, registry).metric_value(
+                    "payment_latency_p95", sim.now
+                )
+        sim.step()
+        sim.step()
+        with sim.store.cursor() as reader:
+            registry = load_registry(reader)
+            assert registry.get("payment_latency_p95").status == "active"
+            series = MetricEngine(reader, registry).query_metric(
+                "payment_latency_p95",
+                settings.sim.start_ts,
+                sim.now,
+                group_by=["psp"],
+            )
+            assert {s.segment["psp"] for s in series} == {"PSP-1", "PSP-2"}
+            for s in series:
+                assert len(s.points) == 2
+                assert all(150 < p.value < 250 for p in s.points)
+                assert all(p.completeness == 1.0 for p in s.points)
+            assert len({p.value for s in series for p in s.points}) == 4
+
+
+@pytest.mark.parametrize("latency", [0.0, 900.0])
+def test_payment_latency_override_and_recovery(tmp_path: Path, latency: float) -> None:
+    def override(sim: Simulator, hour: Hour) -> None:
+        hour.demand.psp_latency["PSP-2"] = latency
+
+    settings = Settings()
+    with closing(Simulator(settings, db_path=tmp_path / "latency.duckdb")) as sim:
+        sim.pre_demand_hooks.append(override)
+        sim.step()
+        sim.pre_demand_hooks.clear()
+        sim.step()
+        with sim.store.cursor() as reader:
+            engine = MetricEngine(reader, load_registry(reader))
+            for offset in range(2):
+                ts = settings.sim.start_ts + timedelta(hours=offset)
+                value = engine.metric_value("payment_latency_p95", ts, {"psp": "PSP-2"})
+                if offset == 0:
+                    assert value == latency
+                else:
+                    assert 150 < value < 250
+                assert (
+                    150
+                    < engine.metric_value("payment_latency_p95", ts, {"psp": "PSP-1"})
+                    < 250
+                )
+
+
+def test_payment_latency_distribution(reader: duckdb.DuckDBPyConnection) -> None:
+    rows = reader.execute(
+        "SELECT psp, avg(latency_p95_ms), stddev_pop(latency_p95_ms), "
+        "min(latency_p95_ms), count(DISTINCT latency_p95_ms) "
+        "FROM payments_hourly GROUP BY psp"
+    ).fetchall()
+    assert len(rows) == 2
+    for _, average, sd, minimum, distinct in rows:
+        assert average == pytest.approx(200.0, rel=0.02)
+        assert 0.035 < sd / average < 0.065
+        assert minimum > 0
+        assert distinct == 672
+
+
+def test_payment_latency_rng_is_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def play() -> dict[str, list[tuple]]:
+        with closing(Simulator(Settings(), db_path=":memory:")) as sim:
+            sim.selleros_export.path = tmp_path / "selleros.json"
+            for _ in range(4):
+                sim.step()
+            with sim.store.cursor() as reader:
+                return {
+                    table: reader.execute(
+                        f"SELECT * FROM {table} ORDER BY ALL"
+                    ).fetchall()
+                    for table in TABLES
+                    if table != "scenario_log"
+                }
+
+    def shifted_latency_rng(seed: int | list[int]) -> np.random.Generator:
+        rng = np.random.default_rng(seed)
+        if isinstance(seed, list) and len(seed) == 4 and seed[2] == 2:
+            rng.random(100)
+        return rng
+
+    baseline = play()
+    assert play() == baseline
+    monkeypatch.setattr(sim_engine, "default_rng", shifted_latency_rng)
+    shifted = play()
+    assert shifted["payments_hourly"] != baseline["payments_hourly"]
+    for table, rows in baseline.items():
+        if table == "payments_hourly":
+            assert [r[:-1] for r in rows] == [r[:-1] for r in shifted[table]]
+        else:
+            assert rows == shifted[table], table
+
+
+def test_payment_latency_without_attempts(tmp_path: Path) -> None:
+    def stop_checkout(sim: Simulator, hour: Hour) -> None:
+        hour.demand.checkout_ok.update(dict.fromkeys(("web", "android", "ios"), 0.0))
+
+    settings = Settings()
+    with closing(Simulator(settings, db_path=tmp_path / "latency.duckdb")) as sim:
+        sim.pre_demand_hooks.append(stop_checkout)
+        sim.step()
+        with sim.store.cursor() as reader:
+            assert reader.execute(
+                "SELECT sum(attempts), count(latency_p95_ms) FROM payments_hourly"
+            ).fetchone() == (0, 12)
+            registry = load_registry(reader)
+            assert registry.get("payment_latency_p95").status == "active"
+            assert (
+                MetricEngine(reader, registry).metric_value(
+                    "payment_latency_p95", settings.sim.start_ts
+                )
+                is None
+            )
 
 
 def test_baseline_errors_partitions_and_noise(

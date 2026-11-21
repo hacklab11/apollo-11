@@ -41,7 +41,7 @@ Static: `GET /` serves `web/index.html`; `/web/*` static files.
 ### 3.1 Layout (one page, desktop 1440 × 900 first)
 
 ```
-┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots · scenario buttons (S1..S7, I1, I2) ┐
+┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots · scenario buttons (S1..S8, I1, I2) ┐
 ├───────────────┬────────────────────────────────────────┬──────────────────────┤
 │ Graph         │ Metric chart (selected node)           │ Chat                 │
 │ (Cytoscape)   │ actual line, expected band, markers    │ messages             │

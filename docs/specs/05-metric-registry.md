@@ -122,7 +122,8 @@ metric_window(name, start_ts, end_ts, segment={}) -> float  # aggregated over th
 
 | Name | How it is added | Expected result |
 |---|---|---|
-| `refund_rate` | SQL with num = refunds (by c, cat, t), den = orders | Cartographer finds identity `refund_rate = refunds / orders` (validated), breakdowns c, cat, t, causal hypothesis from `buybox_share` (small/hijacker) with lag 48–96 h |
+| `fee_per_order` (live demo, S8) | SQL with num = `SUM(fee_revenue)`, den = `SUM(units)` from orders_hourly, dimensions c p cat t ch | Cartographer finds identity `fee_revenue = orders * fee_per_order` (validated), breakdowns c, p, cat, t, ch, causal hypothesis from `aov` (lag 0). During S8 its anomaly is attached to the open S8 incident. Not `average_selling_price`: that is a duplicate of `aov`, because every order is 1 unit. |
+| `refund_rate` (S6, tests) | SQL with num = refunds (by c, cat, t), den = orders | Cartographer finds identity `refund_rate = refunds / orders` (validated), breakdowns c, cat, t, causal hypothesis from `buybox_share` (small/hijacker) with lag 48–96 h |
 | `delivery_delay_hours` (optional) | SQL over purchase_orders | ambiguous: causal to `in_stock_rate` or to `refund_rate`? |
 
 ## 5. Identities (`config/identities.yaml`)
@@ -167,6 +168,7 @@ supplier_delay_hours → in_stock_rate (24)
 fba_blocked_units → in_stock_rate (48)
 price_index_vs_1p → buybox_share (0)
 price_change_rate → price_index_vs_1p (0)
+price_change_rate → aov (0)                        — price changes move the average price (S8)
 buybox_share → small_seller_gmv_share (0)
 in_stock_rate → buybox_share (0)
 buybox_share → in_stock_rate (6)                   — small sellers that win the Buy Box at low prices sell out

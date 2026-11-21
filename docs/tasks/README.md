@@ -32,5 +32,6 @@ Status is tracked in GitHub (one issue per card, labelled with the lane). Do not
 | [T24](T24-demo-runner-readme.md) | Demo runner script and README | Dev 2 | T18 | 1.5 h |
 | [T25](T25-pitch-and-domain-notes.md) | Domain notes for prompts, slides, video (no code) | P3 | – | through the day |
 | [T26](T26-deployment.md) | Docker, Caddy, tunnel, Codespaces | Dev 1 | T16–T19 | 2 h |
+| [T27](T27-scenario-s8.md) | Scenario S8 price typo (live demo) | Dev 1 | T04, T02 | 1.5 h |
 
 Card format: Goal · Read first · Files you own · Do not touch · Steps · Done when · Out of scope.
