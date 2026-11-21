@@ -209,6 +209,8 @@ class MetricEngine:
         """loaded_rows / expected_rows for the hour, worst source table; 1.0 if unknown."""
         if not tables:
             return lambda gkey, ts: 1.0
+        # partition_status keys tables by bare name.
+        tables = tuple(dict.fromkeys(t.rpartition(".")[2] for t in tables))
         with self._con.cursor() as cur:
             rows = cur.execute(
                 "SELECT table_name, country, ts, loaded_rows, expected_rows "

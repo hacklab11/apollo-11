@@ -8,6 +8,7 @@ import yaml
 
 from eye.registry.loader import (
     CONFIG_DIR,
+    _missing_data,
     formula_inputs,
     load_registry,
     source_tables,
@@ -102,7 +103,9 @@ def test_source_tables_from_from_and_join() -> None:
     )
     assert source_tables(_seed("seller_hhi")["sql"]) == ("orders_hourly",)
     cte = 'WITH t AS (SELECT * FROM "main"."orders_hourly") SELECT ts, 1 AS num FROM t JOIN skus USING (sku)'
-    assert source_tables(cte) == ("orders_hourly", "skus")
+    assert source_tables(cte) == ("main.orders_hourly", "skus")
+    shadow = "WITH orders_hourly AS (SELECT * FROM main.orders_hourly) SELECT * FROM orders_hourly"
+    assert source_tables(shadow) == ("main.orders_hourly",)
 
 
 def test_formula_source_tables_are_the_union_of_inputs(registry) -> None:
@@ -149,3 +152,17 @@ def test_loader_reads_only_through_cursors(world) -> None:
     with duckdb.connect(str(world), read_only=True) as con:
         load_registry(con)
         assert con.execute("SELECT 1").fetchone() == (1,)
+
+
+def test_schema_qualified_source_loads(writable) -> None:
+    writable.execute("CREATE SCHEMA extra")
+    writable.execute(
+        "CREATE TABLE extra.hits AS SELECT ts, sessions FROM traffic_hourly"
+    )
+    registry = load_registry(writable)
+    sql = 'SELECT ts, sessions AS num FROM extra."hits"'
+    metric = registry.metrics["sessions"].model_copy(
+        update={"sql": sql, "dimensions": []}
+    )
+    assert source_tables(sql) == ("extra.hits",)
+    assert _missing_data(writable, metric, source_tables(sql)) is None

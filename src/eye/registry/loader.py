@@ -20,11 +20,10 @@ DIMENSIONS: frozenset[str] = frozenset(get_args(Dimension))
 HIDDEN_TABLES = frozenset({"scenario_log"})
 
 _log = logging.getLogger(__name__)
-_TABLE_REF = re.compile(
-    r'\b(?:FROM|JOIN)\s+(?:"?\w+"?\.)*"?([A-Za-z_]\w*)"?', re.IGNORECASE
-)
+_IDENT = r'"?[A-Za-z_]\w*"?'
+_TABLE_REF = re.compile(rf"\b(?:FROM|JOIN)\s+((?:{_IDENT}\.)*{_IDENT})", re.IGNORECASE)
 _CTE_NAME = re.compile(
-    r'"?([A-Za-z_]\w*)"?\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(', re.IGNORECASE
+    rf"({_IDENT})\s+AS\s*(?:NOT\s+)?(?:MATERIALIZED\s+)?\(", re.IGNORECASE
 )
 _METRIC_NAME = re.compile(r"[a-z][a-z0-9_]*")
 _FORMULA_NODES = frozenset(
@@ -83,9 +82,12 @@ def formula_inputs(expression: str) -> list[str]:
 
 
 def source_tables(sql: str) -> tuple[str, ...]:
-    """Table names that follow FROM or JOIN, in order of first use; CTE names are skipped."""
-    ctes = {name.lower() for name in _CTE_NAME.findall(sql)}
-    names = (name.lower() for name in _TABLE_REF.findall(sql))
+    """Tables after FROM or JOIN in order of first use, schema-qualified as written.
+
+    Unqualified names that match a CTE are not physical tables and are skipped.
+    """
+    ctes = {name.replace('"', "").lower() for name in _CTE_NAME.findall(sql)}
+    names = (ref.replace('"', "").lower() for ref in _TABLE_REF.findall(sql))
     return tuple(dict.fromkeys(name for name in names if name not in ctes))
 
 
@@ -99,8 +101,11 @@ def load_registry(
     has_den: dict[str, bool] = {}
     with con.cursor() as cur:
         existing = {
-            row[0]
-            for row in cur.execute("SELECT table_name FROM duckdb_tables()").fetchall()
+            name
+            for schema, table in cur.execute(
+                "SELECT schema_name, table_name FROM duckdb_tables()"
+            ).fetchall()
+            for name in (table, f"{schema}.{table}")
         }
 
     for metric in metrics.values():
