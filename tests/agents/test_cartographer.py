@@ -382,12 +382,24 @@ async def test_refinement_is_cached(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", [400, 401, 403, "missing_auth"])
+@pytest.mark.parametrize(
+    ("failure", "missing_env"),
+    [
+        (400, None),
+        (401, None),
+        (403, None),
+        ("missing_auth", "ANTHROPIC_API_KEY"),
+        ("missing_auth_at_init", "ANTHROPIC_API_KEY"),
+        ("missing_openrouter_key", "DEMO_OPENROUTER_KEY"),
+    ],
+)
 async def test_startup_refinement_model_unavailable_retries(
     cartographer: Cartographer,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
     failure: int | str,
+    missing_env: str | None,
 ) -> None:
     seed = Edge(
         id="seed",
@@ -404,7 +416,7 @@ async def test_startup_refinement_model_unavailable_retries(
 
     async def handle(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        if len(requests) == 1 and failure != "missing_auth":
+        if len(requests) == 1 and isinstance(failure, int):
             return httpx2.Response(
                 failure,
                 json={
@@ -450,15 +462,43 @@ async def test_startup_refinement_model_unavailable_retries(
             },
         )
 
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
+    for name in (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "ANTHROPIC_CONFIG_DIR",
+        "ANTHROPIC_PROFILE",
+        "ANTHROPIC_IDENTITY_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN_FILE",
+        "DEMO_OPENROUTER_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("APPDATA", str(tmp_path))
     async with AsyncAnthropic(
         api_key=None if failure == "missing_auth" else "offline-placeholder",
         max_retries=0,
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handle)),
     ) as sdk:
-        settings = Settings(sim={"autostart": False})
-        llm = LLMClient(settings.llm, sdk)
+        openrouter = failure == "missing_openrouter_key"
+        settings = Settings(
+            sim={"autostart": False},
+            llm=(
+                {"provider": "openai_compatible", "api_key_env": missing_env}
+                if openrouter
+                else {}
+            ),
+        )
+        create_sdk = Mock(
+            return_value=sdk,
+            side_effect=(
+                TypeError("Could not resolve authentication method")
+                if failure == "missing_auth_at_init"
+                else None
+            ),
+        )
+        monkeypatch.setattr("eye.llm.client.AsyncAnthropic", create_sdk)
+        llm = LLMClient(settings.llm)
         monkeypatch.setattr("eye.llm.client._client", llm)
         engine = cartographer.engine
         end = engine._con.execute(
@@ -490,13 +530,23 @@ async def test_startup_refinement_model_unavailable_retries(
                 assert trail and trail[-1].action == "note"
                 assert "unavailable" in trail[-1].output_summary.lower()
                 assert "sensitive-provider-message" not in trail[-1].output_summary
+                stdout = capsys.readouterr().out
                 failures = [
-                    json.loads(r.message)
-                    for r in caplog.records
-                    if '"event": "refinement_unavailable"' in r.message
+                    json.loads(line)
+                    for line in stdout.splitlines()
+                    if '"event": "refinement_unavailable"' in line
                 ]
                 assert len(failures) == 1
-                assert "sensitive-provider-message" not in caplog.text
+                assert failures[0]["level"] == "warning"
+                assert failures[0].get("missing_env") == missing_env
+                assert "sensitive-provider-message" not in stdout
+                assert "offline-placeholder" not in stdout
+                if missing_env is not None:
+                    assert missing_env in trail[-1].output_summary
+                    assert requests == []
+                if openrouter:
+                    return
+                create_sdk.side_effect = None
                 sdk.api_key = "offline-placeholder"
                 await orchestrator.start()
                 refined = cartographer.graph.edges()[0]

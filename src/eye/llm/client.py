@@ -27,6 +27,12 @@ class LLMUnavailable(AnthropicError):
     """The provider could not complete the request."""
 
 
+class MissingProviderCredentials(LLMUnavailable):
+    def __init__(self, env_var: str) -> None:
+        self.env_var = env_var
+        super().__init__(f"Missing API key environment variable: {env_var}")
+
+
 _MAX_RETRY_DELAY = 60.0
 
 
@@ -213,14 +219,22 @@ class LLMClient:
     async def _openai_create(self, request: dict[str, Any]) -> BetaMessage:
         key = os.environ.get(self.settings.api_key_env)
         if not key:
-            raise LLMUnavailable(
-                f"Missing API key environment variable: {self.settings.api_key_env}"
-            )
+            raise MissingProviderCredentials(self.settings.api_key_env)
         payload = _chat_request(request)
         if self._http_client is None:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 return await self._chat_post(client, key, payload)
         return await self._chat_post(self._http_client, key, payload)
+
+    async def _anthropic_create(self, request: dict[str, Any]) -> BetaMessage:
+        try:
+            if self._sdk is None:
+                self._sdk = AsyncAnthropic(max_retries=2)
+            return await self._sdk.beta.messages.create(**request)
+        except TypeError as exc:
+            if "Could not resolve authentication method" not in str(exc):
+                raise
+            raise MissingProviderCredentials("ANTHROPIC_API_KEY") from exc
 
     async def _chat_post(
         self, client: httpx.AsyncClient, key: str, payload: dict[str, Any]
@@ -338,9 +352,7 @@ class LLMClient:
             if self.settings.provider == "openai_compatible":
                 response = await self._openai_create(request)
             else:
-                if self._sdk is None:
-                    self._sdk = AsyncAnthropic(max_retries=2)
-                response = await self._sdk.beta.messages.create(**request)
+                response = await self._anthropic_create(request)
             if self.settings.mode == "record":
                 await asyncio.to_thread(
                     _append_record,
