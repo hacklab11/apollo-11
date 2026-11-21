@@ -89,7 +89,22 @@ const mockApi = {
       out_edges: graph.edges.filter((edge) => edge.src === name),
     };
   },
-  addMetric: (_request) => fixture("add_metric_result.json"),
+  async addMetric() {
+    const result = await fixture("add_metric_result.json");
+    const name = "fee_per_order";
+    const expression = "fee_revenue / orders";
+    Object.assign(result.metric, {
+      name, expression, description: "Marketplace fee revenue in euros divided by units ordered.",
+      unit: "EUR", dimensions: ["country", "platform", "category", "seller_tier", "channel"],
+    });
+    result.accepted = result.accepted.map((edge, index) => {
+      const src = ["fee_revenue", "orders"][index];
+      return { ...edge, id: `edg_${src}_${name}`, src, dst: name, identity: `${name} = ${expression}` };
+    });
+    result.notes = "Mock formula: fee revenue divided by orders. No query was executed.";
+    result.trail_investigation_id = "inv_add_fee_per_order";
+    return result;
+  },
   getAnomalies: (_since) => fixture("anomalies.json"),
   async getIncidents(status) {
     const incidents = await fixture("incidents.json");
@@ -242,6 +257,7 @@ const state = {
   chart: null,
   cy: null,
   trail: [],
+  attachedEvidence: new Map(),
   newEdges: new Set(),
 };
 
@@ -794,12 +810,61 @@ function renderIncidentDetail(resetScroll = true) {
     })
     .join("");
   $("#incident-detail").innerHTML =
-    `<div class="detail-meta">${badge(incident.verdict)}<span>${escapeHtml(incident.id)} · ${escapeHtml(incident.status)}</span></div><h4>${escapeHtml(incident.title)}</h4><p class="story">${escapeHtml(incident.summary)}</p><div class="impact">${euro(incident.impact_eur_per_hour)}<small> GMV impact / hour</small></div><div class="detail-meta">Affected: ${incident.affected_actors.map(escapeHtml).join(", ")}</div><h5 class="section-label">What explains the change</h5>${contributions}<h5 class="section-label">Hypotheses & evidence</h5>${incident.hypotheses.map((hypothesis) => `<details class="hypothesis ${escapeHtml(hypothesis.status)}"><summary><span class="badge">${escapeHtml(hypothesis.status)}</span>${escapeHtml(hypothesis.statement)}</summary>${hypothesis.evidence_for.map((evidence) => `<p><strong>For · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}${hypothesis.evidence_against.map((evidence) => `<p><strong>Against · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}</details>`).join("")}<div class="action-box"><strong>Suggested next move</strong>${incident.suggested_actions.map(escapeHtml).join("<br>")}</div>${incident.notifications.map((notification) => `<div class="notification">SellerOS notification · ${notification.ok ? "Delivered" : "Failed"} · ${time(notification.ts)} UTC<br><span class="muted">${escapeHtml(notification.task_id)}</span></div>`).join("")}${incident.open_questions.length ? `<details class="hypothesis"><summary>Open questions (${incident.open_questions.length})</summary>${incident.open_questions.map((question) => `<p>${escapeHtml(question)}</p>`).join("")}</details>` : ""}<h5 class="section-label">Investigation trail · ${state.trail.length} steps</h5><ol class="timeline">${state.trail.map(renderTrailStep).join("")}</ol>`;
+    `<div class="detail-meta">${badge(incident.verdict)}<span>${escapeHtml(incident.id)} · ${escapeHtml(incident.status)} · Occurrences: ${number(incident.occurrences)}</span></div><h4>${escapeHtml(incident.title)}</h4><p class="story">${escapeHtml(incident.summary)}</p><section class="attached-evidence" hidden></section><div class="impact">${euro(incident.impact_eur_per_hour)}<small> GMV impact / hour</small></div><div class="detail-meta">Affected: ${incident.affected_actors.map(escapeHtml).join(", ")}</div><h5 class="section-label">What explains the change</h5>${contributions}<h5 class="section-label">Hypotheses & evidence</h5>${incident.hypotheses.map((hypothesis) => `<details class="hypothesis ${escapeHtml(hypothesis.status)}"><summary><span class="badge">${escapeHtml(hypothesisLabel(hypothesis.status))}</span>${escapeHtml(hypothesis.statement)}</summary>${hypothesis.evidence_for.map((evidence) => `<p><strong>For · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}${hypothesis.evidence_against.map((evidence) => `<p><strong>Against · ${escapeHtml(evidence.source)}:</strong> ${escapeHtml(evidence.summary)}</p>`).join("")}</details>`).join("")}<div class="action-box"><strong>Suggested next move</strong>${incident.suggested_actions.map(escapeHtml).join("<br>")}</div>${incident.notifications.map(renderNotification).join("")}${incident.open_questions.length ? `<details class="hypothesis"><summary>Open questions (${incident.open_questions.length})</summary>${incident.open_questions.map((question) => `<p>${escapeHtml(question)}</p>`).join("")}</details>` : ""}<h5 class="section-label">Investigation trail · ${state.trail.length} steps</h5><ol class="timeline">${state.trail.map(renderTrailStep).join("")}</ol>`;
+  renderAttachedEvidence();
   if (resetScroll) $("#incident-detail").scrollTop = 0;
 }
 
+function hypothesisLabel(status) {
+  return status === "open" ? "Hypothesis" : readable(status);
+}
+
+function renderNotification(notification) {
+  const actions = notification.ack?.actions_taken ?? [];
+  return `<div class="notification">SellerOS notification · ${notification.ok ? "Delivered" : "Failed"} · ${time(notification.ts)} UTC${notification.task_id ? `<br><span class="muted">${escapeHtml(notification.task_id)}</span>` : ""}${actions.length ? `<ul>${actions.map((action) => `<li>${escapeHtml(action)}</li>`).join("")}</ul>` : ""}</div>`;
+}
+
+function renderAttachedEvidence() {
+  const section = $("#incident-detail .attached-evidence");
+  if (!section) return;
+  const evidence = [...state.attachedEvidence.values()]
+    .filter((decision) => decision.attach_to_incident === state.incident.id);
+  section.hidden = !evidence.length;
+  section.innerHTML = evidence.length
+    ? `<h5 class="section-label">Attached evidence</h5><ul>${evidence.map(({ anomaly, reason }) => {
+        const segment = Object.entries(anomaly.segment).map(([key, value]) => `${key}: ${value}`).join(", ");
+        return `<li><strong>${escapeHtml(readable(anomaly.metric))}</strong> · ${time(anomaly.ts)} UTC${segment ? ` · ${escapeHtml(segment)}` : ""} — ${escapeHtml(reason)}</li>`;
+      }).join("")}</ul>`
+    : "";
+}
+
+function rememberAttachments(decisions) {
+  for (const decision of decisions) {
+    if (decision.action === "attach" && decision.attach_to_incident)
+      state.attachedEvidence.set(decision.anomaly.id, decision);
+  }
+  renderAttachedEvidence();
+}
+
+function renderTrailEvidence(step) {
+  const output = step.output;
+  if (!output) return "";
+  if (step.action === "a2a_call" && step.tool === "selleros" && output.answered && output.findings?.length) {
+    return `${step.input.question ? `<p><strong>Question:</strong> ${escapeHtml(step.input.question)}</p>` : ""}<p><strong>SellerOS answer</strong></p><ul>${output.findings.map(({ claim }) => `<li>${escapeHtml(claim)}</li>`).join("")}</ul>`;
+  }
+  const cause = step.action === "decision" ? output.root_cause : null;
+  if (cause) {
+    const label = { supported: "Supported cause", refuted: "Refuted cause hypothesis" }[cause.status] ?? "Cause hypothesis";
+    return `<p><strong>${label}:</strong> ${escapeHtml(cause.statement)}</p>`;
+  }
+  if (step.tool === "update_hypotheses" && output.hypotheses?.length) {
+    return `<ul>${output.hypotheses.map(({ status, statement }) => `<li><strong>${escapeHtml(hypothesisLabel(status))}:</strong> ${escapeHtml(statement)}</li>`).join("")}</ul>`;
+  }
+  return "";
+}
+
 function renderTrailStep(step) {
-  return `<li class="trail-step" data-step="${escapeHtml(step.id)}"><span class="actor-icon" aria-hidden="true">${actorLetters[step.actor] ?? "?"}</span><div><div class="trail-meta"><strong>${step.n}. ${escapeHtml(step.actor)}</strong>${step.actor === "selleros" ? '<span class="external">external</span>' : ""}<span class="tool">${escapeHtml(step.tool ?? step.action)}</span></div><p>${escapeHtml(step.output_summary)}</p><p class="reason">Why: ${escapeHtml(step.reason)}</p><details class="trail-json"><summary>Step details</summary><pre>${escapeHtml(JSON.stringify({ action: step.action, input: step.input, output: step.output, duration_ms: step.duration_ms }, null, 2))}</pre></details></div></li>`;
+  return `<li class="trail-step" data-step="${escapeHtml(step.id)}"><span class="actor-icon" aria-hidden="true">${actorLetters[step.actor] ?? "?"}</span><div><div class="trail-meta"><strong>${step.n}. ${escapeHtml(step.actor)}</strong>${step.actor === "selleros" || step.action === "a2a_call" && step.tool === "selleros" ? '<span class="external">external</span>' : ""}<span class="tool">${escapeHtml(step.tool ?? step.action)}</span></div><p>${escapeHtml(step.output_summary)}</p>${renderTrailEvidence(step)}<p class="reason">Why: ${escapeHtml(step.reason)}</p><details class="trail-json"><summary>Step details</summary><pre>${escapeHtml(JSON.stringify({ action: step.action, input: step.input, output: step.output, duration_ms: step.duration_ms }, null, 2))}</pre></details></div></li>`;
 }
 
 function appendTrailStep(step) {
@@ -847,6 +912,9 @@ async function handleLiveEvent(event) {
   appendEvent(event);
   const { payload } = event;
   switch (event.type) {
+    case "sentinel_decision":
+      if (payload.action === "attach") rememberAttachments([payload]);
+      break;
     case "tick":
       if (state.status)
         updateStatus({ ...state.status, tick: payload.tick, sim_ts: event.sim_ts });
@@ -902,6 +970,7 @@ async function refreshLive(reconnect = false) {
     api.getStatus().then((status) => updateStatus(status, reconnect)),
     graph,
     refreshIncidents(reconnect),
+    api.getAnomalies().then(rememberAttachments),
     api.getScenarios().then(renderScenarios),
     reconnect && graph.then(refreshChart),
   ]);
@@ -1118,8 +1187,6 @@ async function init() {
     $("#feed").setAttribute("aria-label", "Replayed events");
   } else {
     $(".mock-callout").hidden = true;
-    for (const field of $("#metric-form").querySelectorAll("input, textarea"))
-      field.value = "";
     connectEvents();
     await refreshLive();
     return;

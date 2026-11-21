@@ -231,10 +231,10 @@
         </button>
       </div>
       <p class="muted">
-        Describe a signal. The Cartographer proposes its relationships.
+        Supply a metric query. The Cartographer proposes its relationships.
       </p>
       <p class="mock-callout">
-        Mock mode returns the fixed <strong>orders_per_session</strong> example,
+        Mock mode returns the fixed <strong>fee_per_order</strong> example,
         regardless of input. No SQL is executed.
       </p>
       <form id="metric-form">
@@ -242,7 +242,8 @@
         ><input
           id="new-name"
           name="name"
-          value="orders_per_session"
+          value="fee_per_order"
+          placeholder="fee_per_order"
           pattern="[a-z][a-z0-9_]{2,40}"
           maxlength="41"
           required
@@ -250,17 +251,19 @@
         ><input
           id="new-description"
           name="description"
-          value="Orders divided by marketplace sessions."
+          value="Marketplace fee revenue in euros divided by units ordered."
+          placeholder="Marketplace fee revenue in euros divided by units ordered."
           required
         /><label for="new-sql">SQL</label
         ><textarea
           id="new-sql"
           name="sql"
           rows="3"
-          placeholder="SELECT ts, …"
+          placeholder="SELECT ts, SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly GROUP BY ts"
           required
         >
-SELECT ts, SUM(units) AS num FROM orders_hourly GROUP BY ts</textarea
+SELECT ts, country, platform, category, seller_tier, channel, SUM(fee_revenue) AS num, SUM(units) AS den
+FROM orders_hourly GROUP BY ALL</textarea
         ><button class="primary" id="metric-submit" type="submit">
           Ask Cartographer
         </button>
