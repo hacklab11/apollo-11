@@ -180,7 +180,7 @@ class EvalA2AClient(A2AClient):
                 response, _ = await answer_specialist(
                     module, self.local_data, args["request"], self.local_settings
                 )
-            except Exception as exc:  # noqa: BLE001 -- mirror failed A2A tasks
+            except Exception as exc:
                 detail = (
                     str(exc)
                     if isinstance(exc, DataApiUnavailable)
