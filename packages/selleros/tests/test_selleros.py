@@ -348,7 +348,18 @@ def test_isolation() -> None:
             sys.executable,
             "-I",
             "-c",
-            "import importlib.util; import selleros.server; assert importlib.util.find_spec('eye') is None",
+            """
+import sys
+
+class NoEyeImports:
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == "eye" or fullname.startswith("eye."):
+            raise ImportError("SellerOS must not import Eye")
+
+sys.meta_path.insert(0, NoEyeImports())
+import selleros.server
+assert not any(name == "eye" or name.startswith("eye.") for name in sys.modules)
+""",
         ],
         capture_output=True,
         text=True,
