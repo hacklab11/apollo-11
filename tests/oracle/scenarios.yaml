@@ -148,6 +148,7 @@ I2: &I2
     status_any: [deferred, resolved]
     segment_contains: {country: [FR]}
     or_no_incident: true
+    deferral_required: {country: FR}
     must_mention: [FR, partition]
     must_mention_any: [incomplete, late]
 I3:

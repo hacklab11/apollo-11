@@ -362,6 +362,21 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
         elif key == "max_incidents_for_scenario":
             actual = len(items)
             ok = 0 < actual <= wanted
+        elif key == "deferral_required":
+            actual = [
+                t["output"]["anomaly"]
+                for t in trails
+                if t["actor"] == "sentinel"
+                and (t.get("output") or {}).get("action") == "defer"
+                and wanted.items()
+                <= t["output"].get("anomaly", {}).get("segment", {}).items()
+                and t["output"].get("anomaly", {}).get("completeness", 1) < 0.9
+            ]
+            ok = bool(actual) or any(
+                i["status"] == "deferred"
+                and wanted.items() <= i["entry"]["segment"].items()
+                for i in items
+            )
         elif key == "evidence_groups_min":
             actual = sorted({e["group"] for h in roots for e in h["evidence_for"]})
             ok = len(actual) >= wanted
@@ -475,7 +490,7 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
                 )
         else:
             raise ValueError(f"Unknown oracle check: {key}")
-        check(key, optional or ok, actual)
+        check(key, (optional and key != "deferral_required") or ok, actual)
     return results
 
 
@@ -621,16 +636,18 @@ def evaluate(
     def group(spec: dict, prefix: str, scenario: str | None = None) -> list[dict]:
         spec = spec.get("expect", spec)
         candidates = matching_incidents(entry, raw, steps, spec, scenario)
+        sentinel_steps = [t for t in steps if t["actor"] == "sentinel"]
         if prefix == "expect.":
             selected.extend(candidates)
         choices = [
             _checks(
                 spec,
                 [i],
-                [t for t in steps if t["investigation_id"] in i["investigation_ids"]],
+                [t for t in steps if t["investigation_id"] in i["investigation_ids"]]
+                + sentinel_steps,
             )
             for i in candidates
-        ] or [_checks(spec, [], [])]
+        ] or [_checks(spec, [], sentinel_steps)]
         chosen = max(choices, key=lambda checks: sum(c["passed"] for c in checks))
         for result in chosen:
             if result["check"] == "max_incidents_for_scenario":
@@ -889,6 +906,21 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                             action[6:-1] if clear else action, active=not clear
                         )
                 await core.step_once()
+                for decision in core.decisions:
+                    if decision.anomaly.ts == core.sim_ts:
+                        inv = f"sentinel:{core.sim_ts.isoformat()}"
+                        await core.record_step(
+                            TrailStep(
+                                id=f"decision:{core.tick}:{decision.anomaly.id}",
+                                investigation_id=inv,
+                                n=max((t.n for t in store.trail(inv)), default=0) + 1,
+                                real_ts=datetime.now(UTC),
+                                actor="sentinel",
+                                action="decision",
+                                output_summary=decision.reason[:500],
+                                output=decision.model_dump(mode="json"),
+                            )
+                        )
                 if actions.actions:
                     await actions.poll(core, store.all(), stored_trails(store))
         finally:

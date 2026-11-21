@@ -610,11 +610,36 @@ def test_empty_business_scenario_fails() -> None:
     assert not any(c["passed"] for c in results if not c["check"].startswith("also."))
 
 
-@pytest.mark.parametrize("name", ["I1", "I2", "I3"])
+@pytest.mark.parametrize("name", ["I1", "I3"])
 def test_innocent_and_deferred_may_have_no_incident(name: str) -> None:
     assert all(
         c["passed"] for c in harness.evaluate(harness.load_oracle()[name], [], [])
     )
+
+
+def test_i2_requires_real_deferral_evidence_even_without_incident() -> None:
+    entry = harness.load_oracle()["I2"]
+    assert not all(c["passed"] for c in harness.evaluate(entry, [], []))
+    anomaly = make_incident_s7().entry.model_copy(
+        update={"segment": {"country": "FR"}, "completeness": 0.4}
+    )
+    step = TrailStep(
+        id="defer",
+        investigation_id="sentinel",
+        n=1,
+        real_ts=CAMPAIGN_TS,
+        actor="sentinel",
+        action="decision",
+        output_summary="Incomplete FR partition",
+        output={"action": "defer", "anomaly": anomaly.model_dump(mode="json")},
+    )
+    assert all(c["passed"] for c in harness.evaluate(entry, [], [step]))
+    wrong = step.model_copy(
+        update={
+            "output": {"action": "ignore", "anomaly": anomaly.model_dump(mode="json")}
+        }
+    )
+    assert not all(c["passed"] for c in harness.evaluate(entry, [], [wrong]))
 
 
 def test_duplicate_incident_fails() -> None:
