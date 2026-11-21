@@ -1,3 +1,5 @@
+import asyncio
+import json
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock
@@ -277,3 +279,176 @@ async def test_deterministic_acceptance_overrides_proposal(
         AddMetricRequest(name="refund_rate", description="ratio", sql=SQL)
     )
     assert len(result.rejected) == 2
+
+
+@pytest.mark.asyncio
+async def test_sql_comments_cannot_expand_table_permissions(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    con = cartographer.engine._con
+    con.execute("CREATE TABLE private_table AS SELECT * FROM orders_hourly")
+    monkeypatch.setattr(
+        "eye.agents.cartographer.run_agent",
+        AsyncMock(return_value=Submission(edges=[], notes="", unit="count")),
+    )
+    await cartographer.add_metric(
+        AddMetricRequest(
+            name="comment_metric",
+            description="orders",
+            sql="SELECT ts, units AS num FROM orders_hourly /* FROM private_table */",
+        )
+    )
+    assert cartographer.engine._registry.source_tables["comment_metric"] == (
+        "orders_hourly",
+    )
+    with pytest.raises(ValueError, match="Table is not allowed"):
+        await cartographer.add_metric(
+            AddMetricRequest(
+                name="private_metric",
+                description="not allowed",
+                sql="SELECT ts, units AS num FROM private_table",
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_outgoing_causal_proposal_for_new_metric(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proposal = EdgeProposal(
+        type="causal_hypothesis",
+        src="new_orders",
+        dst="refunds",
+        lag_hours=0,
+        rationale="More orders can cause refunds",
+    )
+    monkeypatch.setattr(
+        "eye.agents.cartographer.run_agent",
+        AsyncMock(return_value=Submission(edges=[proposal], notes="", unit="count")),
+    )
+    result = await cartographer.add_metric(
+        AddMetricRequest(
+            name="new_orders",
+            description="new orders",
+            sql="SELECT ts, units AS num FROM orders_hourly",
+        )
+    )
+    assert any(e.src == "new_orders" and e.dst == "refunds" for e in result.ambiguous)
+    assert "unknown metric" not in result.notes
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_name_cannot_overwrite(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ready = asyncio.Event()
+    entered = 0
+
+    async def submit(*args: object) -> Submission:
+        nonlocal entered
+        entered += 1
+        if entered == 2:
+            ready.set()
+        await ready.wait()
+        return Submission(edges=[], notes="", unit="count")
+
+    monkeypatch.setattr("eye.agents.cartographer.run_agent", submit)
+    req = AddMetricRequest(
+        name="same_metric",
+        description="orders",
+        sql="SELECT ts, units AS num FROM orders_hourly",
+    )
+    results = await asyncio.gather(
+        cartographer.add_metric(req),
+        cartographer.add_metric(req.model_copy(update={"description": "other"})),
+        return_exceptions=True,
+    )
+    assert sum(isinstance(r, ValueError) for r in results) == 1
+    assert sum(not isinstance(r, Exception) for r in results) == 1
+
+
+@pytest.mark.asyncio
+async def test_additive_edges_have_mean_shares(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proposal = EdgeProposal(
+        type="formula",
+        src="refunds",
+        dst="contribution_margin",
+        identity="contribution_margin = orders + refunds",
+        rationale="Sum",
+    )
+    monkeypatch.setattr(
+        "eye.agents.cartographer.run_agent",
+        AsyncMock(return_value=Submission(edges=[proposal], notes="", unit="count")),
+    )
+    result = await cartographer.add_metric(
+        AddMetricRequest(
+            name="contribution_margin",
+            description="total",
+            sql="SELECT ts, units + refunds AS num FROM orders_hourly",
+        )
+    )
+    edges = {e.src: e for e in result.accepted}
+    assert edges["refunds"].evidence["mean_share"] == pytest.approx(2 / 102)
+    assert edges["orders"].evidence["mean_share"] == pytest.approx(100 / 102)
+    assert cartographer.graph.impact_weight("refunds") == pytest.approx(
+        2 / 102, abs=1e-6
+    )
+
+
+@pytest.mark.asyncio
+async def test_pending_seed_does_not_abort_other_refinement(
+    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = cartographer.engine._registry
+    pending = registry.get("refunds").model_copy(
+        update={"name": "pending_refunds", "status": "pending"}
+    )
+    registry.metrics[pending.name] = pending
+    registry.source_tables[pending.name] = ("orders_hourly",)
+    registry.has_den[pending.name] = False
+    cartographer.graph.add_metric(pending)
+    for name in ("refunds", "pending_refunds"):
+        cartographer.graph.add_edge(
+            Edge(
+                id=name,
+                src="orders",
+                dst=name,
+                type="causal_hypothesis",
+                status="hypothesis",
+                confidence=0.5,
+                evidence={},
+                created_by="seed",
+            )
+        )
+    original = cartographer._correlation
+
+    def correlate(engine: MetricEngine, src: str, dst: str, lag: int = 96):
+        assert dst != "pending_refunds", "pending seed must not be queried"
+        return original(engine, src, dst, lag)
+
+    async def submit(spec: object, content: str, *args: object) -> SeedSubmission:
+        payload = json.loads(content)["seeds"]
+        missing = next(s for s in payload if s["edge"]["dst"] == "pending_refunds")
+        assert missing["numbers"] is None
+        assert missing["pending_metrics"] == ["pending_refunds"]
+        return SeedSubmission(
+            seeds=[
+                SeedDecision(
+                    src="orders",
+                    dst=name,
+                    status="ambiguous",
+                    confidence=0.1,
+                    rationale="insufficient evidence",
+                )
+                for name in ("refunds", "pending_refunds")
+            ],
+            edges=[],
+            notes="pending",
+        )
+
+    monkeypatch.setattr(cartographer, "_correlation", correlate)
+    monkeypatch.setattr("eye.agents.cartographer.run_agent", submit)
+    await cartographer.refine_causal_seeds()
+    assert all(e.evidence["refined"] for e in cartographer.graph.edges())
