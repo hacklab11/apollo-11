@@ -7,6 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 from uuid import uuid4
 
@@ -136,6 +137,42 @@ def test_concurrent_actuation_applies_once(
         results = list(pool.map(actuate, range(2)))
     assert sorted(results) == [False, True]
     assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_concurrent_stores_preserve_actions(
+    s8_store: FileSellerStore, action: str, duplicate: bool
+) -> None:
+    stores = [s8_store, FileSellerStore(s8_store.directory)]
+    seller = s8_store.read().sellers[0]
+    ready = Barrier(2)
+
+    def actuate(index: int) -> bool:
+        sku = seller.skus[0 if duplicate else index]
+        intent = price_intent(seller, sku)
+        assert intent is not None
+        ready.wait()
+        if action == "pause":
+            return stores[index].pause_repricer("shared", seller.seller_id, sku.sku)
+        return stores[index].revert_manual_price(
+            "shared", seller.seller_id, sku.sku, intent
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(actuate, range(2)))
+    assert sorted(results) == ([False, True] if duplicate else [True, True])
+    restarted = FileSellerStore(s8_store.directory)
+    applied = (
+        restarted.paused_repricers()
+        if action == "pause"
+        else {key[:2] for key in restarted.reverted_prices()}
+    )
+    expected = {("S-14", "E02")} if duplicate else {("S-14", "E02"), ("S-14", "E04")}
+    assert applied == expected
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == len(
+        expected
+    )
 
 
 @pytest.mark.parametrize("action", ["pause", "revert manual price"])

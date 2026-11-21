@@ -1,5 +1,6 @@
 """Request-scoped access to SellerOS private data."""
 
+import fcntl
 import json
 import os
 import re
@@ -135,7 +136,9 @@ class FileSellerStore:
 
     def _records(self) -> list[dict[str, Any]]:
         try:
-            content = (self.directory / "actions.jsonl").read_bytes()
+            with (self.directory / "actions.jsonl").open("rb") as log:
+                fcntl.flock(log, fcntl.LOCK_SH)
+                content = log.read()
         except FileNotFoundError:
             return []
         return self._complete_records(content)[0]
@@ -175,20 +178,35 @@ class FileSellerStore:
                 if r["status"] == "reverted"
             }
 
-    def _append(self, record: dict[str, Any]) -> None:
+    def _append(self, record: dict[str, Any]) -> bool:
         with (self.directory / "actions.jsonl").open("a+b") as log:
+            fcntl.flock(log, fcntl.LOCK_EX)
             log.seek(0)
-            _, end = self._complete_records(log.read())
+            records, end = self._complete_records(log.read())
+            if any(
+                r["status"] == record["status"]
+                and r["seller_id"] == record["seller_id"]
+                and r["sku"] == record["sku"]
+                and (
+                    record["status"] == "paused"
+                    or (
+                        datetime.fromisoformat(r["ts"])
+                        == datetime.fromisoformat(record["ts"])
+                        and r["price"] == record["price"]
+                    )
+                )
+                for r in records
+            ):
+                return False
             log.truncate(end)
             log.write((json.dumps(record) + "\n").encode("utf-8"))
             log.flush()
             os.fsync(log.fileno())
+            return True
 
     def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool:
         with self.lock:
-            if (seller_id, sku) in self.paused_repricers():
-                return False
-            self._append(
+            return self._append(
                 {
                     "incident_id": incident_id,
                     "seller_id": seller_id,
@@ -197,15 +215,12 @@ class FileSellerStore:
                     "action": f"paused repricer for {seller_id} on {sku}",
                 }
             )
-            return True
 
     def revert_manual_price(
         self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
     ) -> bool:
         with self.lock:
-            if (seller_id, sku, intent.ts, intent.new) in self.reverted_prices():
-                return False
-            self._append(
+            return self._append(
                 {
                     "incident_id": incident_id,
                     "seller_id": seller_id,
@@ -216,7 +231,6 @@ class FileSellerStore:
                     "action": f"reverted manual price for {seller_id} on {sku}",
                 }
             )
-            return True
 
 
 def receive_alert(store: SellerStore, alert: SellerAlert) -> SellerAlertAck:
