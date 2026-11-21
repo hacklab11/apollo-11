@@ -26,6 +26,7 @@ from eye.contracts import (
     Anomaly,
     Contribution,
     Dimension,
+    Evidence,
     GraphView,
     Hypothesis,
     Incident,
@@ -185,9 +186,15 @@ def _stop_failures(
             return [
                 f"At least two supported hypotheses must explain {settings.confirm_share:.0%} together."
             ]
-        factors = {row.factor for row in answer.contributions if row.kind != "residual"}
+        factors = {
+            row.factor
+            for row in answer.contributions
+            if row.kind != "residual" and row.share != 0
+        }
+        roots = [hyp.root_node for hyp in supported.values()]
         if any(
-            hyp.id not in factors and hyp.root_node not in factors
+            hyp.id not in factors
+            and (hyp.root_node not in factors or roots.count(hyp.root_node) != 1)
             for hyp in supported.values()
         ):
             return ["Contributions must include every supported hypothesis."]
@@ -238,7 +245,7 @@ class Detective:
         window: _Window,
         nodes: Iterable[str],
         hypotheses: list[Hypothesis],
-    ) -> tuple[list[str], str] | None:
+    ) -> tuple[list[str], str, datetime] | None:
         cycles = {
             tuple(cycle)
             for node in dict.fromkeys(nodes)
@@ -302,8 +309,8 @@ class Detective:
                 )
         if not candidates:
             return None
-        _, _, _, cycle, trigger = min(candidates)
-        return list(cycle), trigger
+        _, changed_at, _, cycle, trigger = min(candidates)
+        return list(cycle), trigger, changed_at
 
     async def investigate(
         self,
@@ -318,7 +325,7 @@ class Detective:
         common = _WindowTools(self._con, self._registry, self._freshness, window)
         engine = MetricEngine(self._con, self._registry)
         board: list[Hypothesis] = []
-        reviews: dict[str, tuple[Hypothesis, SkepticResult]] = {}
+        reviews: dict[str, SkepticResult] = {}
         visited = {anomaly.metric}
         trail_n = turns = 0
         evidence_steps: dict[str, str] = {}
@@ -342,10 +349,11 @@ class Detective:
             tool: str | None = None,
             input_: BaseModel | None = None,
             output: BaseModel | None = None,
-        ) -> None:
+        ) -> str:
+            step_id = uuid4().hex
             await emit(
                 TrailStep(
-                    id=uuid4().hex,
+                    id=step_id,
                     investigation_id=investigation_id,
                     n=0,
                     real_ts=datetime.now(UTC),
@@ -357,6 +365,7 @@ class Detective:
                     output_summary=summary[:500],
                 )
             )
+            return step_id
 
         def get_graph(args: _GraphInput) -> _GraphOutput:
             node = args.node or anomaly.metric
@@ -428,7 +437,13 @@ class Detective:
             if not response.answered:
                 summary = f"{args.agent}: agent unavailable (0 findings)."
                 await record("note", summary, tool="ask_specialist")
-            result = _SpecialistOutput(**response.model_dump(), summary=summary)
+            # Protobuf Struct does not preserve map key order; replay keys do.
+            result = _SpecialistOutput.model_validate_json(
+                json.dumps(
+                    {**response.model_dump(mode="json"), "summary": summary},
+                    sort_keys=True,
+                )
+            )
             await record(
                 "a2a_call", summary, tool=args.agent, input_=args, output=result
             )
@@ -443,16 +458,23 @@ class Detective:
             review = await self._skeptic.review(
                 anomaly, investigation_id, emit, hypothesis=hypothesis
             )
-            reviews[hypothesis.id] = (hypothesis, review)
-            return _SkepticOutput(
-                **review.model_dump(),
-                summary=f"Skeptic: {review.verdict}, {review.explained_share:.0%} explained.",
+            reviews[hypothesis.id] = review
+            return _SkepticOutput.model_validate_json(
+                json.dumps(
+                    {
+                        **review.model_dump(mode="json"),
+                        "summary": f"Skeptic: {review.verdict}, {review.explained_share:.0%} explained.",
+                    },
+                    sort_keys=True,
+                )
             )
 
         def update_board(args: _BoardInput) -> _BoardOutput:
             if len({hyp.id for hyp in args.hypotheses}) != len(args.hypotheses):
                 raise ValueError("Hypothesis IDs must be unique")
-            board[:] = args.hypotheses
+            board[:] = _BoardInput.model_validate_json(
+                json.dumps(args.model_dump(mode="json"), sort_keys=True)
+            ).hypotheses
             return _BoardOutput(
                 hypotheses=board,
                 steps_used=turns,
@@ -592,11 +614,12 @@ class Detective:
                 suggested_actions=[],
             )
         else:
-            root = answer.root_cause
-            innocent = any(
-                review.verdict == "innocent" and (root is None or root == hypothesis)
-                for hypothesis, review in reviews.values()
-            )
+            combined = {hyp.id: hyp for hyp in board}
+            combined.update((hyp.id, hyp) for hyp in answer.hypotheses)
+            if answer.root_cause is not None:
+                combined[answer.root_cause.id] = answer.root_cause
+            answer.hypotheses = list(combined.values())
+            innocent = any(review.verdict == "innocent" for review in reviews.values())
             stale = (
                 answer.verdict == "DATA_ISSUE"
                 and common.freshness(
@@ -630,15 +653,65 @@ class Detective:
             if inferred := self._detect_loop(
                 anomaly, window, answer.loop or nodes, answer.hypotheses
             ):
-                loop, trigger = inferred
+                loop, node, changed_at = inferred
                 if not answer.loop:
                     answer.loop = loop
-                if not answer.trigger and trigger in answer.loop:
-                    answer.trigger = trigger
-                await record(
+                step_id = await record(
                     "note",
-                    f"Feedback cycle: {' → '.join(answer.loop)}; trigger candidate: {trigger}.",
+                    f"Feedback cycle: {' → '.join(loop)}; trigger candidate: {node} at {changed_at.isoformat()}.",
+                    tool="first_change",
                 )
+                if not answer.trigger and node in answer.loop:
+                    trigger = next(
+                        (
+                            h.id
+                            for h in [*answer.hypotheses, answer.root_cause]
+                            if h is not None
+                            and h.root_node == node
+                            and h.status != "refuted"
+                        ),
+                        None,
+                    )
+                    if trigger is None:
+                        trigger = f"trigger-{uuid4().hex}"
+                        metric = self._registry.get(node)
+                        answer.hypotheses.append(
+                            Hypothesis(
+                                id=trigger,
+                                statement=f"{node} is a candidate trigger based on change order; cause unverified.",
+                                cause_type="unknown",
+                                root_node=node,
+                                segment={
+                                    dim: value
+                                    for dim, value in anomaly.segment.items()
+                                    if dim in metric.dimensions
+                                },
+                                first_change_ts=changed_at,
+                                explained_share=0,
+                                status="open",
+                                evidence_for=[
+                                    Evidence(
+                                        group="data",
+                                        source="first_change",
+                                        step_id=step_id,
+                                        summary=f"{node} first changed at {changed_at.isoformat()}.",
+                                    )
+                                ],
+                            )
+                        )
+                    answer.trigger = trigger
+
+        if answer.loop and answer.trigger in answer.loop:
+            trigger = next(
+                (
+                    hyp.id
+                    for hyp in answer.hypotheses
+                    if hyp.root_node == answer.trigger and hyp.status != "refuted"
+                ),
+                None,
+            )
+            if trigger is not None:
+                answer.trigger = trigger
 
         for hypothesis in [*answer.hypotheses, answer.root_cause]:
             if hypothesis:

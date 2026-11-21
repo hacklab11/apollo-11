@@ -268,6 +268,27 @@ class Skeptic:
             for check in checks.values()
             if check.verdict == "matches"
         ]
+        if result.verdict in {"innocent", "data_issue"}:
+            freshness = tools.freshness(entry)
+            if freshness.verdict != "ok":
+                return result.model_copy(
+                    update={
+                        "verdict": "data_issue",
+                        "explained_share": 0.0,
+                        "reasons": [*result.reasons, freshness.summary],
+                    }
+                )
+            if result.verdict == "data_issue":
+                return result.model_copy(
+                    update={
+                        "verdict": "not_innocent",
+                        "explained_share": 0.0,
+                        "reasons": [
+                            *result.reasons,
+                            "Entry data is complete and on time.",
+                        ],
+                    }
+                )
         if result.verdict == "innocent":
             if matches:
                 return result.model_copy(update={"explained_share": max(matches)})
