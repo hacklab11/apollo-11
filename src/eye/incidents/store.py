@@ -84,8 +84,15 @@ class IncidentStore:
         for incident in self.all():
             if incident.status == "innocent":
                 continue
-            hour = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
-            end = min(incident.resolved_ts or until, until)
+            hour = min(incident.opened_ts, incident.entry.ts).replace(
+                minute=0, second=0, microsecond=0
+            )
+            end = min(
+                incident.last_seen_ts + timedelta(hours=1)
+                if incident.merged_into is not None
+                else incident.resolved_ts or until,
+                until,
+            )
             while hour < end:
                 hours.add(hour)
                 hour += timedelta(hours=1)

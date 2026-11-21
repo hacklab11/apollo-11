@@ -74,6 +74,36 @@ def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
     assert store.excluded_hours(make_incident_s7().entry.ts) == set()
 
 
+def test_merged_incident_exclusion_ends_after_last_seen(store: IncidentStore) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.opened_ts = incident.entry.ts = start
+    incident.status = "open"
+    incident.resolved_ts = None
+    incident.last_seen_ts = start + timedelta(hours=2)
+    incident.merged_into = "inc_keeper"
+    store._save(incident)
+    assert store.excluded_hours(start + timedelta(hours=10)) == {
+        start + timedelta(hours=i) for i in range(3)
+    }
+    assert store.excluded_hours(start + timedelta(hours=1)) == {start}
+
+
+@pytest.mark.asyncio
+async def test_exclusions_keep_original_start_after_upsert_and_merge(
+    store: IncidentStore,
+) -> None:
+    first = await store.upsert(result("first"))
+    opened = first.opened_ts
+    updated = await store.upsert(result("second", hours=2))
+    assert updated.id == first.id
+    assert updated.opened_ts == opened
+    assert updated.entry.ts == opened + timedelta(hours=2)
+    assert store.excluded_hours(opened + timedelta(hours=4)) == {
+        opened + timedelta(hours=i) for i in range(4)
+    }
+
+
 @pytest.mark.asyncio
 async def test_symptoms_persist_and_merge(tmp_path):
     path = tmp_path / "symptoms.duckdb"
