@@ -64,10 +64,11 @@ def metrics(
         ).fetchone()
 
 
+# Seed 43 has no small_3P electronics baseline orders in the tuning window.
 @pytest.fixture(
     scope="module",
-    params=[(seed, "seller_tier != '1P'") for seed in (42, 43, 47)],
-    ids=lambda param: f"seed-{param[0]}-3P-electronics",
+    params=[(seed, "seller_tier = 'small_3P'") for seed in (42, 44, 47)],
+    ids=lambda param: f"seed-{param[0]}-small-3P-electronics",
 )
 def run(
     request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
