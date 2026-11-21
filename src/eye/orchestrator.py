@@ -329,18 +329,23 @@ class Orchestrator:
 
     async def _step(self, *, manual: bool) -> Status:
         async with self._tick_lock:
-            self._dispatch()
-            if manual:
-                while self._tasks:
-                    await asyncio.gather(*self._tasks, return_exceptions=True)
-            elif self.paused or (
-                self.settings.orchestrator.pause_sim_during_investigation
-                and self._tasks
+            if not manual and (
+                self.paused
+                or (
+                    self.settings.orchestrator.pause_sim_during_investigation
+                    and self._tasks
+                )
             ):
                 return self.status()
             before = self.scenario_states()
             ts = self.sim.now
             await asyncio.to_thread(self.sim.step)
+            if self.sim.now == ts:
+                return self.status()
+            self._dispatch()
+            if manual:
+                while self._tasks:
+                    await asyncio.gather(*self._tasks, return_exceptions=True)
             self.invalidate()
             self.sim_ts = ts
             self.tick += 1

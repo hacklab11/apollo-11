@@ -3,6 +3,9 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
+
+import duckdb
 
 import pytest
 from factories import make_anomaly, make_incident_s7, make_trail_s7
@@ -18,10 +21,68 @@ from eye.contracts import (
     ScenarioState,
     SentinelDecision,
 )
+from eye.datasource import DuckDBSource
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable
 from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator, StepSink
+from eye.schema import create_tables
+
+
+@pytest.mark.asyncio
+async def test_duckdb_ticks_only_on_complete_ingestion(tmp_path: Path) -> None:
+    settings = Settings(sim={"autostart": False})
+    ts = settings.sim.start_ts
+    partitions = tmp_path / "partitions.parquet"
+    path = tmp_path / "warehouse.duckdb"
+
+    def publish(loaded: int) -> None:
+        with duckdb.connect() as con:
+            con.execute(
+                "COPY (SELECT 'traffic_hourly' AS table_name, 'DE' AS country, "
+                "?::TIMESTAMPTZ AS ts, 10::BIGINT AS expected_rows, "
+                "10::BIGINT AS loaded_rows, ?::TIMESTAMPTZ AS loaded_at "
+                "UNION ALL SELECT 'traffic_hourly', 'DE', ?, 10, ?, ?) TO ? (FORMAT PARQUET)",
+                [ts, ts + HOUR, ts + HOUR, loaded, ts + 2 * HOUR, str(partitions)],
+            )
+
+    publish(9)
+    with duckdb.connect(str(path)) as con:
+        create_tables(con)
+        con.execute("DROP TABLE partition_status")
+        con.execute(
+            f"CREATE VIEW partition_status AS SELECT * FROM read_parquet('{partitions}')"
+        )
+    source = DuckDBSource(path)
+    store = IncidentStore(":memory:")
+    core = Orchestrator(
+        settings, source, Sentinel(0), store, LLMClient(settings.llm), lambda *_: 0
+    )
+    calls: list[datetime] = []
+    events: asyncio.Queue[Event] = asyncio.Queue()
+    core.events._subscribers.add(events)
+    original = core.sentinel.run
+
+    async def run(stamp: datetime, **kwargs) -> list[SentinelDecision]:
+        calls.append(stamp)
+        return await original(stamp, **kwargs)
+
+    core.sentinel.run = run
+    try:
+        assert (await core.step_once()).tick == 1
+        # The initial tick count reflects the existing hour relative to sim start.
+        assert calls == [] and events.empty()
+        publish(10)
+        assert (await core.step_once()).tick == 2
+        assert calls == [ts + HOUR]
+        assert events.get_nowait().type == "tick"
+        assert events.empty()
+        assert (await core.step_once()).tick == 2
+        assert calls == [ts + HOUR] and events.empty()
+    finally:
+        await core.close()
+        store.close()
+        source.close()
 
 
 @pytest.mark.asyncio
