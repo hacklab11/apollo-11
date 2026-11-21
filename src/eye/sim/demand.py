@@ -1,7 +1,8 @@
 """Generate one hour of traffic and order counts without per-shopper draws."""
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from itertools import product
 
@@ -55,6 +56,13 @@ _RELEVANCE = 0.85
 @dataclass
 class DemandModifiers:
     campaign_mult: float = 1.0
+    coupled_volume_mult: float = 1.0
+    isolate_relevance: bool = False
+    exposure_power: float = 1.0
+    unavailable_weight: float = 0.05
+    exposure_mult: dict[str, float] = field(default_factory=dict)
+    extra_session_conversion: float = 1.0
+    marketing_spend_mult: dict[Country, float] = field(default_factory=dict)
     marketing_mult: dict[Country, float] = field(default_factory=dict)
     relevance: dict[Country, float] = field(default_factory=dict)
     checkout_ok: dict[Platform, float] = field(default_factory=dict)
@@ -76,6 +84,73 @@ def generate_demand(
     world: World,
     modifiers: DemandModifiers,
     sponsored: Callable[[NDArray[np.int64]], dict[tuple[int, str], int]] | None = None,
+) -> Batches:
+    if not modifiers.isolate_relevance or not modifiers.relevance:
+        return _generate_demand(ts, rng, world, modifiers, sponsored)
+    reference_world = deepcopy(world)
+    scenario_rng = deepcopy(rng)
+    ad_clicks: dict[tuple[int, str], int] = {}
+
+    def capture(searches: NDArray[np.int64]) -> dict[tuple[int, str], int]:
+        if sponsored is not None:
+            ad_clicks.update(sponsored(searches))
+        return ad_clicks
+
+    reference = _generate_demand(
+        ts, rng, reference_world, replace(modifiers, relevance={}), capture
+    )
+    controls = set(COUNTRIES) - modifiers.relevance.keys()
+    # Reserve the control's reference purchases before allocating changed demand.
+    for row in reference["orders_hourly"]:
+        if row[1] in controls:
+            next(o for o in world.offers[row[4]] if o.seller_id == row[5]).stock -= row[
+                8
+            ]
+    actual = _generate_demand(
+        ts, scenario_rng, world, modifiers, lambda searches: ad_clicks
+    )
+    for row in actual["orders_hourly"]:
+        if row[1] in controls:
+            next(o for o in world.offers[row[4]] if o.seller_id == row[5]).stock += row[
+                8
+            ]
+    return {
+        table: [r for r in rows if r[1] not in controls]
+        + [r for r in reference[table] if r[1] in controls]
+        for table, rows in actual.items()
+    }
+
+
+def _scale_counts(
+    values: NDArray[np.int64],
+    factor: float,
+    totals: NDArray[np.int64] | None = None,
+    *,
+    group_axes: int = 1,
+) -> NDArray[np.int64]:
+    groups = int(np.prod(values.shape[:group_axes]))
+    flat = values.reshape(groups, -1).astype(float)
+    if totals is None:
+        flat *= factor
+    else:
+        sums = flat.sum(axis=1)
+        flat *= np.divide(totals, sums, out=np.zeros_like(sums), where=sums > 0)[
+            :, None
+        ]
+    scaled = np.floor(flat).astype(np.int64)
+    targets = np.rint(flat.sum(axis=1)).astype(np.int64) if totals is None else totals
+    for row, target, fractions in zip(scaled, targets, flat - scaled, strict=True):
+        extra = int(target - row.sum())
+        row[np.argsort(-fractions, kind="stable")[:extra]] += 1
+    return scaled.reshape(values.shape)
+
+
+def _generate_demand(
+    ts: datetime,
+    rng: Generator,
+    world: World,
+    modifiers: DemandModifiers,
+    sponsored: Callable[[NDArray[np.int64]], dict[tuple[int, str], int]] | None,
 ) -> Batches:
     """Return one batch per fact table. Funnel arrays are segment × channel × SKU."""
     count = np.rint(
@@ -117,10 +192,26 @@ def generate_demand(
         (np.array([sku.ref_price for sku in skus]) / prices) ** 1.5, 0.5, 2.0
     )
 
-    exposure = attractiveness * popularity * np.where(available, 1.0, 0.05)
+    exposure = (
+        attractiveness**modifiers.exposure_power
+        * popularity
+        * np.where(available, 1.0, modifiers.unavailable_weight)
+        * np.array([modifiers.exposure_mult.get(s.sku, 1.0) for s in skus])
+    )
     impressions = rng.multinomial(12 * channels[:, 1], exposure / exposure.sum())
     feed_clicks = rng.binomial(impressions, 0.04 * attractiveness)
 
+    conversion = np.array(
+        [
+            (
+                1
+                + (modifiers.marketing_mult.get(country, 1.0) - 1)
+                * modifiers.extra_session_conversion
+            )
+            / modifiers.marketing_mult.get(country, 1.0)
+            for country, _ in _SEGMENTS
+        ]
+    )
     carts = np.zeros((len(_SEGMENTS), len(CHANNELS), len(skus)), dtype=np.int64)
     for k in range(len(CATEGORIES)):
         mask = category_index == k
@@ -134,13 +225,14 @@ def generate_demand(
                 result_clicks[segment, k] += extra
         search = _retry_unavailable(rng, landed, in_stock)
         feed = _retry_unavailable(rng, feed_clicks[:, mask], in_stock)
-        probability = 0.12 * price_factor[mask]
+        probability = 0.12 * price_factor[mask] * conversion[:, None]
         carts[:, 0, mask] = rng.binomial(search, probability * relevance_factor)
         carts[:, 1, mask] = rng.binomial(feed, probability)
     if available.any():
         other_weight = popularity * available
         carts[:, 2, :] = rng.multinomial(
-            rng.binomial(channels[:, 2], 0.03), other_weight / other_weight.sum()
+            rng.binomial(channels[:, 2], 0.03 * conversion),
+            other_weight / other_weight.sum(),
         )
 
     checkout_ok = np.array(
@@ -166,6 +258,37 @@ def generate_demand(
         ]
     )
     psp_successes = rng.binomial(psp_attempts, rates)
+    if modifiers.coupled_volume_mult != 1.0:
+        factor = modifiers.coupled_volume_mult
+        failed = _scale_counts(psp_attempts - psp_successes, factor, group_axes=2)
+        successes = _scale_counts(psp_successes, factor, group_axes=2)
+        extra_starts = _scale_counts(starts - attempts, factor, group_axes=2)
+        extra_carts = _scale_counts(carts - starts, factor, group_axes=2)
+        psp_successes = successes
+        psp_attempts = successes + failed
+        attempts = psp_attempts.sum(axis=-1)
+        starts = attempts + extra_starts
+        carts = starts + extra_carts
+        channels = _scale_counts(channels, factor)
+        count = channels.sum(axis=-1)
+        searches = _scale_counts(searches, factor)
+        result_clicks = _scale_counts(result_clicks, factor)
+        impressions = _scale_counts(impressions, factor, 12 * channels[:, 1])
+        feed_clicks = np.minimum(_scale_counts(feed_clicks, factor), impressions)
+        for index, offer in enumerate(offers):
+            if offer is not None:
+                requested = psp_attempts[:, :, index, :].copy().ravel()
+                if requested.sum() <= offer.stock:
+                    continue
+                cumulative = np.cumsum(requested)
+                allocated = np.minimum(
+                    requested, np.maximum(0, offer.stock - cumulative + requested)
+                ).reshape(len(_SEGMENTS), len(CHANNELS), len(PSPS))
+                psp_attempts[:, :, index, :] = allocated
+                psp_successes[:, :, index, :] = rng.binomial(allocated, rates)
+        attempts = psp_attempts.sum(axis=-1)
+        starts = attempts + extra_starts
+        carts = starts + extra_carts
     for index, offer in enumerate(offers):
         if offer is not None:
             offer.stock -= int(psp_successes[:, :, index, :].sum())
