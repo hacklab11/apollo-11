@@ -1,5 +1,6 @@
 """The capability that enforces kill switches, cost caps, loop detection and idempotency inside a run."""
 
+import asyncio
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -31,6 +32,11 @@ class RunGuard(AbstractCapability[Any]):
     kill_switch: KillSwitch | None = None
     idempotency: IdempotencyStore | None = None
     cost_usd: float = 0.0
+    requests: int = 0
+    tool_calls: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    _locks: dict[str, asyncio.Lock] = field(default_factory=dict, repr=False)
     _last_call: tuple[str, str] | None = field(default=None, repr=False)
     _repeats: int = field(default=0, repr=False)
 
@@ -53,6 +59,9 @@ class RunGuard(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
+        self.requests += 1
+        self.input_tokens += response.usage.input_tokens
+        self.output_tokens += response.usage.output_tokens
         self.cost_usd += self.prices.cost(response.model_name or "", response.usage)
         if self.cost_usd > self.max_cost_usd:
             raise CostLimitExceeded(
@@ -70,6 +79,7 @@ class RunGuard(AbstractCapability[Any]):
         handler: Any,
     ) -> Any:
         await self._check_kill()
+        self.tool_calls += 1
         self._track_repeats(call)
         if not (tool_def.metadata or {}).get(IDEMPOTENT_METADATA_KEY):
             return await handler(args)
@@ -78,12 +88,14 @@ class RunGuard(AbstractCapability[Any]):
                 f"tool {call.tool_name!r} is idempotent but the run has no idempotency store"
             )
         key = idempotency_key(self.scope.run_id, call.tool_name, call.args_as_dict())
-        found, stored = await self.idempotency.get(key)
-        if found:
-            return stored
-        result = await handler(args)
-        await self.idempotency.put(key, result)
-        return result
+        # PydanticAI runs tool calls in parallel; serialize identical ones so only one executes.
+        async with self._locks.setdefault(key, asyncio.Lock()):
+            found, stored = await self.idempotency.get(key)
+            if found:
+                return stored
+            result = await handler(args)
+            await self.idempotency.put(key, result)
+            return result
 
     def _track_repeats(self, call: ToolCallPart) -> None:
         signature = (

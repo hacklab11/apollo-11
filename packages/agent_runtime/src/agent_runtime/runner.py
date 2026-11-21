@@ -16,6 +16,7 @@ from pydantic_ai.exceptions import (
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.output import OutputSpec
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.usage import RunUsage
 
 from agent_runtime.budget import Budget
 from agent_runtime.errors import LoopDetected, RunKilled, UnpricedModel
@@ -172,9 +173,16 @@ async def _run[T](
     return RunOutcome(result=result, messages=messages)
 
 
-def _summary(guard: RunGuard, usage: Any = None) -> RunUsageSummary:
+def _summary(guard: RunGuard, usage: RunUsage | None = None) -> RunUsageSummary:
+    """Usage from the finished run, or what the guard counted when the run was stopped."""
     if usage is None:
-        return RunUsageSummary(cost_usd=guard.cost_usd)
+        return RunUsageSummary(
+            requests=guard.requests,
+            tool_calls=guard.tool_calls,
+            input_tokens=guard.input_tokens,
+            output_tokens=guard.output_tokens,
+            cost_usd=guard.cost_usd,
+        )
     return RunUsageSummary(
         requests=usage.requests,
         tool_calls=usage.tool_calls,

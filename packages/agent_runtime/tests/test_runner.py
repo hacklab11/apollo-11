@@ -18,7 +18,7 @@ from agent_runtime import (
 )
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models import check_allow_model_requests
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults
@@ -105,6 +105,9 @@ async def test_step_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     )
     assert outcome.result.status == "gave_up"
     assert "request_limit" in outcome.result.reason
+    assert outcome.result.usage.requests == 3
+    assert outcome.result.usage.tool_calls == 3
+    assert outcome.result.usage.total_tokens > 0
 
 
 async def test_token_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
@@ -374,3 +377,33 @@ async def test_budget_tightens_run_limits(scope: RunScope, prices: PriceTable) -
 def test_real_model_requests_are_blocked_in_tests() -> None:
     with pytest.raises(RuntimeError, match="ALLOW_MODEL_REQUESTS"):
         check_allow_model_requests()
+
+
+async def test_parallel_identical_idempotent_calls_execute_once(
+    scope: RunScope, prices: PriceTable
+) -> None:
+    sent: list[str] = []
+    turns = iter(range(2))
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if next(turns) == 0:
+            parts = [ToolCallPart("notify", {"text": "incident"}) for _ in range(2)]
+        else:
+            name = next(t.name for t in info.output_tools if "Diagnosis" in t.name)
+            parts = [ToolCallPart(name, {"cause": "x"})]
+        return ModelResponse(parts=parts, model_name="scripted")
+
+    agent: Agent[None, object] = Agent(
+        FunctionModel(respond, model_name="scripted"),
+        output_type=end_state_outputs(Diagnosis),
+    )
+
+    @agent.tool_plain(metadata={IDEMPOTENT_METADATA_KEY: True})
+    async def notify(text: str) -> str:
+        await asyncio.sleep(0.01)
+        sent.append(text)
+        return "sent"
+
+    outcome = await run(agent, scope, prices, idempotency=InMemoryIdempotencyStore())
+    assert outcome.result.status == "done"
+    assert sent == ["incident"]
