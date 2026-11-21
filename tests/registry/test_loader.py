@@ -8,7 +8,6 @@ import yaml
 
 from eye.registry.loader import (
     CONFIG_DIR,
-    _missing_data,
     formula_inputs,
     load_registry,
     source_tables,
@@ -154,15 +153,16 @@ def test_loader_reads_only_through_cursors(world) -> None:
         assert con.execute("SELECT 1").fetchone() == (1,)
 
 
-def test_schema_qualified_source_loads(writable) -> None:
-    writable.execute("CREATE SCHEMA extra")
-    writable.execute(
-        "CREATE TABLE extra.hits AS SELECT ts, sessions FROM traffic_hourly"
+@pytest.mark.parametrize("prefix", ["main.", 'main."', "{catalog}.main."])
+def test_qualified_source_tables_load_active(writable, tmp_path, prefix) -> None:
+    catalog = writable.execute("SELECT current_database()").fetchone()[0]
+    table = (
+        prefix.format(catalog=catalog)
+        + "traffic_hourly"
+        + ('"' if '"' in prefix else "")
     )
-    registry = load_registry(writable)
-    sql = 'SELECT ts, sessions AS num FROM extra."hits"'
-    metric = registry.metrics["sessions"].model_copy(
-        update={"sql": sql, "dimensions": []}
-    )
-    assert source_tables(sql) == ("extra.hits",)
-    assert _missing_data(writable, metric, source_tables(sql)) is None
+    sql = f"SELECT ts, sessions AS num FROM {table}"
+    metric = {**_seed("sessions"), "sql": sql, "dimensions": []}
+    registry = load_registry(writable, _config(tmp_path, [metric]))
+    assert registry.metrics["sessions"].status == "active"
+    assert registry.source_tables["sessions"] == (table.replace('"', "").lower(),)

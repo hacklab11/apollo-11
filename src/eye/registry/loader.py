@@ -102,10 +102,10 @@ def load_registry(
     with con.cursor() as cur:
         existing = {
             name
-            for schema, table in cur.execute(
-                "SELECT schema_name, table_name FROM duckdb_tables()"
+            for catalog, schema, table in cur.execute(
+                "SELECT database_name, schema_name, table_name FROM duckdb_tables()"
             ).fetchall()
-            for name in (table, f"{schema}.{table}")
+            for name in (table, f"{schema}.{table}", f"{catalog}.{schema}.{table}")
         }
 
     for metric in metrics.values():
