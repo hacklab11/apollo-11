@@ -132,18 +132,15 @@ def world() -> Iterator[duckdb.DuckDBPyConnection]:
     store.close()
 
 
-def settings(mode: str = "replay", cache: Path | None = None) -> Settings:
-    a2a = A2aSettings(
-        growth_url="http://specialists/growth",
-        marketplace_url="http://specialists/marketplace",
-        discovery_url="http://specialists/discovery",
-        selleros_url="http://selleros",
+def settings() -> Settings:
+    return Settings(
+        a2a=A2aSettings(
+            growth_url="http://specialists/growth",
+            marketplace_url="http://specialists/marketplace",
+            discovery_url="http://specialists/discovery",
+            selleros_url="http://selleros",
+        )
     )
-    value = Settings(a2a=a2a)
-    value.llm.mode = mode  # type: ignore[assignment]
-    if cache is not None:
-        value.llm.cache_path = cache
-    return value
 
 
 def data_client(world: duckdb.DuckDBPyConnection) -> DataClient:
