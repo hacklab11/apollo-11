@@ -77,6 +77,43 @@ def test_recovery_and_hard_minimum() -> None:
     assert a.price == round(ref * 0.4, 2)
 
 
+@pytest.mark.parametrize(
+    "mode,price_mult,other_mult,other_stock,expected_mult",
+    [
+        ("match", 0.8, 0.8, 10, 0.84),
+        ("beat", 0.8, 0.8, 10, 0.84),
+        ("match", 0.95, 0.95, 10, 0.95),
+        ("match", 0.9, 0.9, 10, 0.9),
+        ("match", 0.8, 0.75, 10, 0.75),
+        ("fixed", 0.8, 0.8, 10, 0.8),
+        ("match", 0.8, 0.8, 0, 0.8),
+    ],
+)
+def test_deep_discount_drift_up(
+    mode: str,
+    price_mult: float,
+    other_mult: float,
+    other_stock: int,
+    expected_mult: float,
+) -> None:
+    world = build_world(42, joined_ts=TS)
+    market = Market(world)
+    offers = world.offers["E01"]
+    for offer in offers:
+        offer.stock = 0
+    a, b = offers[:2]
+    ref = world.skus["E01"].ref_price
+    a.stock, b.stock = 10, other_stock
+    a.price, b.price = ref * price_mult, ref * other_mult
+    a.repricer_mode, b.repricer_mode = mode, "fixed"
+    a.floor = None
+    market.run_repricers()
+    expected = ref * expected_mult
+    assert a.price == (
+        expected if mode == "fixed" or not other_stock else round(expected, 2)
+    )
+
+
 def test_restock_capacity_and_delivery() -> None:
     world = build_world(42, joined_ts=TS)
     market = Market(world)

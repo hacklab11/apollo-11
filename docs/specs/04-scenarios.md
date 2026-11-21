@@ -216,12 +216,12 @@ Expected:
 - `must_mention`: the seller id, `price`, `manual` or `typo` or `pricing error`, `coupon`, `planned`, `SellerOS`.
 - `must_not_claim` as root cause: `traffic_change`, `planned_event`, `repricer_loop`.
 - Notification: SellerOS receives a `SellerAlert` for the seller with `recommended_action` "revert manual price".
-- Demo metric: `add_metric(fee_per_order)` while the incident is open → the new metric's anomaly is attached to this incident (Sentinel action `attach`), not a new incident. The attach rule needs a graph path from the root node: `price_change_rate → aov` (causal seed) and `aov → fee_per_order` (found by the Cartographer).
+- Demo metric: `add_metric(fee_per_order)` while the incident is open → the new metric's anomaly on electronics small_3P orders (`category = 'electronics' AND seller_tier = 'small_3P'`) is attached to this incident (Sentinel action `attach`), not a new incident. The attach rule needs a graph path from the root node: `price_change_rate → aov` (causal seed) and `aov → fee_per_order` (found by the Cartographer).
 - After `clear(S8)`: the incident becomes `resolved` after 3 normal ticks (about 15 s at 5 s per sim hour; check in rehearsal).
 
 Tuning targets (T27 test, I3 at 0 and S8 at +10 h, seed 42 and 2 more seeds):
 - `aov` `{category: electronics}` −30% or more in the first 3 S8 hours against I3 alone.
-- `fee_per_order` `{category: electronics}` −30% or more in the same hours.
+- `fee_per_order` `{category: electronics, seller_tier: small_3P}` (`category = 'electronics' AND seller_tier = 'small_3P'`) −30% or more in the same hours.
 - The seller sells out on all affected offers 4–8 h after inject.
 - Without S8, I3 alone still matches its oracle.
 
