@@ -169,7 +169,11 @@ def validate_breakdown(
         if p.completeness < 0.9 or p.value is None
     }
     sums: dict[datetime, float] = {}
-    if engine._registry.has_den.get(metric) or definition.unit == "ratio":
+    if (
+        engine._registry.has_den.get(metric)
+        or definition.unit == "ratio"
+        or (definition.expression and "/" in definition.expression)
+    ):
         raw = ratio_sums(engine, metric, start, end, {}, [dim], by_ts=True)
         nd: dict[datetime, list[float]] = {}
         for points in raw.values():

@@ -8,13 +8,66 @@ import numpy as np
 import pytest
 
 from eye.config import Settings
-from eye.contracts import Series, SeriesPoint
+from eye.contracts import MetricDef, Series, SeriesPoint
 from eye.registry.engine import MetricEngine
-from eye.registry.loader import load_registry
+from eye.registry.loader import Registry, load_registry
 from eye.sim.engine import Simulator
 from eye.tools.drill import decompose, mix_rate_split
 from eye.tools.identity import parse_identity
 from eye.tools.validate import lagged_correlation, validate_breakdown, validate_identity
+
+
+@pytest.fixture
+def weighted_engine() -> MetricEngine:
+    with duckdb.connect() as con:
+        con.execute(
+            "CREATE TABLE facts (ts TIMESTAMPTZ, country VARCHAR, num DOUBLE, den DOUBLE)"
+        )
+        con.execute(
+            "INSERT INTO facts VALUES ('2020-01-01', 'DE', 100, 1), ('2020-01-01', 'FR', 900, 3)"
+        )
+        metrics = {
+            name: MetricDef(
+                name=name,
+                description=name,
+                unit=unit,
+                domain="orders",
+                kind="sql",
+                dimensions=["country"],
+                sql=f"SELECT ts, country, {column} AS num FROM facts",
+            )
+            for name, unit, column in (
+                ("gmv", "eur", "num"),
+                ("orders", "count", "den"),
+            )
+        }
+        metrics["aov"] = MetricDef(
+            name="aov",
+            description="Weighted order value",
+            unit="eur",
+            domain="orders",
+            kind="formula",
+            dimensions=["country"],
+            expression="gmv / orders",
+        )
+        registry = Registry(
+            metrics,
+            {name: () for name in metrics},
+            {"gmv": False, "orders": False},
+            [],
+            [],
+        )
+        yield MetricEngine(con, registry)
+
+
+def test_average_breakdown_pools_weights(weighted_engine: MetricEngine) -> None:
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    assert weighted_engine.metric_value("aov", start) == 250
+    result = validate_breakdown(
+        weighted_engine, "aov", "country", start, start + timedelta(hours=1)
+    )
+    assert result.passed
+    assert result.evidence["n"] == 1
 
 
 @pytest.fixture(scope="module")
