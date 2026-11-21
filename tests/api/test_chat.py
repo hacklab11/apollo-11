@@ -1,10 +1,13 @@
+import asyncio
 import json
+import socket
 from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
 import httpx2
 import pytest
+import uvicorn
 from anthropic import AsyncAnthropic
 from factories import make_incident_s7
 from fastapi import FastAPI
@@ -177,3 +180,70 @@ async def test_conversation_and_agent_limits(monkeypatch, kind: str) -> None:
             result = await client.post("/api/chat", json={"messages": messages})
     assert result.status_code == {"budget": 503, "refusal": 422}.get(kind, 200)
     assert len(requests) == (8 if kind == "budget" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "status", "detail"),
+    [
+        ("budget", 503, "Chat budget exhausted"),
+        ("refusal", 422, "Chat request refused"),
+        ("unavailable", 503, "Chat service unavailable"),
+    ],
+)
+async def test_streamable_http_agent_errors(
+    monkeypatch, kind: str, status: int, detail: str
+) -> None:
+    async def llm(request: httpx2.Request) -> httpx2.Response:
+        if kind == "unavailable":
+            return httpx2.Response(
+                529,
+                json={
+                    "type": "error",
+                    "error": {"type": "overloaded_error", "message": "Unavailable"},
+                },
+            )
+        result = response("submit", {})
+        result["content"] = []
+        result["stop_reason"] = "refusal" if kind == "refusal" else "end_turn"
+        return httpx2.Response(200, json=result)
+
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        server = uvicorn.Server(
+            uvicorn.Config(
+                create_server("http://core").streamable_http_app(),
+                log_config=None,
+            )
+        )
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+            async with AsyncAnthropic(
+                api_key="offline-placeholder",
+                max_retries=0,
+                http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(llm)),
+            ) as sdk:
+                monkeypatch.setattr(
+                    "eye.llm.client._client", LLMClient(LlmSettings(), sdk)
+                )
+                app = FastAPI()
+                app.include_router(
+                    create_router(LlmSettings(), f"http://127.0.0.1:{port}/mcp")
+                )
+                async with httpx.AsyncClient(
+                    transport=httpx.ASGITransport(app),
+                    base_url="http://chat",
+                ) as client:
+                    result = await client.post("/api/chat", json={"messages": []})
+                assert result.status_code == status, result.text
+                assert result.json() == {"detail": detail}
+        finally:
+            server.should_exit = True
+            await task

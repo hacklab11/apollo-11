@@ -99,6 +99,7 @@ def create_router(settings: LlmSettings, mcp_url: str) -> APIRouter:
                     )
                 )
 
+        failure: tuple[int, str, BaseException] | None = None
         try:
             async with Client(mcp_url) as session:
                 tools: list[ToolSpec] = []
@@ -126,12 +127,15 @@ def create_router(settings: LlmSettings, mcp_url: str) -> APIRouter:
                     f"chat-{uuid4()}",
                     collect,
                 )
-        except BudgetExceeded as exc:
-            raise HTTPException(503, "Chat budget exhausted") from exc
-        except AgentRefused as exc:
-            raise HTTPException(422, "Chat request refused") from exc
-        except (LLMUnavailable, OSError) as exc:
-            raise HTTPException(503, "Chat service unavailable") from exc
+        except* BudgetExceeded as exc:
+            failure = (503, "Chat budget exhausted", exc)
+        except* AgentRefused as exc:
+            failure = (422, "Chat request refused", exc)
+        except* (LLMUnavailable, OSError) as exc:
+            failure = (503, "Chat service unavailable", exc)
+        if failure is not None:
+            status, detail, cause = failure
+            raise HTTPException(status, detail) from cause
         return ChatResponse(**answer.model_dump(), tool_calls=calls)
 
     return router
