@@ -95,7 +95,11 @@ def test_matching_uses_report_and_window_not_just_entry() -> None:
     unrelated = good.model_copy(
         update={
             "id": "unrelated",
+            "title": "Budget spent",
             "summary": "Budget spent",
+            "suggested_actions": [],
+            "open_questions": [],
+            "investigation_ids": ["budget-investigation"],
             "entry": good.entry.model_copy(update={"metric": "ad_spend"}),
             "root_cause": root.model_copy(update={"cause_type": "pacing_bug"}),
             "hypotheses": [],
