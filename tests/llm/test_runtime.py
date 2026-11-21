@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from anthropic import AsyncAnthropic
 from jsonschema import Draft202012Validator
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from eye.config import LlmSettings
 from eye.llm.client import LLMClient, budget_status, configure_client
@@ -167,6 +167,28 @@ async def test_parallel_tools_trail_and_request(harness):
 
 async def discard(step):
     pass
+
+
+@pytest.mark.asyncio
+async def test_strict_tool_schema_keeps_numeric_bounds_in_local_validation(harness):
+    class BoundedInput(Input):
+        value: int | None = Field(default=None, ge=0)
+
+    agent = spec()
+    agent.tools[0].input_model = BoundedInput
+    _, requests = harness([response([tool("increment", {"value": -1})]), final()])
+
+    result = await run_agent(agent, "go", "inv", discard)
+
+    assert result.value == 9
+    definition = next(t for t in requests[0]["tools"] if t["name"] == "increment")
+    assert definition["strict"] is True
+    value = definition["input_schema"]["properties"]["value"]
+    integer = next(option for option in value["anyOf"] if option["type"] == "integer")
+    assert "minimum" not in integer
+    error = requests[1]["messages"][-1]["content"][0]
+    assert error["is_error"]
+    assert "Input should be greater than or equal to 0" in error["content"]
 
 
 @pytest.mark.asyncio
