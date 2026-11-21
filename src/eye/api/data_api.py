@@ -67,7 +67,9 @@ _QUERIES: dict[str, tuple[str, tuple[str, ...], str]] = {
         (
             "SELECT coalesce(a.ts,s.ts) AS ts, coalesce(a.category,s.category) AS category, "
             "a.* EXCLUDE (ts,category), coalesce(s.slots,0) AS available_slots "
-            "FROM ads_hourly a FULL OUTER JOIN "
+            "FROM (SELECT ts, category, advertiser_id, sum(impressions) AS impressions, "
+            "sum(clicks) AS clicks, sum(spend) AS spend, avg(bid) AS bid "
+            "FROM ads_hourly GROUP BY ts, category, advertiser_id) a FULL OUTER JOIN "
             "(SELECT ts, category, 2*sum(searches) AS slots FROM search_hourly "
             "GROUP BY ts, category) s ON a.ts=s.ts AND a.category=s.category"
         ),
@@ -78,7 +80,7 @@ _QUERIES: dict[str, tuple[str, tuple[str, ...], str]] = {
             "max(available_slots) AS slots, coalesce(sum(impressions),0) AS filled_slots, "
             "coalesce(sum(impressions),0)::DOUBLE/nullif(max(available_slots),0) AS slot_fill_rate, "
             "list_slice(list(advertiser_id ORDER BY spend DESC, "
-            "advertiser_id),1,10) AS top_advertisers "
+            "advertiser_id) FILTER (WHERE advertiser_id IS NOT NULL),1,10) AS top_advertisers "
             "FROM filtered GROUP BY ts, category ORDER BY ts, category"
         ),
     ),

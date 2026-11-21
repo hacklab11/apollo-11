@@ -259,3 +259,32 @@ def test_auction_slot_capacity(
     assert row["bidders"] == 0
     connection.execute("UPDATE search_hourly SET searches=0")
     assert auction()["slot_fill_rate"] is None
+
+
+def test_auction_ranks_advertisers_by_combined_country_spend(
+    connection: duckdb.DuckDBPyConnection, client: TestClient
+) -> None:
+    connection.execute("""
+        INSERT INTO ads_hourly
+        SELECT ts, advertiser_id, 'FR', seller_id, category, impressions, clicks,
+               15, avg_cpc, bid, daily_budget, spent_today, planned_cum_share
+        FROM ads_hourly;
+        INSERT INTO ads_hourly
+        SELECT ts, 'ADV-2', country, seller_id, category, impressions, clicks,
+               30, avg_cpc, bid, daily_budget, spent_today, planned_cum_share
+        FROM ads_hourly WHERE country='DE';
+    """)
+    response = client.get("/data/ads/auction", params=WINDOW)
+    assert response.status_code == 200, response.text
+    row = response.json()["rows"][0]
+    assert row["top_advertisers"] == ["ADV-1", "ADV-2"]
+    assert row["bidders"] == 2
+    assert row["filled_slots"] == 300
+    assert row["slots"] == 200
+    connection.execute("DELETE FROM ads_hourly")
+    assert (
+        client.get("/data/ads/auction", params=WINDOW).json()["rows"][0][
+            "top_advertisers"
+        ]
+        is None
+    )
