@@ -171,6 +171,10 @@ class TrailStep(BaseModel):
     tokens_in: int = 0
     tokens_out: int = 0
 
+class Symptom(BaseModel):
+    node: str
+    first_change_ts: datetime
+
 class InvestigationResult(BaseModel):
     investigation_id: str
     entry: Anomaly
@@ -178,6 +182,7 @@ class InvestigationResult(BaseModel):
     summary: str                   # 2–4 sentences
     root_cause: Hypothesis | None
     hypotheses: list[Hypothesis]
+    symptoms: list[Symptom] = []
     contributions: list[Contribution]
     loop: list[str] | None = None  # node cycle when a feedback loop was found
     trigger: str | None = None     # hypothesis id of the first change
@@ -211,6 +216,7 @@ class Incident(BaseModel):
     contributions: list[Contribution]
     root_cause: Hypothesis | None
     hypotheses: list[Hypothesis]
+    symptoms: list[Symptom] = []
     investigation_ids: list[str]
     open_questions: list[str]
     suggested_actions: list[str]
