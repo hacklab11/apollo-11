@@ -131,6 +131,17 @@ def generate_demand(
     impressions = rng.multinomial(12 * channels[:, 1], exposure / exposure.sum())
     feed_clicks = rng.binomial(impressions, 0.04 * attractiveness)
 
+    conversion = np.array(
+        [
+            (
+                1
+                + (modifiers.marketing_mult.get(country, 1.0) - 1)
+                * modifiers.extra_session_conversion
+            )
+            / modifiers.marketing_mult.get(country, 1.0)
+            for country, _ in _SEGMENTS
+        ]
+    )
     carts = np.zeros((len(_SEGMENTS), len(CHANNELS), len(skus)), dtype=np.int64)
     for k in range(len(CATEGORIES)):
         mask = category_index == k
@@ -144,24 +155,14 @@ def generate_demand(
                 result_clicks[segment, k] += extra
         search = _retry_unavailable(rng, landed, in_stock)
         feed = _retry_unavailable(rng, feed_clicks[:, mask], in_stock)
-        conversion = np.array(
-            [
-                (
-                    1
-                    + (modifiers.marketing_mult.get(country, 1.0) - 1)
-                    * modifiers.extra_session_conversion
-                )
-                / modifiers.marketing_mult.get(country, 1.0)
-                for country, _ in _SEGMENTS
-            ]
-        )[:, None]
-        probability = 0.12 * price_factor[mask] * conversion
+        probability = 0.12 * price_factor[mask] * conversion[:, None]
         carts[:, 0, mask] = rng.binomial(search, probability * relevance_factor)
         carts[:, 1, mask] = rng.binomial(feed, probability)
     if available.any():
         other_weight = popularity * available
         carts[:, 2, :] = rng.multinomial(
-            rng.binomial(channels[:, 2], 0.03), other_weight / other_weight.sum()
+            rng.binomial(channels[:, 2], 0.03 * conversion),
+            other_weight / other_weight.sum(),
         )
 
     checkout_ok = np.array(

@@ -40,6 +40,7 @@ def _eligible_skus(world: World) -> dict[str, list[Sku]]:
 class Ads:
     version: str = "pacing-svc v4.0"
     pacing_exempt: set[str] = field(default_factory=set)
+    cpc_mult: dict[str, float] = field(default_factory=dict)
     spent: dict[str, float] = field(default_factory=dict)
     bids: dict[str, float] = field(default_factory=dict)
     served_impressions: dict[tuple[str, str], int] = field(default_factory=dict)
@@ -138,7 +139,7 @@ class Ads:
                     max(0.10, self.bids[ranked[rank + 1].advertiser_id] + 0.01)
                     if rank < 2 and rank + 1 < len(ranked)
                     else 0.10
-                )
+                ) * self.cpc_mult.get(category, 1.0)
                 for c, country in enumerate(COUNTRIES):
                     segments = searches[c * 3 : c * 3 + 3, k]
                     impressions = (

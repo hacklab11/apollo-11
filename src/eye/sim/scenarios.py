@@ -37,6 +37,11 @@ class ScenarioManager:
         self._late: list[tuple[datetime, datetime, list[tuple]]] = []
         self._discounts = sim.finance.platform_discount.copy()
         self._checkout_version = sim.apps.versions["checkout-web"]
+        self._pacing_exempt = sim.ads.pacing_exempt.copy()
+        self._cpc_mult = sim.ads.cpc_mult.copy()
+        self._ads_version = sim.ads.version
+        self._po_mult = sim.market.po_quantity_mult.copy()
+        self._po_version = sim.market.po_version.copy()
         sim.pre_demand_hooks.append(self._before)
         sim.pre_store_hooks.append(self._before_store)
 
@@ -74,6 +79,8 @@ class ScenarioManager:
         state.cleared_ts = self.sim.now
         self._pending.pop(id, None)
         self._log(id, "clear")
+        if id == "S7":
+            self.sim.apps.release("checkout-web", self._checkout_version, self.sim.now)
         self._reset_switches()
 
     def active(self) -> list[ScenarioState]:
@@ -234,16 +241,20 @@ class ScenarioManager:
                     "UPDATE payments_hourly SET latency_p95_ms = ? WHERE ts = ? AND psp = 'PSP-2'",
                     [p["psp_latency_ms"], ts - timedelta(hours=1)],
                 )
+        for table in ("change_log", "external_status"):
+            if table in batches:
+                batches[table] = [
+                    (f"{r[0]}-{id}-{len(self._states)}", *r[1:]) for r in batches[table]
+                ]
         self.sim.store.append(batches)
 
     def _reset_switches(self) -> None:
         sim = self.sim
-        sim.ads.pacing_exempt.discard(self.params["S1"]["advertiser"])
-        sim.ads.version = "pacing-svc v4.0"
-        for sku in sim.world.skus:
-            if sku.startswith("H"):
-                sim.market.po_quantity_mult.pop(sku, None)
-                sim.market.po_version.pop(sku, None)
+        sim.ads.pacing_exempt = self._pacing_exempt.copy()
+        sim.ads.cpc_mult = self._cpc_mult.copy()
+        sim.ads.version = self._ads_version
+        sim.market.po_quantity_mult = self._po_mult.copy()
+        sim.market.po_version = self._po_version.copy()
         sim.finance.platform_discount = self._discounts.copy()
 
     def _before(self, sim: Simulator, hour: Hour) -> None:
@@ -255,6 +266,7 @@ class ScenarioManager:
             id, p = state.id, self.params[state.id]
             if id == "S1":
                 sim.ads.pacing_exempt.add(p["advertiser"])
+                sim.ads.cpc_mult["electronics"] = p["cpc_mult"]
                 sim.ads.version = "pacing-svc v4.1"
             elif id == "S2":
                 for sku in sim.world.skus:
