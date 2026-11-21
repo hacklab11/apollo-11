@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from anthropic import AnthropicError
 from pydantic import ValidationError
 
 from eye.config import LlmSettings
@@ -178,6 +179,22 @@ async def test_retry_success(transport):
     _, requests = transport([429, 500, final()])
     assert (await run_agent(spec(), "go", "inv", discard)).value == 9
     assert len(requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_matches_narrative_error_handler(transport):
+    transport([401])
+    steps = []
+
+    async def collect(step):
+        steps.append(step)
+
+    with pytest.raises(AnthropicError) as error:
+        await run_agent(spec(), "go", "inv", collect)
+    assert isinstance(error.value, LLMUnavailable)
+    assert str(error.value) == "Chat Completions HTTP 401"
+    assert steps[-1].action == "note"
+    assert steps[-1].output_summary == "LLM unavailable after provider retries"
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from anthropic import AsyncAnthropic
+from anthropic import AnthropicError, AsyncAnthropic
 from anthropic.types.beta import BetaMessage
 
 from eye.config import LlmSettings, load_settings
@@ -20,7 +20,7 @@ class BudgetExceeded(Exception):
     """The turn or rolling hourly call budget is exhausted."""
 
 
-class LLMUnavailable(Exception):
+class LLMUnavailable(AnthropicError):
     """The provider could not complete the request."""
 
 
