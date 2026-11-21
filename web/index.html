@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#142c36">
+  <title>Eye of the System · Marketplace observatory</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23142c36'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%237ee0bb'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/cytoscape@3.30.4/dist/cytoscape.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to observatory</a>
+  <header class="topbar">
+    <div class="brand"><span class="eye" aria-hidden="true">◉</span><div><h1>Eye of the System</h1><p>MARKETPLACE OBSERVATORY</p></div></div>
+    <div class="clock"><span class="eyebrow">SIMULATION TIME · UTC</span><time id="sim-clock">Connecting…</time></div>
+    <div class="clock-controls"><button id="clock-toggle" type="button">Pause</button><button id="clock-step" type="button" title="Advance one simulated hour">Step +1h</button></div>
+    <div class="runtime"><span class="badge" id="llm-mode">REPLAY</span><span id="usage"></span></div>
+    <div id="agents" class="agents" aria-label="Agent health"></div>
+  </header>
+  <div class="scenario-bar"><span class="eyebrow">DEMO SCENARIOS</span><div id="scenarios" class="scenario-buttons"></div><span class="mock-label">MOCK DATA · NO LIVE CALLS</span></div>
+  <div id="notice" class="notice" role="status" hidden></div>
+  <main id="main" tabindex="-1">
+    <div class="workspace-heading"><div><p class="eyebrow">OBSERVE. INVESTIGATE. EXPLAIN.</p><h2>Marketplace overview</h2></div><button class="primary" id="add-metric" type="button">+ Add metric</button></div>
+    <div class="workspace">
+      <section class="panel graph-panel" aria-labelledby="graph-title">
+        <div class="panel-heading"><div><p class="eyebrow">THE BIG PICTURE</p><h3 id="graph-title">Metric graph <span id="node-count" class="count"></span></h3></div><button id="fit-graph" class="small" type="button">Fit</button></div>
+        <p class="panel-note">Follow the signals. Select a metric to inspect it.</p>
+        <div id="graph" role="img" aria-label="Interactive metric relationships. Use the metric selector below for keyboard access."></div>
+        <div class="graph-legend"><span><i class="line formula"></i>Formula =</span><span><i class="line causal"></i>Causal</span><span><i class="line ambiguous"></i>Ambiguous</span></div>
+        <div class="graph-legend states"><span><i class="dot normal"></i>Normal</span><span><i class="dot watch"></i>Watch</span><span><i class="dot anomaly"></i>Anomaly</span><span><i class="dot incident"></i>Incident</span><span><i class="dot resolved"></i>Resolved</span></div>
+        <label class="check"><input id="show-rejected" type="checkbox"> Show rejected edges</label>
+        <div class="metric-selector"><label for="metric-select">Inspect metric</label><select id="metric-select"></select><div id="dimension-chips" class="chips" aria-label="Metric dimensions"></div><p id="metric-description" class="muted"></p><p id="edge-description" class="muted"></p></div>
+      </section>
+      <div class="analysis-column">
+        <section class="panel chart-panel" aria-labelledby="metric-title">
+          <div class="panel-heading"><div><p class="eyebrow">SELECTED METRIC</p><h3 id="metric-title">Orders</h3></div><span class="badge neutral" id="metric-unit">COUNT / HOUR</span></div>
+          <div class="chart-wrap"><canvas id="metric-chart" role="img" aria-label="Orders actual values and expected range"></canvas></div>
+          <p class="chart-summary" id="chart-summary"></p>
+          <p id="fixture-note" class="muted"></p>
+        </section>
+        <section class="panel incidents-panel" aria-labelledby="incidents-title">
+          <div class="panel-heading"><div><p class="eyebrow">FROM SIGNAL TO STORY</p><h3 id="incidents-title">Incidents</h3></div><span id="incident-count" class="count"></span></div>
+          <div class="tabs" aria-label="Filter incidents"><button type="button" data-status="open" aria-pressed="true">Open</button><button type="button" data-status="cleared" aria-pressed="false">Cleared</button><button type="button" data-status="resolved" aria-pressed="false">Resolved</button></div>
+          <div id="incidents-list" class="incidents-list"></div>
+          <article id="incident-detail" aria-label="Selected incident"></article>
+        </section>
+      </div>
+      <aside class="panel chat-panel" aria-labelledby="chat-title">
+        <div class="panel-heading"><div><p class="eyebrow">ASK THE SYSTEM</p><h3 id="chat-title">Investigation chat</h3></div><span class="chat-spark" aria-hidden="true">✳</span></div>
+        <p class="panel-note">The evidence, in plain language.</p>
+        <div id="messages" class="messages" role="log" aria-label="Chat messages"><div class="welcome"><span class="assistant-avatar" aria-hidden="true">◉</span><h4>A second pair of eyes.</h4><p>Ask about a metric, an incident, or what changed in your marketplace.</p><button id="chat-suggestion" type="button">Why did orders drop?</button></div></div>
+        <form id="chat-form"><label class="sr-only" for="chat-input">Your question</label><textarea id="chat-input" maxlength="4000" rows="3" placeholder="What’s happening with orders?" required></textarea><div class="chat-send"><span>Mock answer · tools via MCP</span><button class="primary" id="chat-submit" type="submit">Send ↗</button></div></form>
+      </aside>
+    </div>
+    <section class="panel feed-panel" aria-labelledby="feed-title"><div class="panel-heading"><h3 id="feed-title"><i class="dot healthy"></i> Live activity</h3><span class="muted">Replay · one event every 2 seconds · last 30</span></div><ol id="feed" aria-label="Replayed events" tabindex="0"></ol></section>
+    <footer>Eye of the System <span>Deterministic signals. Agent-led investigations.</span></footer>
+  </main>
+  <dialog id="metric-dialog" aria-labelledby="dialog-title">
+    <div class="panel-heading"><div><p class="eyebrow">EXTEND THE GRAPH</p><h2 id="dialog-title">Add a metric</h2></div><button id="close-dialog" type="button" aria-label="Close add metric">✕</button></div>
+    <p class="muted">Describe a signal. The Cartographer proposes its relationships.</p>
+    <p class="mock-callout">Mock mode returns the fixed <strong>orders_per_session</strong> example, regardless of input. No SQL is executed.</p>
+    <form id="metric-form"><label for="new-name">Name</label><input id="new-name" name="name" value="orders_per_session" pattern="[a-z][a-z0-9_]{2,40}" maxlength="41" required><label for="new-description">Description</label><input id="new-description" name="description" value="Orders divided by marketplace sessions." required><label for="new-sql">SQL</label><textarea id="new-sql" name="sql" rows="3" placeholder="SELECT ts, …" required>SELECT ts, SUM(units) AS num FROM orders_hourly GROUP BY ts</textarea><button class="primary" id="metric-submit" type="submit">Ask Cartographer</button></form>
+    <div id="metric-result" role="status"></div>
+  </dialog>
+</body>
+</html>
