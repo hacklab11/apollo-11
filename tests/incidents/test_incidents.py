@@ -74,7 +74,10 @@ def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
     assert store.excluded_hours(make_incident_s7().entry.ts) == set()
 
 
-def test_merged_incident_exclusion_ends_after_last_seen(store: IncidentStore) -> None:
+@pytest.mark.parametrize("chain", [False, True])
+def test_merged_incident_exclusion_ends_at_survivor_resolution(
+    store: IncidentStore, chain: bool
+) -> None:
     incident = make_incident_s7()
     start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
     incident.opened_ts = incident.entry.ts = start
@@ -83,10 +86,39 @@ def test_merged_incident_exclusion_ends_after_last_seen(store: IncidentStore) ->
     incident.last_seen_ts = start + timedelta(hours=2)
     incident.merged_into = "inc_keeper"
     store._save(incident)
+    keeper = incident.model_copy(deep=True)
+    keeper.id = "inc_keeper"
+    keeper.opened_ts = keeper.entry.ts = start + timedelta(hours=5)
+    keeper.last_seen_ts = start + timedelta(hours=6)
+    keeper.status = "resolved"
+    keeper.resolved_ts = start + timedelta(hours=8)
+    keeper.merged_into = None
+    if chain:
+        survivor = keeper.model_copy(deep=True)
+        survivor.id = "inc_survivor"
+        store._save(survivor)
+        keeper.merged_into = survivor.id
+        keeper.resolved_ts = None
+    store._save(keeper)
     assert store.excluded_hours(start + timedelta(hours=10)) == {
-        start + timedelta(hours=i) for i in range(3)
+        start + timedelta(hours=i) for i in range(8)
     }
     assert store.excluded_hours(start + timedelta(hours=1)) == {start}
+
+
+@pytest.mark.parametrize("target", ["missing", "cycle"])
+def test_broken_merge_chain_excludes_conservatively(
+    store: IncidentStore, target: str
+) -> None:
+    incident = make_incident_s7()
+    start = incident.entry.ts.replace(minute=0, second=0, microsecond=0)
+    incident.opened_ts = incident.entry.ts = start
+    incident.merged_into = incident.id if target == "cycle" else "inc_missing"
+    store._save(incident)
+    assert store.excluded_hours(start + timedelta(hours=2)) == {
+        start,
+        start + timedelta(hours=1),
+    }
 
 
 @pytest.mark.asyncio
