@@ -81,6 +81,21 @@ def test_baseline_clean_hours(world: duckdb.DuckDBPyConnection, name: str) -> No
     assert result.delta == pytest.approx(0)
 
 
+def test_baseline_window_uses_only_hours_with_both_samples(
+    world: duckdb.DuckDBPyConnection,
+) -> None:
+    world.execute("DELETE FROM traffic_hourly WHERE ts < ? AND hour(ts) = 1", [T0])
+    result = baseline_compare(
+        BaselineCompareInput(name="sessions", start=T0, end=T0 + 2 * HOUR),
+        con=world,
+        registry=load_registry(world),
+    )
+    assert result.points[1].actual == result.points[0].actual
+    assert result.points[1].expected is None
+    assert result.actual == result.expected == 40_000
+    assert result.delta == pytest.approx(0)
+
+
 def test_baseline_fallback_applies_weekday_scaling(
     world: duckdb.DuckDBPyConnection,
 ) -> None:

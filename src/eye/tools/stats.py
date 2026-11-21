@@ -467,9 +467,10 @@ type BaselineRows = list[tuple[BaselinePoint, _Sample | None, _Sample | None]]
 
 
 def _window_values(rows: BaselineRows) -> tuple[float | None, float | None]:
+    matched = [(a, e) for _, a, e in rows if a is not None and e is not None]
     return (
-        _value(_pool(a for _, a, _ in rows if a is not None)),
-        _value(_pool(e for _, _, e in rows if e is not None)),
+        _value(_pool(a for a, _ in matched)),
+        _value(_pool(e for _, e in matched)),
     )
 
 
