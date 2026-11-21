@@ -1,0 +1,28 @@
+[project]
+name = "eye-sim"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "duckdb==2.0.1",
+    "eye-contracts",
+    "eye-data",
+    "eye-orchestrator",
+    "numpy==2.5.5",
+    "pydantic==2.14.4",
+    "pyyaml==6.0.4",
+]
+
+[project.scripts]
+eye-sim = "eye.sim.cli:main"
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eye"]
+
+[tool.uv.sources]
+eye-contracts = { workspace = true }
+eye-data = { workspace = true }
+eye-orchestrator = { workspace = true }

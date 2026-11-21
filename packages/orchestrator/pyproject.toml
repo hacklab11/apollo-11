@@ -1,0 +1,36 @@
+[project]
+name = "eye-orchestrator"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "a2a-sdk==1.3.1",
+    "anthropic==2.12.0",
+    "duckdb==2.0.1",
+    "eye-agents",
+    "eye-contracts",
+    "eye-data",
+    "eye-llm",
+    "fastapi==0.165.0",
+    "httpx==0.28.1",
+    "mcp==2.3.0",
+    "pydantic==2.14.4",
+    "protobuf==7.36.2",
+    "starlette==1.10.0",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+eye-core = "eye.main:main"
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eye"]
+
+[tool.uv.sources]
+eye-agents = { workspace = true }
+eye-contracts = { workspace = true }
+eye-data = { workspace = true }
+eye-llm = { workspace = true }
