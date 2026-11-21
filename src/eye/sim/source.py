@@ -14,6 +14,7 @@ from eye.config import Settings
 from eye.contracts import ScenarioId
 from eye.orchestrator import HOUR, Scenarios
 from eye.sim.engine import Simulator
+from eye.sim.seller_actions import SellerAction
 from eye.sim.store import WORLD_DB, Store
 
 
@@ -71,6 +72,16 @@ def _world(
         commands = reader.execute(
             "SELECT ts, id, active FROM scenario_commands ORDER BY sequence"
         ).fetchall()
+        seller_actions: dict[datetime, list[SellerAction]] = {}
+        for ts, key, seller_id, sku, kind, price in reader.execute(
+            "SELECT ts, action_key, seller_id, sku, kind, price "
+            "FROM seller_actions ORDER BY ts, ordinal"
+        ).fetchall():
+            seller_actions.setdefault(ts, []).append(
+                SellerAction(
+                    key=key, seller_id=seller_id, sku=sku, kind=kind, price=price
+                )
+            )
         if not exists:
             with closing(Simulator(settings, db_path=path)) as sim:
                 sim.backfill()
@@ -89,15 +100,16 @@ def _world(
                 start = settings.sim.start_ts
                 sim.now = start - HOUR * (24 * settings.sim.history_days)
                 while latest is not None and sim.now < start and sim.now <= latest:
-                    sim.step()
+                    sim.step(seller_actions=seller_actions.get(sim.now, []))
                 if sim.now < start:
                     scratch_store = sim.store
                     sim.store = stored
                     try:
                         while sim.now < start:
-                            sim.step()
+                            sim.step(seller_actions=seller_actions.get(sim.now, []))
                     finally:
                         sim.store = scratch_store
+                sim.selleros_export.write(start)
                 scenarios = (
                     scenario_module.ScenarioManager(sim) if scenario_module else None
                 )
@@ -117,7 +129,7 @@ def _world(
                         next_command = next(remaining, None)
                     if latest is None or sim.now > latest:
                         break
-                    sim.step()
+                    sim.step(seller_actions=seller_actions.get(sim.now, []))
                 if next_command is not None:
                     raise RuntimeError(
                         "scenario commands do not align with simulated hours"

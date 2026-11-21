@@ -14,6 +14,8 @@ WORLD_DB = Path("data/world.duckdb")
 _SCHEMA = {
     **SCHEMA,
     "scenario_log": "id VARCHAR, ts TIMESTAMPTZ, scenario_id VARCHAR, action VARCHAR, params JSON",
+    "seller_actions": """action_key VARCHAR PRIMARY KEY, ts TIMESTAMPTZ, ordinal BIGINT,
+                         seller_id VARCHAR, sku VARCHAR, kind VARCHAR, price DOUBLE""",
 }
 TABLES = tuple(_SCHEMA)
 

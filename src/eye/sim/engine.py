@@ -15,6 +15,11 @@ from eye.sim.demand import BASE_PSP_LATENCY_MS, PSPS, DemandModifiers, generate_
 from eye.sim.finance import Finance
 from eye.sim.market import Market
 from eye.sim.pipeline import Pipeline
+from eye.sim.seller_actions import (
+    JournalSellerActionFeed,
+    SellerAction,
+    SellerActionFeed,
+)
 from eye.sim.selleros_export import SellerOSExport
 from eye.sim.store import WORLD_DB, Batches, Store
 from eye.sim.world import build_world
@@ -34,7 +39,13 @@ type Hook = Callable[[Simulator, Hour], None]
 
 
 class Simulator:
-    def __init__(self, settings: Settings, *, db_path: str | Path = WORLD_DB) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        db_path: str | Path = WORLD_DB,
+        seller_action_feed: SellerActionFeed | None = None,
+    ) -> None:
         self.settings = settings
         self.now = settings.sim.start_ts
         self._start = self.now
@@ -47,6 +58,11 @@ class Simulator:
         self.market = Market(self.world)
         self.finance = Finance(self.world)
         self.selleros_export = SellerOSExport(self.world, settings.sim.seed)
+        self.seller_action_feed = seller_action_feed
+        self._journal_feed = JournalSellerActionFeed(
+            self.selleros_export.path.with_name("actions.jsonl")
+        )
+        self._seller_action_keys: set[str] = set()
         self.pre_demand_hooks: list[Hook] = []
         self.post_demand_hooks: list[Hook] = []
         self.pre_store_hooks: list[Hook] = []
@@ -75,12 +91,44 @@ class Simulator:
             self.now = self._start
         self.selleros_export.write(self.now)
 
-    def step(self) -> None:
+    def step(self, *, seller_actions: list[SellerAction] | None = None) -> None:
         hour_index = (self.now - self._history_start) // _HOUR
         hour = Hour(self.now, default_rng(self.settings.sim.seed + hour_index))
         ads_rng = default_rng([self.settings.sim.seed, hour_index, 1])
         for hook in self.pre_demand_hooks:
             hook(self, hour)
+        feed: SellerActionFeed | None = None
+        if seller_actions is None:
+            self._journal_feed.path = self.selleros_export.path.with_name(
+                "actions.jsonl"
+            )
+            feed = (
+                self.seller_action_feed
+                if self.seller_action_feed is not None
+                else self._journal_feed
+            )
+            seller_actions = feed.pending() if hour.ts >= self._start else []
+        actions = list(
+            {
+                action.key: action
+                for action in seller_actions
+                if action.key not in self._seller_action_keys
+            }.values()
+        )
+        applied_actions = self.market.apply_seller_actions(actions)
+        if actions:
+            hour.batches["seller_actions"] = [
+                (
+                    action.key,
+                    hour.ts,
+                    index,
+                    action.seller_id,
+                    action.sku,
+                    action.kind,
+                    action.price,
+                )
+                for index, action in enumerate(actions)
+            ]
         for psp_index, psp in enumerate(PSPS):
             latency_rng = default_rng(
                 [self.settings.sim.seed, hour_index, 2, psp_index]
@@ -136,7 +184,16 @@ class Simulator:
         for hook in self.pre_store_hooks:
             hook(self, hour)
         self.store.append(hour.batches)
+        self._seller_action_keys.update(action.key for action in actions)
+        for action in applied_actions:
+            if action.kind == "set_price":
+                assert action.price is not None
+                self.selleros_export.record_manual_price(
+                    action.seller_id, action.sku, action.price, hour.ts
+                )
         self.now += _HOUR
+        if feed is not None:
+            feed.ack([action.key for action in seller_actions])
         self.selleros_export.write(hour.ts)
 
     def close(self) -> None:

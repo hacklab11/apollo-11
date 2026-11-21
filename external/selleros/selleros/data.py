@@ -219,6 +219,8 @@ class FileSellerStore:
     def revert_manual_price(
         self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
     ) -> bool:
+        if intent.old is None:
+            raise ValueError("cannot revert a manual price without a previous price")
         with self.lock:
             return self._append(
                 {
@@ -227,6 +229,7 @@ class FileSellerStore:
                     "sku": sku,
                     "ts": intent.ts.isoformat(),
                     "price": intent.new,
+                    "restore_price": intent.old,
                     "status": "reverted",
                     "action": f"reverted manual price for {seller_id} on {sku}",
                 }

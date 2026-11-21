@@ -109,6 +109,28 @@ def test_corrupt_earlier_journal_record_raises(s8_store: FileSellerStore) -> Non
         s8_store.pause_repricer("corrupt", "S-14", "E02")
 
 
+def test_revert_requires_previous_price(s8_store: FileSellerStore) -> None:
+    seller = s8_store.read().sellers[0]
+    intent = price_intent(seller, seller.skus[0])
+    assert intent is not None
+    intent.old = None
+    with pytest.raises(ValueError, match="without a previous price"):
+        s8_store.revert_manual_price("no-history", seller.seller_id, intent.sku, intent)
+    assert s8_store.reverted_prices() == set()
+    assert not (s8_store.directory / "actions.jsonl").exists()
+
+
+def test_revert_journals_restore_price(s8_store: FileSellerStore) -> None:
+    seller = s8_store.read().sellers[0]
+    intent = price_intent(seller, seller.skus[0])
+    assert intent is not None
+    assert s8_store.revert_manual_price("restore", seller.seller_id, intent.sku, intent)
+    record = json.loads((s8_store.directory / "actions.jsonl").read_text())
+    assert record["restore_price"] == intent.old == 99
+    assert record["price"] == intent.new == 9.9
+    assert record["action"] == "reverted manual price for S-14 on E02"
+
+
 @pytest.mark.parametrize("action", ["pause", "revert manual price"])
 def test_ack_uses_actuation_result(s8_store: FileSellerStore, action: str) -> None:
     store = MemorySellerStore(s8_store.read())
