@@ -374,7 +374,9 @@ def test_replenishment_reduction_is_not_capacity_blocked(
         normal.before_demand(ts, np.random.default_rng(42))
         reduced.before_demand(ts, np.random.default_rng(42))
         assert reduced.blocked == normal.blocked
-        assert reduced.used[offer.seller_id] == round(normal.used[offer.seller_id] * 0.3)
+        assert reduced.used[offer.seller_id] == round(
+            normal.used[offer.seller_id] * 0.3
+        )
 
 
 @pytest.mark.parametrize("empty_stock", [False, True])
@@ -494,7 +496,11 @@ def test_backfill_commits_orders_before_marking_complete(
                 "WHERE table_name = 'orders_hourly' AND country = 'FR' AND ts = ?",
                 [ts],
             ).fetchone()
-            assert expected == loaded == con.execute(
-                "SELECT count(*) FROM orders_hourly WHERE country = 'FR' AND ts = ?",
-                [ts],
-            ).fetchone()[0]
+            assert (
+                expected
+                == loaded
+                == con.execute(
+                    "SELECT count(*) FROM orders_hourly WHERE country = 'FR' AND ts = ?",
+                    [ts],
+                ).fetchone()[0]
+            )
