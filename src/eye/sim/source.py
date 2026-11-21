@@ -22,6 +22,10 @@ class SimSource:
         self, sim: Simulator, scenarios: Scenarios | None, titles: dict[ScenarioId, str]
     ) -> None:
         self.sim = sim
+        self.live_start = sim.settings.sim.start_ts
+        self.history_start = self.live_start - HOUR * (
+            24 * sim.settings.sim.history_days
+        )
         self.scenarios = scenarios
         self.scenario_titles = titles
 

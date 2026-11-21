@@ -69,15 +69,16 @@ async def test_duckdb_ticks_only_on_complete_ingestion(tmp_path: Path) -> None:
 
     core.sentinel.run = run
     try:
-        assert (await core.step_once()).tick == 1
-        # The initial tick count reflects the existing hour relative to sim start.
+        assert core.sim_ts == source.live_start
+        assert source.history_start == ts
+        assert (await core.step_once()).tick == 0
         assert calls == [] and events.empty()
         publish(10)
-        assert (await core.step_once()).tick == 2
+        assert (await core.step_once()).tick == 1
         assert calls == [ts + HOUR]
         assert events.get_nowait().type == "tick"
         assert events.empty()
-        assert (await core.step_once()).tick == 2
+        assert (await core.step_once()).tick == 1
         assert calls == [ts + HOUR] and events.empty()
     finally:
         await core.close()
@@ -134,6 +135,10 @@ async def test_reporter_budget_exhaustion_still_finishes_incident() -> None:
 @dataclass
 class Clock:
     now: datetime
+
+    def __post_init__(self) -> None:
+        self.live_start = self.now
+        self.history_start = self.now - 28 * 24 * HOUR
 
     def step(self) -> None:
         self.now += HOUR

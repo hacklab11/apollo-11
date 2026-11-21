@@ -54,6 +54,8 @@ type EventType = Literal[
 
 class ClockSource(Protocol):
     now: datetime
+    history_start: datetime
+    live_start: datetime
 
     def step(self) -> None: ...
 
@@ -147,7 +149,7 @@ class Orchestrator:
         self.record_scenario = record_scenario
         self.events = EventBus()
         self.decisions: deque[SentinelDecision] = deque(maxlen=2_000)
-        self.tick = max(0, (sim.now - settings.sim.start_ts) // HOUR)
+        self.tick = max(0, (sim.now - sim.live_start) // HOUR)
         self.sim_ts = sim.now - HOUR if self.tick else sim.now
         self.paused = not settings.sim.autostart
         self._agents = {
@@ -301,9 +303,7 @@ class Orchestrator:
             return state
 
     def clean_hours(self) -> list[datetime]:
-        start = self.settings.sim.start_ts - timedelta(
-            days=self.settings.sim.history_days
-        )
+        start = self.sim.history_start
         timeline = self.scenarios.timeline() if self.scenarios else []
         hours = (start + i * HOUR for i in range((self.sim.now - start) // HOUR))
         return [

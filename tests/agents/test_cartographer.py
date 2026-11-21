@@ -680,7 +680,9 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
     store = IncidentStore(":memory:")
     orchestrator = Orchestrator(
         settings,
-        SimpleNamespace(now=end),
+        SimpleNamespace(
+            now=end, live_start=end, history_start=end - timedelta(days=28)
+        ),
         Sentinel(engine._con, engine._registry, graph=cartographer.graph),
         store,
         LLMClient(settings.llm),

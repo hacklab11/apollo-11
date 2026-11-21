@@ -45,6 +45,8 @@ from eye.sim.store import Store
 class World:
     def __init__(self, start: datetime) -> None:
         self.now = start
+        self.live_start = start
+        self.history_start = start - 28 * 24 * HOUR
         self.states: list[ScenarioState] = []
 
     def step(self) -> None:
