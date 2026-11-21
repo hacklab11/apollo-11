@@ -169,6 +169,7 @@ price_index_vs_1p → buybox_share (0)
 price_change_rate → price_index_vs_1p (0)
 buybox_share → small_seller_gmv_share (0)
 in_stock_rate → buybox_share (0)
+buybox_share → in_stock_rate (6)                   — small sellers that win the Buy Box at low prices sell out
 in_stock_rate → avg_cpc (6)                        — out-of-stock sellers bid more
 avg_cpc → ad_revenue (0)
 sessions → carts (0)
