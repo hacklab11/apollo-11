@@ -78,8 +78,8 @@ class Reporter:
                 narrative = Narrative.model_validate(response)
                 if _numbers(narrative.title + " " + narrative.summary) <= allowed:
                     return narrative.title, narrative.summary
-            except Exception:
-                pass
+            except (OSError, RuntimeError, ValueError, TypeError):
+                narrative = None
             messages.append(
                 {
                     "role": "user",

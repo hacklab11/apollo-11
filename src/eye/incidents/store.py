@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import duckdb
 
+from eye.agents.reporter import Reporter
 from eye.config import ReporterSettings
 from eye.contracts import (
     Anomaly,
@@ -186,8 +187,6 @@ class IncidentStore:
         return keeper
 
     async def upsert(self, result: InvestigationResult) -> Incident:
-        from eye.agents.reporter import Reporter
-
         root = result.root_cause
         final = fingerprint(
             root.root_node if root else result.entry.metric,
@@ -307,7 +306,10 @@ class IncidentStore:
                         or (other_trigger and other.root_cause.id == other_trigger.id)
                     ):
                         item = self._merge(other, item)
-                    elif root and item_trigger and root.id == item_trigger.id:
+                    elif root and (
+                        trigger == root.id
+                        or (item_trigger and root.id == item_trigger.id)
+                    ):
                         item = self._merge(item, other)
                     else:
                         older, newer = sorted(
@@ -330,7 +332,7 @@ class IncidentStore:
                     "ok": ack.received,
                     "ack": ack.model_dump(),
                 }
-            except Exception:
+            except (OSError, RuntimeError, ValueError, TypeError):
                 notification = {
                     "to": "selleros",
                     "ts": result.entry.ts.isoformat(),

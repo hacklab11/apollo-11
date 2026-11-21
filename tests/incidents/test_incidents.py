@@ -1,11 +1,11 @@
 from datetime import timedelta
 
 import pytest
+from factories import make_anomaly, make_incident_s7, make_trail_s7
 
 from eye.agents.reporter import Reporter
 from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision
 from eye.incidents.store import IncidentStore, canonical, fingerprint
-from factories import make_anomaly, make_incident_s7, make_trail_s7
 
 
 def result(name: str = "a", *, hours: int = 0) -> InvestigationResult:
@@ -101,6 +101,41 @@ async def test_same_trigger_merges(store):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("trigger_arrives_first", [True, False])
+async def test_trigger_incident_kept_even_when_newer(store, trigger_arrives_first):
+    trigger = result("trigger")
+    downstream = result("downstream")
+    downstream.root_cause = downstream.root_cause.model_copy(
+        update={"id": "downstream_root", "root_node": "gmv"}
+    )
+    downstream.trigger = trigger.root_cause.id
+    first, second = (
+        (trigger, downstream) if trigger_arrives_first else (downstream, trigger)
+    )
+    second.entry.ts += timedelta(hours=1)
+    original = await store.upsert(first)
+    merged = await store.upsert(second)
+    assert merged.root_cause.id == trigger.root_cause.id
+    assert set(merged.investigation_ids) == {"trigger", "downstream"}
+    if trigger_arrives_first:
+        assert merged.id == original.id
+    else:
+        assert store.get(original.id).merged_into == merged.id
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_lookup_error_leaves_incident_unchanged(store):
+    incident = await store.upsert(result())
+
+    def unavailable(*args):
+        raise LookupError("missing metric")
+
+    with pytest.raises(LookupError, match="missing metric"):
+        store.lifecycle(incident.entry.ts + timedelta(hours=1), unavailable)
+    assert store.get(incident.id) == incident
+
+
+@pytest.mark.asyncio
 async def test_causal_chain_links_without_merging(store):
     store.path_exists = lambda src, dst: (src, dst) == ("cart_to_checkout_rate", "gmv")
     first = await store.upsert(result())
@@ -152,7 +187,9 @@ async def test_deferred_and_innocent(store):
     incident = await store.upsert(value)
     assert incident.status == "deferred"
     for hour, reading in ((1, (0, 0.8)), (2, (3, 1.0)), (3, 0)):
-        store.lifecycle(value.entry.ts + timedelta(hours=hour), lambda *_: reading)
+        store.lifecycle(
+            value.entry.ts + timedelta(hours=hour), lambda *_, reading=reading: reading
+        )
         assert store.get(incident.id).status == "deferred"
     store.lifecycle(value.entry.ts + timedelta(hours=4), lambda *_: (0, 0.9))
     assert store.get(incident.id).status == "resolved"
