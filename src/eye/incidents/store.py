@@ -183,6 +183,7 @@ class IncidentStore:
                 "impact_eur_per_hour",
                 "root_cause",
                 "hypotheses",
+                "symptoms",
                 "contributions",
                 "open_questions",
                 "suggested_actions",
@@ -277,6 +278,7 @@ class IncidentStore:
         for field in (
             "root_cause",
             "hypotheses",
+            "symptoms",
             "contributions",
             "affected_actors",
             "open_questions",
