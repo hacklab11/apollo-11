@@ -88,6 +88,8 @@ class Market:
                 floor = offer.floor if offer.floor is not None else 0.40 * ref
                 if lowest > price * 1.03 and price < ref:
                     price = min(lowest * 0.99, ref)
+                elif price < ref * 0.9 and lowest >= price * 0.97:
+                    price = min(price * 1.05, ref)
                 elif lowest < price * 0.97 or (
                     offer.repricer_mode == "beat"
                     and offer is not winner
