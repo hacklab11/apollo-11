@@ -1,16 +1,18 @@
 """Request-scoped access to SellerOS private data."""
 
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from selleros.models import SellerAlert, SellerAlertAck
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+PriceSource = Literal["repricer", "manual"]
 
 
 class Repricer(BaseModel):
@@ -33,6 +35,7 @@ class Price(BaseModel):
     ts: datetime
     sku: str
     price: float
+    source: PriceSource = "repricer"
 
 
 class Seller(BaseModel):
@@ -65,16 +68,113 @@ class ToolOutput(BaseModel):
     summary: str = Field(max_length=300)
 
 
+class PriceIntent(BaseModel):
+    seller_id: str
+    sku: str
+    ts: datetime
+    old: float | None
+    new: float
+    source: PriceSource
+    unit_cost: float
+    verdict: Literal["intended", "likely_error"]
+
+
+def price_intent(
+    seller: Seller, sku: SKU, as_of: datetime | None = None
+) -> PriceIntent | None:
+    history = sorted(
+        (
+            p
+            for p in seller.price_history
+            if p.sku == sku.sku and (as_of is None or p.ts <= as_of)
+        ),
+        key=lambda p: p.ts,
+    )
+    if not history:
+        return None
+    latest = history[-1]
+    return PriceIntent(
+        seller_id=seller.seller_id,
+        sku=sku.sku,
+        ts=latest.ts,
+        old=history[-2].price if len(history) > 1 else None,
+        new=latest.price,
+        source=latest.source,
+        unit_cost=sku.unit_cost,
+        verdict="likely_error"
+        if latest.source == "manual" and latest.price < sku.unit_cost
+        else "intended",
+    )
+
+
 class Store:
     def __init__(self, directory: Path = DATA_DIR) -> None:
         self.directory = directory
         self.paused: set[tuple[str, str]] = set()
+        self.reverted: set[tuple[str, str, datetime, float]] = set()
         self.lock = threading.Lock()
 
     def read(self) -> Snapshot:
         return Snapshot.model_validate_json(
             (self.directory / "sellers.json").read_text(encoding="utf-8")
         )
+
+    def receive_alert(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
+        if re.search(
+            r"\brevert\b.*\bmanual\b.*\bprices?\b",
+            alert.recommended_action,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return self.revert_manual_price(snapshot, alert)
+        return self.pause(snapshot, alert)
+
+    def revert_manual_price(
+        self, snapshot: Snapshot, alert: SellerAlert
+    ) -> SellerAlertAck:
+        actions = []
+        with self.lock:
+            for seller in snapshot.sellers:
+                if (
+                    not seller.customer_of_selleros
+                    or seller.seller_id not in alert.seller_ids
+                ):
+                    continue
+                intents = [
+                    intent
+                    for sku in seller.skus
+                    if (not alert.skus or sku.sku in alert.skus)
+                    and (intent := price_intent(seller, sku)) is not None
+                    and intent.verdict == "likely_error"
+                    and (intent.seller_id, intent.sku, intent.ts, intent.new)
+                    not in self.reverted
+                ]
+                if not intents:
+                    continue
+                skus = sorted(intent.sku for intent in intents)
+                action = (
+                    f"reverted manual price for {seller.seller_id} on {', '.join(skus)}"
+                )
+                with (self.directory / "actions.jsonl").open(
+                    "a", encoding="utf-8"
+                ) as log:
+                    log.write(
+                        json.dumps(
+                            {
+                                "incident_id": alert.incident_id,
+                                "seller_id": seller.seller_id,
+                                "skus": skus,
+                                "status": "reverted",
+                                "action": action,
+                            }
+                        )
+                        + "\n"
+                    )
+                self.reverted.update(
+                    (intent.seller_id, intent.sku, intent.ts, intent.new)
+                    for intent in intents
+                )
+                actions.append(action)
+        return SellerAlertAck(received=True, actions_taken=actions)
 
     def pause(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
         actions = []
@@ -176,6 +276,11 @@ class ScopedData:
                     if p.ts >= self.as_of - timedelta(hours=24)
                 ]
                 rows.append(base | {"price_path": recent, "price_changes": len(recent)})
+            elif name == "price_intent_check":
+                for sku in skus:
+                    intent = price_intent(seller, sku, self.as_of)
+                    if intent is not None:
+                        rows.append(intent.model_dump(mode="json"))
             elif name in {"get_costs", "get_supplier_eta"}:
                 for sku in skus:
                     prices = [p for p in history if p.sku == sku.sku]
