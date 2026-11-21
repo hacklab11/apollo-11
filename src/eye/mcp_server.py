@@ -1,6 +1,7 @@
 """MCP server: a stateless adapter over the core public API."""
 
 import json
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -8,7 +9,7 @@ import httpx
 import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import CallToolResult, TextContent, ToolAnnotations
+from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter, ValidationError
 
 from eye.api.app import MetricDefinition
@@ -31,10 +32,10 @@ from eye.orchestrator import Status
 
 NAME = "eye-of-the-system"
 INSTRUCTIONS = (
-    "Monitoring system for a simulated marketplace. Start with system_status and "
-    "list_incidents. Incidents contain evidence trails. Use inject_scenario only "
-    "when the user asks for a demo."
+    "Monitoring system for the marketplace. Start with system_status and "
+    "list_incidents. Incidents contain evidence trails."
 )
+SCENARIO_TOOLS = frozenset({"list_scenarios", "inject_scenario", "clear_scenario"})
 MAX_INCIDENTS = 50
 MAX_TRAIL_STEPS = 60
 MAX_GRAPH_DEPTH = 3
@@ -103,11 +104,23 @@ def _error_message(response: httpx.Response) -> str:
     return detail if isinstance(detail, str) else json.dumps(detail)
 
 
+class _MonitoringServer(MCPServer):
+    """Lists the scenario tools only while core reports a scenario source."""
+
+    def __init__(self, has_scenarios: Callable[[], Awaitable[bool]]) -> None:
+        super().__init__(NAME, instructions=INSTRUCTIONS, log_level="WARNING")
+        self._has_scenarios = has_scenarios
+
+    async def list_tools(self) -> list[Tool]:
+        tools = await super().list_tools()
+        if await self._has_scenarios():
+            return tools
+        return [tool for tool in tools if tool.name not in SCENARIO_TOOLS]
+
+
 def create_server(
     core_url: str, transport: httpx.AsyncBaseTransport | None = None
 ) -> MCPServer:
-    server = MCPServer(NAME, instructions=INSTRUCTIONS, log_level="WARNING")
-
     async def call(
         method: str,
         path: str,
@@ -128,18 +141,26 @@ def create_server(
             )
         return response.json()
 
+    async def has_scenarios() -> bool:
+        try:
+            return bool(await call("GET", "/api/scenarios"))
+        except ToolError:
+            return False
+
+    server = _MonitoringServer(has_scenarios)
+
     async def status() -> Status:
         return Status.model_validate(await call("GET", "/api/status"))
 
     @server.tool(annotations=READ_ONLY)
     async def system_status() -> CallToolResult:
-        """Return the simulation clock and tick, agent health, active scenarios and
+        """Return the data clock and tick, agent health, active scenarios and
         LLM mode. Use it first to see whether the system is running."""
         state = await status()
         healthy = sum(agent.ok for agent in state.agents.values())
         active = ", ".join(state.active_scenarios) or "none"
         return _result(
-            f"Sim time {state.sim_ts.isoformat()} (tick {state.tick}, "
+            f"Data as of {state.sim_ts.isoformat()} (tick {state.tick}, "
             f"{'paused' if state.paused else 'running'}); {healthy}/{len(state.agents)} "
             f"agents healthy; active scenarios: {active}; LLM mode {state.llm_mode}; "
             f"{state.investigations_running} investigations running.",
@@ -247,7 +268,7 @@ def create_server(
         ] = None,
         end: Annotated[
             AwareDatetime | None,
-            Field(description="Window end (ISO 8601). Default: current sim time."),
+            Field(description="Window end (ISO 8601). Default: latest data hour."),
         ] = None,
         segment: Annotated[
             dict[Dimension, str] | None,
@@ -359,7 +380,7 @@ def create_server(
             ScenarioId, Field(description="Scenario id from list_scenarios.")
         ],
     ) -> CallToolResult:
-        """Start a demo scenario in the simulation and return its new state. Use it
+        """Start a demo scenario in the data source and return its new state. Use it
         only when the user asks for a demo."""
         return await change_scenario(id, "inject")
 
@@ -369,7 +390,7 @@ def create_server(
             ScenarioId, Field(description="Scenario id from list_scenarios.")
         ],
     ) -> CallToolResult:
-        """Stop a demo scenario in the simulation and return its new state. Use it
+        """Stop a demo scenario in the data source and return its new state. Use it
         to end a demo the user started."""
         return await change_scenario(id, "clear")
 

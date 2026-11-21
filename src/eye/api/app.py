@@ -4,7 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Protocol
 
 import duckdb
 from fastapi import FastAPI, HTTPException, Query
@@ -52,10 +52,6 @@ class Graph(Protocol):
 class MetricDefinition(MetricDef):
     in_edges: list[Edge]
     out_edges: list[Edge]
-
-
-class LlmModeRequest(BaseModel):
-    mode: Literal["live", "record", "replay"]
 
 
 class TruthRow(BaseModel):
@@ -110,11 +106,6 @@ def create_app(
 
     @app.get("/api/status")
     async def status() -> Status:
-        return orchestrator.status()
-
-    @app.post("/api/llm/mode")
-    async def set_llm_mode(request: LlmModeRequest) -> Status:
-        orchestrator.llm.settings.mode = request.mode
         return orchestrator.status()
 
     @app.get("/api/graph")
