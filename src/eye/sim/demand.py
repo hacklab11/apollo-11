@@ -122,9 +122,14 @@ def generate_demand(
 
 
 def _scale_counts(
-    values: NDArray[np.int64], factor: float, totals: NDArray[np.int64] | None = None
+    values: NDArray[np.int64],
+    factor: float,
+    totals: NDArray[np.int64] | None = None,
+    *,
+    group_axes: int = 1,
 ) -> NDArray[np.int64]:
-    flat = values.reshape(len(values), -1).astype(float)
+    groups = int(np.prod(values.shape[:group_axes]))
+    flat = values.reshape(groups, -1).astype(float)
     if totals is None:
         flat *= factor
     else:
@@ -255,10 +260,10 @@ def _generate_demand(
     psp_successes = rng.binomial(psp_attempts, rates)
     if modifiers.coupled_volume_mult != 1.0:
         factor = modifiers.coupled_volume_mult
-        failed = _scale_counts(psp_attempts - psp_successes, factor)
-        successes = _scale_counts(psp_successes, factor)
-        extra_starts = _scale_counts(starts - attempts, factor)
-        extra_carts = _scale_counts(carts - starts, factor)
+        failed = _scale_counts(psp_attempts - psp_successes, factor, group_axes=2)
+        successes = _scale_counts(psp_successes, factor, group_axes=2)
+        extra_starts = _scale_counts(starts - attempts, factor, group_axes=2)
+        extra_carts = _scale_counts(carts - starts, factor, group_axes=2)
         psp_successes = successes
         psp_attempts = successes + failed
         attempts = psp_attempts.sum(axis=-1)
