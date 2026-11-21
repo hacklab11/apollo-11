@@ -232,6 +232,19 @@ def main() -> None:
             orchestrator.agent_unavailable(name, reason)
 
         a2a = A2AClient(settings.a2a, on_unavailable=unavailable)
+        investigate = (
+            detective.Detective(
+                connection,
+                registry,
+                graph,
+                a2a=a2a,
+                settings=settings.detective,
+                freshness=settings.sentinel,
+                llm=settings.llm,
+            ).investigate
+            if detective is not None
+            else None
+        )
         incidents = stack.enter_context(
             closing(
                 IncidentStore(
@@ -272,7 +285,7 @@ def main() -> None:
             scenarios=scenarios,
             scenario_titles=scenario_module._TITLES if scenario_module else {},
             a2a=a2a,
-            investigate=detective.investigate if detective else None,
+            investigate=investigate,
             add_metric=cartographer.add_metric if cartographer else None,
             refine=refine if cartographer else None,
             invalidate=engine.invalidate,
