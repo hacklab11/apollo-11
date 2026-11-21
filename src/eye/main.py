@@ -1,13 +1,14 @@
 """Build and run the core service."""
 
 import json
+import logging
 import time
 from collections.abc import Sequence
 from contextlib import ExitStack, closing
 from datetime import UTC, datetime
 from importlib import import_module
 from types import ModuleType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 import uvicorn
@@ -22,10 +23,64 @@ from eye.contracts import InvestigationResult, TrailStep
 from eye.datasource import open_source
 from eye.incidents.store import IncidentStore
 from eye.llm.client import BudgetExceeded, LLMClient, configure_client
+from eye.llm.runtime import AgentRefused
 from eye.orchestrator import Orchestrator, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.tools.stats import expected
+
+if TYPE_CHECKING:
+    from eye.agents.cartographer import Cartographer
+
+
+async def _refine_causal_seeds(
+    cart: "Cartographer", clean_hours: Sequence[datetime], on_step: StepSink
+) -> None:
+    graph = cart.graph
+    seeds = [edge for edge in graph.edges() if edge.created_by == "seed"]
+    if any(not edge.evidence.get("llm_refined") for edge in seeds):
+        n = 0
+
+        async def record_step(step: TrailStep) -> None:
+            nonlocal n
+            n = step.n
+            await on_step(step)
+
+        try:
+            await cart.refine_causal_seeds(clean_hours, record_step)
+        except (AnthropicError, BudgetExceeded, AgentRefused, TypeError) as exc:
+            if isinstance(exc, TypeError) and (
+                "Could not resolve authentication method" not in str(exc)
+            ):
+                raise
+            logging.getLogger(__name__).warning(
+                json.dumps(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "component": "cartographer",
+                        "event": "refinement_unavailable",
+                        "error": type(exc).__name__,
+                    }
+                )
+            )
+            await on_step(
+                TrailStep(
+                    id=f"stp_{uuid4().hex}",
+                    investigation_id="cartographer:bootstrap",
+                    n=n + 1,
+                    real_ts=datetime.now(UTC),
+                    actor="cartographer",
+                    action="note",
+                    output_summary=(
+                        f"Seed refinement unavailable: {type(exc).__name__}; "
+                        "seeds unchanged; retry on next startup"
+                    ),
+                )
+            )
+            return
+        for edge in graph.edges():
+            if edge.created_by == "seed":
+                graph.set_edge_status(edge.id, edge.status, {"llm_refined": True})
 
 
 def _optional_module(name: str) -> ModuleType | None:
@@ -152,14 +207,7 @@ def main() -> None:
 
         async def refine(clean_hours: Sequence[datetime], on_step: StepSink) -> None:
             assert cart is not None
-            seeds = [edge for edge in graph.edges() if edge.created_by == "seed"]
-            if any(not edge.evidence.get("llm_refined") for edge in seeds):
-                await cart.refine_causal_seeds(clean_hours, on_step)
-                for edge in graph.edges():
-                    if edge.created_by == "seed":
-                        graph.set_edge_status(
-                            edge.id, edge.status, {"llm_refined": True}
-                        )
+            await _refine_causal_seeds(cart, clean_hours, on_step)
 
         def unavailable(name: str, reason: str) -> None:
             orchestrator.agent_unavailable(name, reason)
