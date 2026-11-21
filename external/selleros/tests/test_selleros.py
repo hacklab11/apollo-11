@@ -613,7 +613,8 @@ def test_revert_log_failure_does_not_mark_reverted(s8_store: FileSellerStore) ->
         summary="",
         recommended_action="revert manual price",
     )
-    with pytest.raises(IsADirectoryError):
+    # Windows reports opening a directory as PermissionError.
+    with pytest.raises((IsADirectoryError, PermissionError)):
         receive_alert(s8_store, alert)
     (s8_store.directory / "actions.jsonl").rmdir()
     assert s8_store.reverted_prices() == set()

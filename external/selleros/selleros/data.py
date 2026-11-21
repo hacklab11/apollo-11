@@ -1,17 +1,43 @@
 """Request-scoped access to SellerOS private data."""
 
-import fcntl
 import json
 import os
 import re
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, BinaryIO, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
 from selleros.models import SellerAlert, SellerAlertAck
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
+
+@contextmanager
+def _journal_lock(journal: BinaryIO, *, shared: bool) -> Iterator[None]:
+    """Hold the cross-process journal lock that the simulator also takes."""
+    if os.name != "nt":
+        fcntl.flock(journal, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        yield
+        return
+    # msvcrt locks are exclusive and mandatory: locking the journal itself would
+    # make concurrent reads fail instead of wait, so lock a sidecar file.
+    with open(f"{journal.name}.lock", "a+b") as lock:
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "data"
 PriceSource = Literal["repricer", "manual"]
@@ -136,8 +162,10 @@ class FileSellerStore:
 
     def _records(self) -> list[dict[str, Any]]:
         try:
-            with (self.directory / "actions.jsonl").open("rb") as log:
-                fcntl.flock(log, fcntl.LOCK_SH)
+            with (
+                (self.directory / "actions.jsonl").open("rb") as log,
+                _journal_lock(log, shared=True),
+            ):
                 content = log.read()
         except FileNotFoundError:
             return []
@@ -179,8 +207,10 @@ class FileSellerStore:
             }
 
     def _append(self, record: dict[str, Any]) -> bool:
-        with (self.directory / "actions.jsonl").open("a+b") as log:
-            fcntl.flock(log, fcntl.LOCK_EX)
+        with (
+            (self.directory / "actions.jsonl").open("a+b") as log,
+            _journal_lock(log, shared=False),
+        ):
             log.seek(0)
             records, end = self._complete_records(log.read())
             if any(

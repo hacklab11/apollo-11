@@ -1,13 +1,39 @@
 """Seller-initiated marketplace changes and the SellerOS journal adapter."""
 
-import fcntl
 import hashlib
 import json
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Literal, Protocol, Self
+from typing import BinaryIO, Literal, Protocol, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
+
+
+@contextmanager
+def _journal_lock(journal: BinaryIO, *, shared: bool) -> Iterator[None]:
+    """Hold the cross-process journal lock that SellerOS also takes."""
+    if os.name != "nt":
+        fcntl.flock(journal, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        yield
+        return
+    # msvcrt locks are exclusive and mandatory: locking the journal itself would
+    # make concurrent reads fail instead of wait, so lock a sidecar file.
+    with open(f"{journal.name}.lock", "a+b") as lock:
+        lock.seek(0)
+        msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 class SellerAction(BaseModel):
@@ -52,8 +78,10 @@ class JournalSellerActionFeed:
     def pending(self) -> list[SellerAction]:
         with self._lock:
             try:
-                with self.path.open("rb") as journal:
-                    fcntl.flock(journal, fcntl.LOCK_SH)
+                with (
+                    self.path.open("rb") as journal,
+                    _journal_lock(journal, shared=True),
+                ):
                     lines = journal.read().splitlines(keepends=True)
             except FileNotFoundError:
                 return []
