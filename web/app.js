@@ -723,12 +723,13 @@ function renderIncidents() {
   }
 }
 
-async function openIncident(id, focus = false) {
-  const opening = { id, incident: null, investigationIds: new Set(), trail: [] };
+async function openIncident(id, focus = false, snapshot = null) {
+  const resetScroll = state.incident?.id !== id;
+  const opening = { id, focus, incident: snapshot, investigationIds: new Set(), trail: [] };
   state.openingIncident = opening;
   try {
     const [incident, trail] = await Promise.all([
-      api.getIncident(id),
+      snapshot ?? api.getIncident(id),
       api.getTrail(id),
     ]);
     if (state.openingIncident !== opening) return;
@@ -744,7 +745,7 @@ async function openIncident(id, focus = false) {
       ),
     ].map((step) => [step.id, step])).values()];
     renderIncidents();
-    renderIncidentDetail();
+    renderIncidentDetail(resetScroll);
     if (focus) {
       $("#incident-detail").tabIndex = -1;
       $("#incident-detail").focus();
@@ -842,14 +843,24 @@ async function handleLiveEvent(event) {
         updateStatus({ ...state.status, tick: payload.tick, sim_ts: event.sim_ts });
       await Promise.all([api.getStatus().then((status) => updateStatus(status)), refreshChart()]);
       break;
-    case "incident_upserted":
-      if (state.openingIncident?.id === payload.id) state.openingIncident.incident = payload;
-      if (state.incident?.id === payload.id) {
+    case "incident_upserted": {
+      const opening = state.openingIncident;
+      const isOpening = opening?.id === payload.id;
+      const current = state.incident?.id === payload.id ? state.incident : null;
+      const previous = isOpening ? opening.incident ?? current : current;
+      const needsTrail = (isOpening || (current && !opening)) &&
+        payload.investigation_ids.some((id) => !previous?.investigation_ids.includes(id));
+      if (isOpening) opening.incident = payload;
+      if (current) {
         state.incident = payload;
         renderIncidentDetail(false);
       }
-      await refreshIncidents();
+      await Promise.all([
+        needsTrail && openIncident(payload.id, isOpening && opening.focus, payload),
+        refreshIncidents(),
+      ]);
       break;
+    }
     case "investigation_started":
       if (state.openingIncident?.id === payload.incident_id)
         state.openingIncident.investigationIds.add(payload.investigation_id);
