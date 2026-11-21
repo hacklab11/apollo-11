@@ -27,7 +27,7 @@ SEED_METRICS = [
     "avg_cpc", "ad_ctr", "budget_pace_ratio",
 ]  # fmt: skip
 
-# Tables T01 fills; the rest are filled by T02/T03, so their metrics stay pending for now.
+# Metrics on T01 tables; later cards fill more tables, which activates more metrics.
 T01_METRICS = {
     "gmv", "orders", "aov", "sessions", "searches", "search_ctr", "search_relevance",
     "search_conversion", "feed_impressions", "feed_ctr", "feed_purchase_rate",
@@ -60,7 +60,7 @@ def test_seed_registry_matches_spec(registry) -> None:
     assert all(m.added_by == "seed" for m in registry.metrics.values())
     assert [i.id for i in registry.identities] == [f"F{n}" for n in range(1, 9)]
     assert len(registry.causal_seeds) == 24
-    assert {m.name for m in registry.active} == T01_METRICS
+    assert T01_METRICS <= {m.name for m in registry.active}
 
 
 def test_pending_metrics_warn(con, caplog) -> None:
