@@ -25,10 +25,14 @@ reporter:
   resolve_z: 2.0
 
 llm:
+  provider: anthropic # or openai_compatible
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY
   mode: live
   cache_path: data/llm_cache.jsonl
   models:
     default: claude-opus-5-5
+    # For openai_compatible: default: nvidia/nemotron-3-ultra-550b-a55b:free
   effort:
     sentinel: low
     detective: high

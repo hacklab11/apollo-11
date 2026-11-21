@@ -97,6 +97,11 @@ class ReporterSettings(_Section):
 
 
 class LlmSettings(_Section):
+    provider: Literal["anthropic", "openai_compatible"] = "anthropic"
+    base_url: AgentUrl = "https://openrouter.ai/api/v1"
+    api_key_env: Annotated[
+        str, StringConstraints(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    ] = "OPENROUTER_API_KEY"
     mode: Literal["live", "record", "replay"] = "live"
     cache_path: CachePath = Path("data/llm_cache.jsonl")
     models: dict[str, ModelId] = Field(
