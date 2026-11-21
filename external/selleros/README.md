@@ -3,6 +3,12 @@
 This is an independent project; run `uv run --project external/selleros selleros`
 from the repository root. It does not import the core application.
 
+Data access and actuation use the `SellerStore` protocol. The default
+`FileSellerStore` re-reads `data/sellers.json` from the simulator and persists
+applied pauses and price reverts to `data/actions.jsonl` (flushed and fsynced).
+State is recovered from that journal on restart; the simulator does not consume
+these actions. Real integrations can supply their own store to `create_app`.
+
 The default provider is Anthropic with `claude-opus-5-5`, using
 `ANTHROPIC_API_KEY`. For OpenRouter, set these non-secret environment variables:
 

@@ -1,11 +1,13 @@
 """Request-scoped access to SellerOS private data."""
 
+import fcntl
 import json
+import os
 import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -107,116 +109,178 @@ def price_intent(
     )
 
 
-class Store:
-    def __init__(self, directory: Path = DATA_DIR) -> None:
-        self.directory = directory
-        self.paused: set[tuple[str, str]] = set()
-        self.reverted: set[tuple[str, str, datetime, float]] = set()
-        self.lock = threading.Lock()
+class SellerStore(Protocol):
+    def read(self) -> Snapshot: ...
 
-    def read(self) -> Snapshot:
-        return Snapshot.model_validate_json(
-            (self.directory / "sellers.json").read_text(encoding="utf-8")
-        )
+    def paused_repricers(self) -> set[tuple[str, str]]: ...
 
-    def receive_alert(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
-        if re.search(
-            r"\brevert\b.*\bmanual\b.*\bprices?\b",
-            alert.recommended_action,
-            re.IGNORECASE | re.DOTALL,
-        ):
-            return self.revert_manual_price(snapshot, alert)
-        return self.pause(snapshot, alert)
+    def reverted_prices(self) -> set[tuple[str, str, datetime, float]]: ...
+
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool: ...
 
     def revert_manual_price(
-        self, snapshot: Snapshot, alert: SellerAlert
-    ) -> SellerAlertAck:
-        actions = []
-        with self.lock:
-            for seller in snapshot.sellers:
-                if (
-                    not seller.customer_of_selleros
-                    or seller.seller_id not in alert.seller_ids
-                ):
-                    continue
-                intents = [
-                    intent
-                    for sku in seller.skus
-                    if (not alert.skus or sku.sku in alert.skus)
-                    and (intent := price_intent(seller, sku)) is not None
-                    and intent.verdict == "likely_error"
-                    and (intent.seller_id, intent.sku, intent.ts, intent.new)
-                    not in self.reverted
-                ]
-                if not intents:
-                    continue
-                skus = sorted(intent.sku for intent in intents)
-                action = (
-                    f"reverted manual price for {seller.seller_id} on {', '.join(skus)}"
-                )
-                with (self.directory / "actions.jsonl").open(
-                    "a", encoding="utf-8"
-                ) as log:
-                    log.write(
-                        json.dumps(
-                            {
-                                "incident_id": alert.incident_id,
-                                "seller_id": seller.seller_id,
-                                "skus": skus,
-                                "status": "reverted",
-                                "action": action,
-                            }
-                        )
-                        + "\n"
-                    )
-                self.reverted.update(
-                    (intent.seller_id, intent.sku, intent.ts, intent.new)
-                    for intent in intents
-                )
-                actions.append(action)
-        return SellerAlertAck(received=True, actions_taken=actions)
+        self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
+    ) -> bool: ...
 
-    def pause(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
-        actions = []
+
+class FileSellerStore:
+    def __init__(self, directory: Path = DATA_DIR) -> None:
+        self.directory = directory
+        self.lock = threading.RLock()
+
+    def read(self) -> Snapshot:
         with self.lock:
-            for seller in snapshot.sellers:
+            return Snapshot.model_validate_json(
+                (self.directory / "sellers.json").read_text(encoding="utf-8")
+            )
+
+    def _records(self) -> list[dict[str, Any]]:
+        try:
+            with (self.directory / "actions.jsonl").open("rb") as log:
+                fcntl.flock(log, fcntl.LOCK_SH)
+                content = log.read()
+        except FileNotFoundError:
+            return []
+        return self._complete_records(content)[0]
+
+    @staticmethod
+    def _complete_records(content: bytes) -> tuple[list[dict[str, Any]], int]:
+        lines = content.splitlines(keepends=True)
+        records = []
+        end = 0
+        for index, line in enumerate(lines):
+            final = index == len(lines) - 1
+            if final and not line.endswith(b"\n"):
+                break
+            try:
+                record = json.loads(line)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                if final:
+                    break
+                raise
+            records.append(record)
+            end += len(line)
+        return records, end
+
+    def paused_repricers(self) -> set[tuple[str, str]]:
+        with self.lock:
+            return {
+                (r["seller_id"], r["sku"])
+                for r in self._records()
+                if r["status"] == "paused"
+            }
+
+    def reverted_prices(self) -> set[tuple[str, str, datetime, float]]:
+        with self.lock:
+            return {
+                (r["seller_id"], r["sku"], datetime.fromisoformat(r["ts"]), r["price"])
+                for r in self._records()
+                if r["status"] == "reverted"
+            }
+
+    def _append(self, record: dict[str, Any]) -> bool:
+        with (self.directory / "actions.jsonl").open("a+b") as log:
+            fcntl.flock(log, fcntl.LOCK_EX)
+            log.seek(0)
+            records, end = self._complete_records(log.read())
+            if any(
+                r["status"] == record["status"]
+                and r["seller_id"] == record["seller_id"]
+                and r["sku"] == record["sku"]
+                and (
+                    record["status"] == "paused"
+                    or (
+                        datetime.fromisoformat(r["ts"])
+                        == datetime.fromisoformat(record["ts"])
+                        and r["price"] == record["price"]
+                    )
+                )
+                for r in records
+            ):
+                return False
+            log.truncate(end)
+            log.write((json.dumps(record) + "\n").encode("utf-8"))
+            log.flush()
+            os.fsync(log.fileno())
+            return True
+
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool:
+        with self.lock:
+            return self._append(
+                {
+                    "incident_id": incident_id,
+                    "seller_id": seller_id,
+                    "sku": sku,
+                    "status": "paused",
+                    "action": f"paused repricer for {seller_id} on {sku}",
+                }
+            )
+
+    def revert_manual_price(
+        self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
+    ) -> bool:
+        with self.lock:
+            return self._append(
+                {
+                    "incident_id": incident_id,
+                    "seller_id": seller_id,
+                    "sku": sku,
+                    "ts": intent.ts.isoformat(),
+                    "price": intent.new,
+                    "status": "reverted",
+                    "action": f"reverted manual price for {seller_id} on {sku}",
+                }
+            )
+
+
+def receive_alert(store: SellerStore, alert: SellerAlert) -> SellerAlertAck:
+    snapshot = store.read()
+    revert = re.search(
+        r"\brevert\b.*\bmanual\b.*\bprices?\b",
+        alert.recommended_action,
+        re.IGNORECASE | re.DOTALL,
+    )
+    actions = []
+    for seller in snapshot.sellers:
+        if not seller.customer_of_selleros or seller.seller_id not in alert.seller_ids:
+            continue
+        reverted = []
+        for sku in seller.skus:
+            if alert.skus and sku.sku not in alert.skus:
+                continue
+            if revert:
+                intent = price_intent(seller, sku)
                 if (
-                    not seller.customer_of_selleros
-                    or seller.seller_id not in alert.seller_ids
+                    intent is None
+                    or intent.verdict != "likely_error"
+                    or (seller.seller_id, sku.sku, intent.ts, intent.new)
+                    in store.reverted_prices()
                 ):
                     continue
-                for sku in seller.skus:
-                    key = (seller.seller_id, sku.sku)
-                    if (
-                        (alert.skus and sku.sku not in alert.skus)
-                        or seller.repricer_for(sku).floor is not None
-                        or key in self.paused
-                    ):
-                        continue
-                    action = f"paused repricer for {seller.seller_id} on {sku.sku}"
-                    with (self.directory / "actions.jsonl").open(
-                        "a", encoding="utf-8"
-                    ) as log:
-                        log.write(
-                            json.dumps(
-                                {
-                                    "incident_id": alert.incident_id,
-                                    "seller_id": seller.seller_id,
-                                    "sku": sku.sku,
-                                    "status": "paused",
-                                    "action": action,
-                                }
-                            )
-                            + "\n"
-                        )
-                    self.paused.add(key)
-                    actions.append(action)
-        return SellerAlertAck(received=True, actions_taken=actions)
+                if store.revert_manual_price(
+                    alert.incident_id, seller.seller_id, sku.sku, intent
+                ):
+                    reverted.append(sku.sku)
+            else:
+                if (
+                    seller.repricer_for(sku).floor is not None
+                    or (seller.seller_id, sku.sku) in store.paused_repricers()
+                ):
+                    continue
+                if store.pause_repricer(alert.incident_id, seller.seller_id, sku.sku):
+                    actions.append(
+                        f"paused repricer for {seller.seller_id} on {sku.sku}"
+                    )
+        if reverted:
+            actions.append(
+                f"reverted manual price for {seller.seller_id} on {', '.join(sorted(reverted))}"
+            )
+    return SellerAlertAck(received=True, actions_taken=actions)
 
 
 class ScopedData:
     def __init__(
-        self, store: Store, snapshot: Snapshot, scope: Selection, as_of: datetime
+        self, store: SellerStore, snapshot: Snapshot, scope: Selection, as_of: datetime
     ) -> None:
         self.store = store
         self.as_of = as_of
@@ -265,7 +329,8 @@ class ScopedData:
                         | repricer.model_dump()
                         | {
                             "status": "paused"
-                            if (seller.seller_id, sku.sku) in self.store.paused
+                            if (seller.seller_id, sku.sku)
+                            in self.store.paused_repricers()
                             else repricer.status,
                         }
                     )

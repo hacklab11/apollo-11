@@ -5,7 +5,7 @@ import re
 from pathlib import Path
 
 from selleros.client import get_client
-from selleros.data import ScopedData, Selection, Store, ToolOutput
+from selleros.data import ScopedData, Selection, SellerStore, ToolOutput
 from selleros.models import (
     SpecialistRequest,
     SpecialistResponse,
@@ -30,7 +30,7 @@ def scope_for(request: SpecialistRequest) -> Selection:
     )
 
 
-async def answer(store: Store, request: SpecialistRequest) -> SpecialistResponse:
+async def answer(store: SellerStore, request: SpecialistRequest) -> SpecialistResponse:
     snapshot = await asyncio.to_thread(store.read)
     scope = scope_for(request)
     if not scope.seller_ids and not scope.skus:

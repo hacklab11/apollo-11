@@ -19,7 +19,7 @@ from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
 
 from selleros.agent import answer
-from selleros.data import Store
+from selleros.data import FileSellerStore, SellerStore, receive_alert
 from selleros.models import SellerAlert, SpecialistRequest
 
 SKILLS = {
@@ -32,7 +32,7 @@ SKILLS = {
 
 
 class Executor(AgentExecutor):
-    def __init__(self, store: Store) -> None:
+    def __init__(self, store: SellerStore) -> None:
         self.store = store
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
@@ -46,10 +46,7 @@ class Executor(AgentExecutor):
             payload = MessageToDict(parts[0].data)
             if "incident_id" in payload:
                 alert = SellerAlert.model_validate(payload, extra="forbid")
-                snapshot = await asyncio.to_thread(self.store.read)
-                output = await asyncio.to_thread(
-                    self.store.receive_alert, snapshot, alert
-                )
+                output = await asyncio.to_thread(receive_alert, self.store, alert)
             else:
                 request = SpecialistRequest.model_validate(payload, extra="forbid")
                 output = await answer(self.store, request)
@@ -64,7 +61,7 @@ class Executor(AgentExecutor):
         await TaskUpdater(event_queue, context.task_id, context.context_id).cancel()
 
 
-def create_app(store: Store | None = None) -> Starlette:
+def create_app(store: SellerStore | None = None) -> Starlette:
     card = AgentCard(
         name="SellerOS Partner Agent",
         description="Third-party repricing and inventory assistant for small marketplace sellers",
@@ -85,7 +82,9 @@ def create_app(store: Store | None = None) -> Starlette:
         ],
     )
     handler = DefaultRequestHandler(
-        Executor(store or Store()), InMemoryTaskStore(), card
+        Executor(store if store is not None else FileSellerStore()),
+        InMemoryTaskStore(),
+        card,
     )
     return Starlette(
         routes=[

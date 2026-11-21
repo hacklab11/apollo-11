@@ -4,8 +4,10 @@ import json
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 from uuid import uuid4
 
@@ -15,7 +17,18 @@ import pytest
 from anthropic import AsyncAnthropic
 from selleros.agent import answer
 from selleros.client import LLMClient, LlmSettings, configure_client
-from selleros.data import SKU, Repricer, ScopedData, Selection, Store
+from selleros.data import (
+    SKU,
+    FileSellerStore,
+    PriceIntent,
+    Repricer,
+    ScopedData,
+    Selection,
+    SellerStore,
+    Snapshot,
+    price_intent,
+    receive_alert,
+)
 from selleros.models import SellerAlert, SpecialistRequest
 from selleros.server import SKILLS, create_app
 
@@ -23,16 +36,208 @@ FIXTURES = Path(__file__).with_name("fixtures")
 AS_OF = datetime(2026, 12, 25, 12, tzinfo=UTC)
 
 
+class MemorySellerStore:
+    def __init__(self, snapshot: Snapshot) -> None:
+        self.snapshot = snapshot
+        self.paused: set[tuple[str, str]] = set()
+        self.reverted: set[tuple[str, str, datetime, float]] = set()
+        self.fail_sku: str | None = None
+        self.stale_reads = False
+
+    def read(self) -> Snapshot:
+        return self.snapshot.model_copy(deep=True)
+
+    def paused_repricers(self) -> set[tuple[str, str]]:
+        return set() if self.stale_reads else set(self.paused)
+
+    def reverted_prices(self) -> set[tuple[str, str, datetime, float]]:
+        return set() if self.stale_reads else set(self.reverted)
+
+    def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool:
+        if sku == self.fail_sku:
+            raise OSError("actuator unavailable")
+        if (seller_id, sku) in self.paused:
+            return False
+        self.paused.add((seller_id, sku))
+        return True
+
+    def revert_manual_price(
+        self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
+    ) -> bool:
+        if sku == self.fail_sku:
+            raise OSError("actuator unavailable")
+        if (seller_id, sku, intent.ts, intent.new) in self.reverted:
+            return False
+        self.reverted.add((seller_id, sku, intent.ts, intent.new))
+        return True
+
+
+def boundary_alert(action: str) -> SellerAlert:
+    return SellerAlert(
+        incident_id="boundary",
+        seller_ids=["S-14"],
+        skus=["E02", "E04"],
+        summary="",
+        recommended_action=action,
+    )
+
+
+@pytest.mark.parametrize("tail", [b'{"status":', b'{"status":\n', b"{}", b'{"x":"\xc3'])
+def test_interrupted_journal_tail(s8_store: FileSellerStore, tail: bytes) -> None:
+    s8_store.pause_repricer("before", "S-14", "E02")
+    path = s8_store.directory / "actions.jsonl"
+    complete = path.read_bytes()
+    path.write_bytes(complete + tail)
+    restarted = FileSellerStore(s8_store.directory)
+    assert restarted.paused_repricers() == {("S-14", "E02")}
+    assert receive_alert(restarted, boundary_alert("pause")).actions_taken == [
+        "paused repricer for S-14 on E04"
+    ]
+    assert FileSellerStore(s8_store.directory).paused_repricers() == {
+        ("S-14", "E02"),
+        ("S-14", "E04"),
+    }
+    assert len(path.read_bytes().splitlines()) == 2
+
+
+def test_corrupt_earlier_journal_record_raises(s8_store: FileSellerStore) -> None:
+    path = s8_store.directory / "actions.jsonl"
+    path.write_bytes(b'{"broken":\n{}\n')
+    with pytest.raises(json.JSONDecodeError):
+        s8_store.paused_repricers()
+    with pytest.raises(json.JSONDecodeError):
+        s8_store.pause_repricer("corrupt", "S-14", "E02")
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+def test_ack_uses_actuation_result(s8_store: FileSellerStore, action: str) -> None:
+    store = MemorySellerStore(s8_store.read())
+    store.stale_reads = True
+    alert = boundary_alert(action)
+    assert receive_alert(store, alert).actions_taken
+    assert receive_alert(store, alert).actions_taken == []
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+def test_concurrent_actuation_applies_once(
+    s8_store: FileSellerStore, action: str
+) -> None:
+    seller = s8_store.read().sellers[0]
+    intent = price_intent(seller, seller.skus[0])
+    assert intent is not None
+
+    def actuate(_: int) -> bool:
+        if action == "pause":
+            return s8_store.pause_repricer("concurrent", seller.seller_id, intent.sku)
+        return s8_store.revert_manual_price(
+            "concurrent", seller.seller_id, intent.sku, intent
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(actuate, range(2)))
+    assert sorted(results) == [False, True]
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_concurrent_stores_preserve_actions(
+    s8_store: FileSellerStore, action: str, duplicate: bool
+) -> None:
+    stores = [s8_store, FileSellerStore(s8_store.directory)]
+    seller = s8_store.read().sellers[0]
+    ready = Barrier(2)
+
+    def actuate(index: int) -> bool:
+        sku = seller.skus[0 if duplicate else index]
+        intent = price_intent(seller, sku)
+        assert intent is not None
+        ready.wait()
+        if action == "pause":
+            return stores[index].pause_repricer("shared", seller.seller_id, sku.sku)
+        return stores[index].revert_manual_price(
+            "shared", seller.seller_id, sku.sku, intent
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(actuate, range(2)))
+    assert sorted(results) == ([False, True] if duplicate else [True, True])
+    restarted = FileSellerStore(s8_store.directory)
+    applied = (
+        restarted.paused_repricers()
+        if action == "pause"
+        else {key[:2] for key in restarted.reverted_prices()}
+    )
+    expected = {("S-14", "E02")} if duplicate else {("S-14", "E02"), ("S-14", "E04")}
+    assert applied == expected
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == len(
+        expected
+    )
+
+
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+def test_actions_survive_restart(s8_store: FileSellerStore, action: str) -> None:
+    alert = boundary_alert(action)
+    ack = receive_alert(s8_store, alert)
+    assert ack.actions_taken
+    restarted = FileSellerStore(s8_store.directory)
+    assert restarted.paused_repricers() == s8_store.paused_repricers()
+    assert restarted.reverted_prices() == s8_store.reverted_prices()
+    before = (s8_store.directory / "actions.jsonl").read_bytes()
+    assert receive_alert(restarted, alert).actions_taken == []
+    assert (s8_store.directory / "actions.jsonl").read_bytes() == before
+    data = ScopedData(
+        restarted, restarted.read(), Selection(seller_ids=["S-14"]), AS_OF
+    )
+    statuses = {r["status"] for r in data.query("get_repricer", Selection()).rows}
+    assert statuses == ({"paused"} if action == "pause" else {"active"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["pause", "revert manual price"])
+async def test_custom_store_boundary(s8_store: FileSellerStore, action: str) -> None:
+    store = MemorySellerStore(s8_store.read())
+    alert = boundary_alert(action)
+    store.fail_sku = "E04"
+    with pytest.raises(OSError, match="actuator unavailable"):
+        receive_alert(store, alert)
+    applied = (
+        store.paused_repricers()
+        if action == "pause"
+        else {key[:2] for key in store.reverted_prices()}
+    )
+    assert applied == {("S-14", "E02")}
+    result = await rpc(store, alert.model_dump())
+    assert result["result"]["task"]["status"]["state"] == "TASK_STATE_FAILED"
+    assert "artifacts" not in result["result"]["task"]
+    store.fail_sku = None
+    result = await rpc(store, alert.model_dump())
+    task = result["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    prefix = "paused repricer" if action == "pause" else "reverted manual price"
+    assert task["artifacts"][0]["parts"][0]["data"]["actions_taken"] == [
+        f"{prefix} for S-14 on E04"
+    ]
+    assert receive_alert(store, alert).actions_taken == []
+
+
+@pytest.mark.asyncio
+async def test_file_actuation_failure_fails_task(s8_store: FileSellerStore) -> None:
+    (s8_store.directory / "actions.jsonl").mkdir()
+    result = await rpc(s8_store, boundary_alert("pause").model_dump())
+    assert result["result"]["task"]["status"]["state"] == "TASK_STATE_FAILED"
+
+
 @pytest.fixture
-def store(tmp_path: Path) -> Store:
+def store(tmp_path: Path) -> FileSellerStore:
     shutil.copyfile(FIXTURES / "s6.json", tmp_path / "sellers.json")
-    return Store(tmp_path)
+    return FileSellerStore(tmp_path)
 
 
 @pytest.fixture
-def s8_store(tmp_path: Path) -> Store:
+def s8_store(tmp_path: Path) -> FileSellerStore:
     shutil.copyfile(FIXTURES / "s8.json", tmp_path / "sellers.json")
-    return Store(tmp_path)
+    return FileSellerStore(tmp_path)
 
 
 def request(question: str, **segment: str) -> SpecialistRequest:
@@ -76,7 +281,7 @@ def install_mock(turns: list[dict[str, Any]], seen: list[dict[str, Any]]) -> Non
     configure_client(LLMClient(LlmSettings(), sdk))
 
 
-async def rpc(store: Store, payload: dict[str, Any]) -> dict[str, Any]:
+async def rpc(store: SellerStore, payload: dict[str, Any]) -> dict[str, Any]:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(store)), base_url="http://test"
     ) as client:
@@ -130,7 +335,7 @@ def test_isolation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_card(store: Store) -> None:
+async def test_card(store: FileSellerStore) -> None:
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(store)), base_url="http://test"
     ) as client:
@@ -153,7 +358,7 @@ async def test_card(store: Store) -> None:
     ],
 )
 def test_price_intent_s8(
-    s8_store: Store, seller_id: str, sku: str, source: str, verdict: str
+    s8_store: FileSellerStore, seller_id: str, sku: str, source: str, verdict: str
 ) -> None:
     data = ScopedData(
         s8_store, s8_store.read(), Selection(seller_ids=[seller_id]), AS_OF
@@ -181,7 +386,7 @@ def test_price_intent_s8(
         assert rows[0]["old"] is None
 
 
-def test_price_intent_scope_and_missing_history(s8_store: Store) -> None:
+def test_price_intent_scope_and_missing_history(s8_store: FileSellerStore) -> None:
     snapshot = s8_store.read()
     data = ScopedData(s8_store, snapshot, Selection(skus=["E02"]), AS_OF)
     assert data.query("price_intent_check", Selection(skus=["E04"])).rows == []
@@ -202,7 +407,7 @@ def test_price_intent_scope_and_missing_history(s8_store: Store) -> None:
 
 @pytest.mark.parametrize("price", [60, 70])
 def test_manual_price_at_or_above_cost_is_intended(
-    s8_store: Store, price: float
+    s8_store: FileSellerStore, price: float
 ) -> None:
     snapshot = s8_store.read()
     for point in snapshot.sellers[0].price_history:
@@ -212,8 +417,9 @@ def test_manual_price_at_or_above_cost_is_intended(
     rows = data.query("price_intent_check", Selection(skus=["E02"])).rows
     assert rows[0]["source"] == "manual"
     assert rows[0]["verdict"] == "intended"
-    ack = s8_store.receive_alert(
-        snapshot,
+    (s8_store.directory / "sellers.json").write_text(snapshot.model_dump_json())
+    ack = receive_alert(
+        s8_store,
         SellerAlert(
             incident_id="s8",
             seller_ids=["S-14"],
@@ -223,11 +429,11 @@ def test_manual_price_at_or_above_cost_is_intended(
         ),
     )
     assert ack.actions_taken == ["reverted manual price for S-14 on E04"]
-    assert s8_store.paused == set()
+    assert s8_store.paused_repricers() == set()
 
 
 @pytest.mark.asyncio
-async def test_price_intent_tool_roundtrip(s8_store: Store) -> None:
+async def test_price_intent_tool_roundtrip(s8_store: FileSellerStore) -> None:
     seen: list[dict[str, Any]] = []
     install_mock(
         [
@@ -271,12 +477,12 @@ async def test_price_intent_tool_roundtrip(s8_store: Store) -> None:
     assert evidence["rows"][0]["verdict"] == "likely_error"
     assert evidence["rows"][0]["unit_cost"] == 60
     assert "not intended: it was a mistake" in seen[0]["system"][0]["text"]
-    assert s8_store.paused == set()
+    assert s8_store.paused_repricers() == set()
     assert not (s8_store.directory / "actions.jsonl").exists()
 
 
 @pytest.mark.asyncio
-async def test_revert_manual_price_alert(s8_store: Store) -> None:
+async def test_revert_manual_price_alert(s8_store: FileSellerStore) -> None:
     alert = SellerAlert(
         incident_id="s8",
         seller_ids=["S-14", "S-03", "S-07"],
@@ -292,22 +498,22 @@ async def test_revert_manual_price_alert(s8_store: Store) -> None:
         "received": True,
         "actions_taken": ["reverted manual price for S-14 on E02, E04"],
     }
-    assert s8_store.paused == set()
+    assert s8_store.paused_repricers() == set()
     records = [
         json.loads(line)
         for line in (s8_store.directory / "actions.jsonl").read_text().splitlines()
     ]
-    assert len(records) == 1
+    assert len(records) == 2
     assert records[0]["seller_id"] == "S-14"
-    assert records[0]["skus"] == ["E02", "E04"]
-    assert records[0]["action"] == ack["actions_taken"][0]
-    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
-    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
+    assert [r["sku"] for r in records] == ["E02", "E04"]
+    assert records[0]["action"] == "reverted manual price for S-14 on E02"
+    assert receive_alert(s8_store, alert).actions_taken == []
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 2
 
 
 @pytest.mark.asyncio
 async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
-    s8_store: Store,
+    s8_store: FileSellerStore,
 ) -> None:
     alert = SellerAlert(
         incident_id="s8",
@@ -324,8 +530,8 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
         "received": True,
         "actions_taken": ["reverted manual price for S-14 on E02, E04"],
     }
-    assert s8_store.paused == set()
-    assert {key[:2] for key in s8_store.reverted} == {
+    assert s8_store.paused_repricers() == set()
+    assert {key[:2] for key in s8_store.reverted_prices()} == {
         ("S-14", "E02"),
         ("S-14", "E04"),
     }
@@ -333,10 +539,10 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
         json.loads(line)
         for line in (s8_store.directory / "actions.jsonl").read_text().splitlines()
     ]
-    assert len(records) == 1
+    assert len(records) == 2
     assert records[0]["seller_id"] == "S-14"
-    assert records[0]["skus"] == ["E02", "E04"]
-    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
+    assert [r["sku"] for r in records] == ["E02", "E04"]
+    assert receive_alert(s8_store, alert).actions_taken == []
 
 
 @pytest.mark.parametrize(
@@ -350,7 +556,7 @@ async def test_revert_alert_empty_skus_checks_all_named_seller_offers(
     ],
 )
 def test_revert_alert_no_eligible_offer(
-    s8_store: Store, seller_ids: list[str], skus: list[str]
+    s8_store: FileSellerStore, seller_ids: list[str], skus: list[str]
 ) -> None:
     alert = SellerAlert(
         incident_id="s8",
@@ -359,13 +565,13 @@ def test_revert_alert_no_eligible_offer(
         summary="",
         recommended_action="revert manual price",
     )
-    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
-    assert s8_store.paused == set()
+    assert receive_alert(s8_store, alert).actions_taken == []
+    assert s8_store.paused_repricers() == set()
     assert not (s8_store.directory / "actions.jsonl").exists()
 
 
 @pytest.mark.asyncio
-async def test_invalid_price_source_fails_request(s8_store: Store) -> None:
+async def test_invalid_price_source_fails_request(s8_store: FileSellerStore) -> None:
     path = s8_store.directory / "sellers.json"
     snapshot = json.loads(path.read_text())
     snapshot["sellers"][0]["price_history"][0]["source"] = "unknown"
@@ -376,7 +582,7 @@ async def test_invalid_price_source_fails_request(s8_store: Store) -> None:
     assert result["result"]["task"]["status"]["state"] == "TASK_STATE_FAILED"
 
 
-def test_revert_log_failure_does_not_mark_reverted(s8_store: Store) -> None:
+def test_revert_log_failure_does_not_mark_reverted(s8_store: FileSellerStore) -> None:
     (s8_store.directory / "actions.jsonl").mkdir()
     alert = SellerAlert(
         incident_id="s8",
@@ -386,13 +592,14 @@ def test_revert_log_failure_does_not_mark_reverted(s8_store: Store) -> None:
         recommended_action="revert manual price",
     )
     with pytest.raises(IsADirectoryError):
-        s8_store.receive_alert(s8_store.read(), alert)
-    assert s8_store.reverted == set()
-    assert s8_store.paused == set()
+        receive_alert(s8_store, alert)
+    (s8_store.directory / "actions.jsonl").rmdir()
+    assert s8_store.reverted_prices() == set()
+    assert s8_store.paused_repricers() == set()
 
 
 @pytest.mark.asyncio
-async def test_below_cost_s6(store: Store) -> None:
+async def test_below_cost_s6(store: FileSellerStore) -> None:
     expected = {
         "agent": "selleros",
         "answered": True,
@@ -434,7 +641,7 @@ async def test_below_cost_s6(store: Store) -> None:
 
 
 @pytest.mark.asyncio
-async def test_alert(store: Store) -> None:
+async def test_alert(store: FileSellerStore) -> None:
     payload = SellerAlert(
         incident_id="incident",
         seller_ids=["S-03", "S-14", "S-99", "missing"],
@@ -450,7 +657,7 @@ async def test_alert(store: Store) -> None:
         "received": True,
         "actions_taken": ["paused repricer for S-03 on E02"],
     }
-    assert store.paused == {("S-03", "E02")}
+    assert store.paused_repricers() == {("S-03", "E02")}
     assert len((store.directory / "actions.jsonl").read_text().splitlines()) == 1
     await rpc(store, payload)
     assert len((store.directory / "actions.jsonl").read_text().splitlines()) == 1
@@ -459,7 +666,7 @@ async def test_alert(store: Store) -> None:
 
 
 @pytest.mark.asyncio
-async def test_question_cannot_pause(store: Store) -> None:
+async def test_question_cannot_pause(store: FileSellerStore) -> None:
     seen: list[dict[str, Any]] = []
     install_mock(
         [
@@ -475,12 +682,12 @@ async def test_question_cannot_pause(store: Store) -> None:
     await answer(store, req)
     assert "pause_repricer" not in {tool["name"] for tool in seen[0]["tools"]}
     assert seen[1]["messages"][-1]["content"][0]["is_error"] is True
-    assert store.paused == set()
+    assert store.paused_repricers() == set()
     assert not (store.directory / "actions.jsonl").exists()
 
 
 @pytest.mark.asyncio
-async def test_privacy_replay(store: Store, tmp_path: Path) -> None:
+async def test_privacy_replay(store: FileSellerStore, tmp_path: Path) -> None:
     seen: list[dict[str, Any]] = []
     turns = json.loads((FIXTURES / "privacy-replay.json").read_text())
     install_mock(
@@ -519,7 +726,7 @@ async def test_privacy_replay(store: Store, tmp_path: Path) -> None:
     )
 
 
-def test_data_scope_history_eta_and_reread(store: Store) -> None:
+def test_data_scope_history_eta_and_reread(store: FileSellerStore) -> None:
     data = ScopedData(store, store.read(), Selection(seller_ids=["S-03"]), AS_OF)
     assert data.query("get_costs", Selection(seller_ids=["S-14"])).rows == []
     assert data.query("get_price_history", Selection()).rows[0]["price_changes"] == 2
@@ -533,7 +740,7 @@ def test_data_scope_history_eta_and_reread(store: Store) -> None:
     assert store.read().sellers[0].repricer.floor == 80
 
 
-def test_per_sku_repricers_and_alerts(store: Store) -> None:
+def test_per_sku_repricers_and_alerts(store: FileSellerStore) -> None:
     snapshot = store.read()
     seller = snapshot.sellers[0]
     seller.skus[0].repricer = Repricer(mode="beat", floor=None)
@@ -564,14 +771,15 @@ def test_per_sku_repricers_and_alerts(store: Store) -> None:
         summary="pause affected repricers",
         recommended_action="pause",
     )
-    ack = store.pause(snapshot, alert)
+    (store.directory / "sellers.json").write_text(snapshot.model_dump_json())
+    ack = receive_alert(store, alert)
     assert ack.actions_taken == ["paused repricer for S-14 on H01"]
-    assert store.paused == {("S-14", "H01")}
+    assert store.paused_repricers() == {("S-14", "H01")}
     alert.skus = []
-    assert store.pause(snapshot, alert).actions_taken == [
+    assert receive_alert(store, alert).actions_taken == [
         "paused repricer for S-03 on E02"
     ]
-    assert store.pause(snapshot, alert).actions_taken == []
+    assert receive_alert(store, alert).actions_taken == []
     rows = data.query("get_repricer", Selection()).rows
     statuses = {(r["seller_id"], r["sku"]): r["status"] for r in rows}
     assert statuses == {
@@ -583,12 +791,12 @@ def test_per_sku_repricers_and_alerts(store: Store) -> None:
         json.loads(line)
         for line in (store.directory / "actions.jsonl").read_text().splitlines()
     ]
-    assert {(r["seller_id"], r["sku"]) for r in records} == store.paused
+    assert {(r["seller_id"], r["sku"]) for r in records} == store.paused_repricers()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["missing", "malformed", "payload"])
-async def test_failed_task(store: Store, kind: str) -> None:
+async def test_failed_task(store: FileSellerStore, kind: str) -> None:
     payload = request("repricer_status S-03").model_dump(mode="json")
     if kind == "missing":
         (store.directory / "sellers.json").unlink()
@@ -603,11 +811,11 @@ async def test_failed_task(store: Store, kind: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_scope_and_empty_alert(store: Store) -> None:
+async def test_empty_scope_and_empty_alert(store: FileSellerStore) -> None:
     response = await answer(store, request("below_cost_check", category="electronics"))
     assert response.answered is False
     alert = SellerAlert(
         incident_id="empty", seller_ids=[], skus=[], summary="", recommended_action=""
     )
-    assert store.pause(store.read(), alert).actions_taken == []
+    assert receive_alert(store, alert).actions_taken == []
     assert not (store.directory / "actions.jsonl").exists()
