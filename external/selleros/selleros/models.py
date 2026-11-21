@@ -8,10 +8,27 @@ from pydantic import BaseModel, Field
 Actor = Literal["selleros"]
 StepAction = Literal["llm_call", "tool_call", "a2a_call", "decision", "note"]
 CauseType = Literal[
-    "release", "model_change", "config_change", "pacing_bug", "traffic_change",
-    "planned_event", "price_change", "repricer_loop", "cpc_change", "stockout",
-    "supplier_delay", "po_shortfall", "capacity_limit", "hijacker", "discount",
-    "mix_shift", "fee_change", "marketing_spend", "data_gap", "seasonality", "unknown",
+    "release",
+    "model_change",
+    "config_change",
+    "pacing_bug",
+    "traffic_change",
+    "planned_event",
+    "price_change",
+    "repricer_loop",
+    "cpc_change",
+    "stockout",
+    "supplier_delay",
+    "po_shortfall",
+    "capacity_limit",
+    "hijacker",
+    "discount",
+    "mix_shift",
+    "fee_change",
+    "marketing_spend",
+    "data_gap",
+    "seasonality",
+    "unknown",
 ]
 
 

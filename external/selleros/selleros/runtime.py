@@ -13,8 +13,8 @@ from uuid import uuid4
 from anthropic import AnthropicError
 from pydantic import BaseModel, ValidationError
 
-from selleros.models import Actor, StepAction, TrailStep
 from selleros.client import BudgetExceeded, LLMUnavailable, get_client
+from selleros.models import Actor, StepAction, TrailStep
 
 
 class AgentRefused(Exception):

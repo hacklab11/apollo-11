@@ -6,13 +6,10 @@ import json
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from anthropic import AsyncAnthropic
 from anthropic.types.beta import BetaMessage
-
-from typing import Literal
-
 from pydantic import BaseModel
 
 
