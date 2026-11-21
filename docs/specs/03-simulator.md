@@ -53,7 +53,7 @@ Seller-private attributes (cost, floor, repricer mode) are generated here but wr
 - `w_country`: DE 0.6, FR 0.4. `w_platform`: android 0.45, ios 0.35, web 0.20.
 - `hour_profile` (00..23): `0.25 0.15 0.10 0.08 0.08 0.12 0.25 0.45 0.60 0.65 0.68 0.70 0.75 0.72 0.70 0.70 0.75 0.82 0.90 0.97 1.00 0.95 0.75 0.45`
 - `dow` (Mon..Sun): `1.00 0.98 0.97 1.00 1.05 1.15 1.20`
-- `campaign_mult` = 1.0, or 1.4 when I1/S6 is active.
+- `campaign_mult` = 1.0, or 1.4 when I1/S6 is active. I3 has no session uplift (`campaign_mult = 1.0`).
 - `marketing_mult` = 1.0, or the S5 multiplier.
 
 Session split: search 55%, feed 25%, other 20%.
@@ -158,7 +158,7 @@ Per order row:
 - `gmv = units × price`
 - 3P: `fee_revenue = gmv × take_rate[category]` (electronics 0.08, home 0.15, fashion 0.17, toys 0.15)
 - 1P: `cogs_1p = units × ref_price × cogs_ratio`; `first_party_margin = gmv − cogs_1p`
-- `platform_discount` = platform-funded coupon value (0 in baseline)
+- `platform_discount` = platform-funded coupon value (0 in baseline; I1/S6 and I3 use 10% electronics coupons, with I3 reusing I1 logic for 24 h)
 - `fulfillment_cost` = 1P units × 5.0 EUR
 - Refunds: each order has refund probability 0.03 (hijacker offers: 0.35). Refunds appear 48–96 h later in `refunds_hourly`. `refund_cost = refunded_gmv × 0.25`.
 

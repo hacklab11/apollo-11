@@ -17,7 +17,7 @@ Hackathon track: `hackathon-rules.md`. Rules for coding agents: `../AGENTS.md`.
 | [specs/01-architecture.md](specs/01-architecture.md) | Processes, repo layout, tick flow, stack, Claude API rules, config, security |
 | [specs/02-contracts.md](specs/02-contracts.md) | All shared data models |
 | [specs/03-simulator.md](specs/03-simulator.md) | Synthetic marketplace, tables, how to generate the data |
-| [specs/04-scenarios.md](specs/04-scenarios.md) | Scenario bible S1–S8, I1, I2, combined demo runs (ground truth) |
+| [specs/04-scenarios.md](specs/04-scenarios.md) | Scenario bible S1–S8, I1–I3, combined demo runs (ground truth) |
 | [specs/05-metric-registry.md](specs/05-metric-registry.md) | Metrics, SQL contract, identities, causal seeds |
 | [specs/06-graph-and-cartographer.md](specs/06-graph-and-cartographer.md) | Metric graph, bootstrap, automatic extension |
 | [specs/07-tools.md](specs/07-tools.md) | Deterministic tools and their algorithms; data API |
