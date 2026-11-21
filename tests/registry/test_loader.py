@@ -101,6 +101,8 @@ def test_source_tables_from_from_and_join() -> None:
         "skus",
     )
     assert source_tables(_seed("seller_hhi")["sql"]) == ("orders_hourly",)
+    cte = 'WITH t AS (SELECT * FROM "main"."orders_hourly") SELECT ts, 1 AS num FROM t JOIN skus USING (sku)'
+    assert source_tables(cte) == ("orders_hourly", "skus")
 
 
 def test_formula_source_tables_are_the_union_of_inputs(registry) -> None:
@@ -126,6 +128,7 @@ def test_formula_inputs_rejects_anything_but_arithmetic() -> None:
         ("orders", {"dimensions": ["country", "psp"]}, "SQL returns columns"),
         ("orders", {"sql": "SELECT ts, nope AS num FROM orders_hourly", "dimensions": []}, "invalid SQL"),
         ("orders", {"sql": "SELECT ts, 1 AS num FROM scenario_log", "dimensions": []}, "scenario_log"),
+        ("orders", {"sql": 'SELECT ts, 1 AS num FROM main."scenario_log"', "dimensions": []}, "scenario_log"),
     ],
 )  # fmt: skip
 def test_invalid_registry_is_rejected(con, tmp_path, name, update, error) -> None:

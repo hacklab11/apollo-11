@@ -83,8 +83,10 @@ def formula_inputs(expression: str) -> list[str]:
 
 
 def source_tables(sql: str) -> tuple[str, ...]:
-    """Table names that follow FROM or JOIN, in order of first use."""
-    return tuple(dict.fromkeys(name.lower() for name in _TABLE_REF.findall(sql)))
+    """Table names that follow FROM or JOIN, in order of first use; CTE names are skipped."""
+    ctes = {name.lower() for name in _CTE_NAME.findall(sql)}
+    names = (name.lower() for name in _TABLE_REF.findall(sql))
+    return tuple(dict.fromkeys(name for name in names if name not in ctes))
 
 
 def load_registry(
