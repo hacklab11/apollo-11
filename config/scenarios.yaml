@@ -26,6 +26,7 @@ I1:
   campaign_mult: 1.4 # Bible's +40% uplift, coupled cohort sampling to preserve conversion controls.
   discount: 0.1 # Platform-funded electronics coupon fraction.
 I2:
+  countries: [FR] # Countries whose order partitions arrive late.
   completeness: 0.4 # Fraction of FR order rows initially loaded.
   duration_hours: 3 # Number of affected event-time partitions.
   backfill_hours: 6 # Missing rows arrive six hours after their event time.
