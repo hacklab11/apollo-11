@@ -136,7 +136,7 @@ def test_aggregates_and_filters(client: TestClient) -> None:
     assert rows("stock")[0]["in_stock_skus"] == 1
     assert rows("stock")[0]["hours_out_of_stock"] == 0
     assert rows("search/quality")[0]["ctr"] == 0.2
-    assert rows("search/quality")[0]["conversion"] == 0.15
+    assert rows("search/quality")[0]["conversion"] == 0.03
     assert rows("checkout/funnel")[0]["successes"] == 3
     assert rows("payments")[0]["success_rate"] == 0.6
     assert rows("errors", page="checkout")[0]["errors"] == 2

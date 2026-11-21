@@ -156,7 +156,7 @@ _QUERIES: dict[str, tuple[str, tuple[str, ...], str]] = {
         (
             "SELECT country, category, sum(relevance*searches)/nullif(sum(searches),0) "
             "AS relevance, sum(result_clicks)::DOUBLE/nullif(sum(searches),0) AS ctr, "
-            "sum(units)::DOUBLE/nullif(sum(result_clicks),0) AS conversion "
+            "sum(units)::DOUBLE/nullif(sum(searches),0) AS conversion "
             "FROM filtered GROUP BY country, category ORDER BY country, category"
         ),
     ),
