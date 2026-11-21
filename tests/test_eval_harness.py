@@ -43,6 +43,19 @@ def test_oracle_ids() -> None:
     assert next(iter(oracle)) == "D6"
 
 
+def test_recording_replaces_old_responses_without_touching_replay(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "fixture.jsonl"
+    path.write_text("old response\n")
+    harness.prepare_recording(path, "replay")
+    assert path.read_text() == "old response\n"
+    harness.prepare_recording(path, "record")
+    assert path.read_text() == ""
+    harness.append_json(path, {"key": "new", "response_json": {}})
+    assert "old response" not in path.read_text()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("name", ["S8", "D6"])
 async def test_unavailable_s8_fails_clearly(name: str) -> None:

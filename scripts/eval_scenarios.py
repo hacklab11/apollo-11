@@ -252,6 +252,12 @@ def stored_trails(store: IncidentStore) -> list[TrailStep]:
     ]
 
 
+def prepare_recording(path: Path, mode: str) -> None:
+    if mode == "record":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+
+
 def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
     results = []
 
@@ -728,6 +734,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         else args.mode
     )
     settings.llm.cache_path = record
+    prepare_recording(record, settings.llm.mode)
     trace = (
         ROOT / f"data/eval/{name}-{settings.llm.mode}-requests.jsonl"
         if getattr(args, "trace", False)
