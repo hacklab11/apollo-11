@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -11,6 +11,7 @@ from eye.contracts import Country, ScenarioId, ScenarioState
 from eye.sim.changelog import add_change, add_external_status
 from eye.sim.engine import Hour, Simulator
 from eye.sim.store import Batches
+from eye.sim.world import Offer
 
 _TITLES = {
     "S1": "Ad budget spent by 10:00",
@@ -19,6 +20,7 @@ _TITLES = {
     "S4": "Feed clicks up, purchases down",
     "S5": "Orders up, contribution down",
     "S7": "Black Friday checkout outage",
+    "S8": "Price typo: the €9 headphones",
     "I1": "Planned Black Friday campaign",
     "I2": "Late FR order partitions",
 }
@@ -83,6 +85,10 @@ class ScenarioManager:
         self._late_partitions = LatePartitions(
             tuple(p["countries"]), p["completeness"], p["backfill_hours"]
         )
+        self._s8_partitions = LatePartitions(("DE", "FR"), 0.6, 1)
+        self._s8_original: list[
+            tuple[Offer, float, Literal["fixed", "match", "beat"]]
+        ] = []
         self._discounts = sim.finance.platform_discount.copy()
         self._checkout_version = sim.apps.versions["checkout-web"]
         self._pacing_exempt = sim.ads.pacing_exempt.copy()
@@ -96,8 +102,6 @@ class ScenarioManager:
         sim.pre_store_hooks.append(self._before_store)
 
     def inject(self, id: ScenarioId, at_ts: datetime | None = None) -> ScenarioState:
-        if id == "S8":
-            raise ValueError("scenario S8 is not implemented")
         if id not in _TITLES:
             raise ValueError(f"unsupported scenario: {id}")
         if any(s.id == id and s.cleared_ts is None for s in self._states):
@@ -111,6 +115,8 @@ class ScenarioManager:
             or ts.microsecond
         ):
             raise ValueError("injection requires an aware current or future whole hour")
+        if id == "S8":
+            self._s8_offers()
         state = ScenarioState(
             id=id, title=_TITLES[id], active=False, injected_ts=ts, cleared_ts=None
         )
@@ -133,6 +139,11 @@ class ScenarioManager:
         self._log(id, "clear")
         if id == "S7":
             self.sim.apps.release("checkout-web", self._checkout_version, self.sim.now)
+        if id == "S8":
+            for offer, price, mode in self._s8_original:
+                offer.price = price
+                offer.repricer_mode = mode
+            self._s8_original.clear()
         self._reset_switches()
 
     def active(self) -> list[ScenarioState]:
@@ -157,10 +168,73 @@ class ScenarioManager:
         )
 
     def _start(self, state: ScenarioState) -> None:
+        if state.id == "S8":
+            self._start_s8()
         state.active = True
         self._pending.pop(state.id)
         self._log(state.id, "inject")
         self._changes(state.id)
+
+    def _s8_offers(self) -> list[Offer]:
+        sim = self.sim
+        eligible = {
+            seller.seller_id: [
+                offer
+                for sku, offers in sim.world.offers.items()
+                if sku in {f"E{i:02d}" for i in range(1, 11)}
+                for offer in offers
+                if offer.seller_id == seller.seller_id
+            ]
+            for seller in sim.world.sellers.values()
+            if seller.tier == "small_3P"
+            and seller.seller_id not in ("S-03", "S-07", "S-12", "S-99")
+        }
+        seller_id = min(
+            eligible,
+            key=lambda seller: (
+                -len(eligible[seller]),
+                -sum(sim.world.skus[o.sku].popularity for o in eligible[seller]),
+                seller,
+            ),
+            default=None,
+        )
+        if seller_id is None or not eligible[seller_id]:
+            raise ValueError("S8 requires an eligible electronics offer")
+        return eligible[seller_id]
+
+    def _start_s8(self) -> None:
+        sim, p = self.sim, self.params["S8"]
+        offers = self._s8_offers()
+        p["seller_id"] = offers[0].seller_id
+        campaign = (
+            self.params["I1"]["campaign_mult"]
+            if any(s.id == "I1" for s in self.active())
+            else 1.0
+        )
+        for offer in offers:
+            self._s8_original.append((offer, offer.price, offer.repricer_mode))
+            start = sim.now - timedelta(days=7)
+            with sim.store.cursor() as con:
+                units = con.execute(
+                    "SELECT sum(units) FROM orders_hourly WHERE sku = ? "
+                    "AND ts >= ? AND ts < ?",
+                    [offer.sku, start, start + timedelta(hours=p["stock_hours"])],
+                ).fetchone()[0]
+            if units is None:
+                units = (
+                    sum(
+                        sim.market.average_sales(o, sim.now)
+                        for o in sim.world.offers[offer.sku]
+                    )
+                    * p["stock_hours"]
+                    / 24
+                )
+            offer.stock = max(1, round(units * 2 * campaign))
+            offer.price = round(offer.price * p["price_mult"], 2)
+            offer.repricer_mode = "fixed"
+            sim.selleros_export.record_manual_price(
+                offer.seller_id, offer.sku, offer.price, sim.now
+            )
 
     def _changes(self, id: ScenarioId) -> None:
         sim, ts, p = self.sim, self.sim.now, self.params[id]
@@ -382,6 +456,10 @@ class ScenarioManager:
             for state in self.active()
         )
         self._late_partitions(sim, hour)
+        self._s8_partitions.enabled = any(
+            state.id == "S8" and hour.ts == state.injected_ts for state in self.active()
+        )
+        self._s8_partitions(sim, hour)
         for state in self.active():
             p = self.params[state.id]
             if state.id == "S7":

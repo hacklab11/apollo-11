@@ -19,6 +19,14 @@ class SellerOSExport:
         self.history: dict[str, list[dict]] = {}
         self.last_prices: dict[tuple[str, str], float] = {}
 
+    def record_manual_price(
+        self, seller_id: str, sku: str, price: float, ts: datetime
+    ) -> None:
+        self.history.setdefault(seller_id, []).append(
+            {"ts": ts.isoformat(), "sku": sku, "price": price, "source": "manual"}
+        )
+        self.last_prices[seller_id, sku] = price
+
     def write(self, ts: datetime) -> None:
         sellers = []
         for seller in self.world.sellers.values():

@@ -22,6 +22,13 @@ S7:
   checkout_ok: 0.1 # Checkout button works on one in ten web/webview carts.
   error_share: 0.8 # Checkout TypeErrors per affected cart.
   psp_latency_ms: 900.0 # Latency-only PSP-2 decoy, with unchanged success rate.
+S8:
+  # No headphones subcategory/names exist: affect all seller offers on E01–E10.
+  # Seed 42: S-24 has two (the maximum); tie-break by summed SKU popularity, then id.
+  # Other seeds use the same rule among SellerOS customers excluding S-03/S-07/S-12.
+  seller_id: S-24
+  price_mult: 0.10
+  stock_hours: 6 # Twice last week's same-hour SKU sales, scaled for the active I1 campaign.
 I1:
   campaign_mult: 1.4 # Bible's +40% uplift, coupled cohort sampling to preserve conversion controls.
   discount: 0.1 # Platform-funded electronics coupon fraction.

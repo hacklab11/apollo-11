@@ -2,13 +2,11 @@ from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import get_args
 
 import numpy as np
 import pytest
 
 from eye.config import Settings
-from eye.contracts import ScenarioId
 from eye.sim.engine import Hour, Simulator
 from eye.sim.market import Market
 from eye.sim.scenarios import LatePartitions, ScenarioManager, inject
@@ -366,15 +364,6 @@ def test_late_partitions_invalid_parameters(
 ) -> None:
     with pytest.raises(ValueError):
         LatePartitions(countries, share, delay)
-
-
-def test_s8_contract_is_reserved_but_not_implemented(settings: Settings) -> None:
-    assert "S8" in get_args(ScenarioId)
-    with closing(Simulator(settings, db_path=":memory:")) as sim:
-        manager = ScenarioManager(sim)
-        with pytest.raises(ValueError, match="S8 is not implemented"):
-            manager.inject("S8")
-        assert manager.timeline() == []
 
 
 @pytest.mark.parametrize("id", ["S1", "S3", "S4", "S5", "S7", "I1"])
