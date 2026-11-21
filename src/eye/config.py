@@ -67,7 +67,10 @@ class _Section(BaseModel):
 
 class DataSettings(_Section):
     source: Literal["sim", "duckdb"] = "sim"
-    path: CachePath = Path("data/world.duckdb")
+    path: CachePath = Field(
+        Path("data/world.duckdb"),
+        description="Read-only warehouse path for the duckdb source only",
+    )
 
 
 class SimSettings(_Section):

@@ -54,7 +54,7 @@ def open_sim_source(settings: Settings) -> Iterator[SimSource]:
         if exc.name != "eye.sim.scenarios":
             raise
         scenarios = None
-    with _world(settings, scenarios, settings.data.path) as (sim, manager):
+    with _world(settings, scenarios, WORLD_DB) as (sim, manager):
         yield SimSource(sim, manager, scenarios._TITLES if scenarios else {})
 
 
