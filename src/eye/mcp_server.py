@@ -143,8 +143,8 @@ def create_server(
 
     async def has_scenarios() -> bool:
         try:
-            return bool(await call("GET", "/api/scenarios"))
-        except ToolError:
+            return bool(_SCENARIOS.validate_python(await call("GET", "/api/scenarios")))
+        except (ToolError, ValidationError):
             return False
 
     server = _MonitoringServer(has_scenarios)

@@ -97,11 +97,11 @@ async def test_streamable_http_lists_ten_described_tools(http_url: str) -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scenarios",
-    [[], None],
-    ids=["no-scenario-source", "core-unavailable"],
+    [[], {"detail": "not a catalogue"}, None],
+    ids=["no-scenario-source", "invalid-catalogue", "core-unavailable"],
 )
 async def test_scenario_tools_hidden_without_scenario_source(
-    scenarios: list[object] | None,
+    scenarios: object,
 ) -> None:
     def unavailable(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("core down", request=request)
