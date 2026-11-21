@@ -15,6 +15,7 @@
 - {src: price_change_rate, dst: price_index_vs_1p, lag_hours: 0, rationale: Repricing moves Buy Box prices.}
 - {src: buybox_share, dst: small_seller_gmv_share, lag_hours: 0, rationale: Buy Box winners take the GMV.}
 - {src: in_stock_rate, dst: buybox_share, lag_hours: 0, rationale: Only in-stock offers can hold the Buy Box.}
+- {src: buybox_share, dst: in_stock_rate, lag_hours: 6, rationale: Small sellers that win the Buy Box at low prices sell out.}
 - {src: in_stock_rate, dst: avg_cpc, lag_hours: 6, rationale: Out-of-stock sellers bid more.}
 - {src: avg_cpc, dst: ad_revenue, lag_hours: 0, rationale: Ad revenue is clicks times CPC.}
 - {src: sessions, dst: carts, lag_hours: 0, rationale: More visits create more carts.}
