@@ -35,12 +35,10 @@ FEE_PER_ORDER = AddMetricRequest(
     description="Seller fees in euros per item ordered.",
     unit="eur",
     sql="""
-        SELECT ts, country, platform, category,
-               CASE WHEN seller_tier = '1P' THEN '1P' ELSE '3P' END AS seller_tier,
-               channel,
+        SELECT ts, country, platform, category, seller_tier, channel,
                SUM(fee_revenue) AS num, SUM(units) AS den
         FROM orders_hourly
-        GROUP BY ALL
+        GROUP BY ts, country, platform, category, seller_tier, channel
     """.strip(),
 )
 
@@ -233,7 +231,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
     with stage(
         "4. Add fee_per_order with SQL only. Show fees = units × fee per order, "
         "the seller breakdown, and the possible link from average price. "
-        "Watch electronics / 3P for new evidence on the same incident."
+        "Watch small third-party electronics sellers for new evidence on the same incident."
     ):
         response = await request(
             client,
@@ -257,7 +255,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
                 and decision.attach_to_incident == current.id
                 and decision.anomaly.metric == FEE_PER_ORDER.name
                 and decision.anomaly.segment.get("category") == "electronics"
-                and decision.anomaly.segment.get("seller_tier") == "3P"
+                and decision.anomaly.segment.get("seller_tier") == "small_3P"
                 for decision in await decisions(client, since)
             ):
                 say(
@@ -267,7 +265,7 @@ async def demo(client: httpx.AsyncClient, seconds: float, record: bool) -> None:
                 break
         else:
             raise RuntimeError(
-                "electronics / 3P fee_per_order did not attach to the S8 incident"
+                "electronics / small_3P fee_per_order did not attach to the S8 incident"
             )
 
     with stage(

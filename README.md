@@ -30,7 +30,7 @@ For the integrated demo, set `ANTHROPIC_API_KEY` in your environment for live or
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / third-party seller anomaly to attach. It clears S8 after SellerOS acknowledges reverting the price, then waits for the same incident to resolve after three normal ticks.
+The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. It clears S8 after SellerOS acknowledges reverting the price, then waits for the same incident to resolve after three normal ticks.
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
