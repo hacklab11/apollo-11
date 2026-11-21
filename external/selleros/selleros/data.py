@@ -1,6 +1,7 @@
 """Request-scoped access to SellerOS private data."""
 
 import json
+import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -110,12 +111,70 @@ class Store:
     def __init__(self, directory: Path = DATA_DIR) -> None:
         self.directory = directory
         self.paused: set[tuple[str, str]] = set()
+        self.reverted: set[tuple[str, str, datetime, float]] = set()
         self.lock = threading.Lock()
 
     def read(self) -> Snapshot:
         return Snapshot.model_validate_json(
             (self.directory / "sellers.json").read_text(encoding="utf-8")
         )
+
+    def receive_alert(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
+        if re.search(
+            r"\brevert\b.*\bmanual\b.*\bprices?\b",
+            alert.recommended_action,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return self.revert_manual_price(snapshot, alert)
+        return self.pause(snapshot, alert)
+
+    def revert_manual_price(
+        self, snapshot: Snapshot, alert: SellerAlert
+    ) -> SellerAlertAck:
+        actions = []
+        with self.lock:
+            for seller in snapshot.sellers:
+                if (
+                    not seller.customer_of_selleros
+                    or seller.seller_id not in alert.seller_ids
+                ):
+                    continue
+                intents = [
+                    intent
+                    for sku in seller.skus
+                    if sku.sku in alert.skus
+                    and (intent := price_intent(seller, sku)) is not None
+                    and intent.verdict == "likely_error"
+                    and (intent.seller_id, intent.sku, intent.ts, intent.new)
+                    not in self.reverted
+                ]
+                if not intents:
+                    continue
+                skus = sorted(intent.sku for intent in intents)
+                action = (
+                    f"reverted manual price for {seller.seller_id} on {', '.join(skus)}"
+                )
+                with (self.directory / "actions.jsonl").open(
+                    "a", encoding="utf-8"
+                ) as log:
+                    log.write(
+                        json.dumps(
+                            {
+                                "incident_id": alert.incident_id,
+                                "seller_id": seller.seller_id,
+                                "skus": skus,
+                                "status": "reverted",
+                                "action": action,
+                            }
+                        )
+                        + "\n"
+                    )
+                self.reverted.update(
+                    (intent.seller_id, intent.sku, intent.ts, intent.new)
+                    for intent in intents
+                )
+                actions.append(action)
+        return SellerAlertAck(received=True, actions_taken=actions)
 
     def pause(self, snapshot: Snapshot, alert: SellerAlert) -> SellerAlertAck:
         actions = []

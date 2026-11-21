@@ -27,7 +27,7 @@ SKILLS = {
     "below_cost_check": "Current prices below unit cost and margin per unit",
     "supplier_eta": "Expected seller restock dates",
     "price_intent_check": "Last price change, source, unit cost and deterministic price intent verdict",
-    "receive_alert": "Pause no-floor repricers in response to alerts",
+    "receive_alert": "Pause no-floor repricers or revert likely erroneous manual prices in response to alerts",
 }
 
 
@@ -47,7 +47,9 @@ class Executor(AgentExecutor):
             if "incident_id" in payload:
                 alert = SellerAlert.model_validate(payload, extra="forbid")
                 snapshot = await asyncio.to_thread(self.store.read)
-                output = await asyncio.to_thread(self.store.pause, snapshot, alert)
+                output = await asyncio.to_thread(
+                    self.store.receive_alert, snapshot, alert
+                )
             else:
                 request = SpecialistRequest.model_validate(payload, extra="forbid")
                 output = await answer(self.store, request)

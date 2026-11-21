@@ -29,6 +29,12 @@ def store(tmp_path: Path) -> Store:
     return Store(tmp_path)
 
 
+@pytest.fixture
+def s8_store(tmp_path: Path) -> Store:
+    shutil.copyfile(FIXTURES / "s8.json", tmp_path / "sellers.json")
+    return Store(tmp_path)
+
+
 def request(question: str, **segment: str) -> SpecialistRequest:
     return SpecialistRequest(
         investigation_id="investigation",
@@ -133,6 +139,193 @@ async def test_card(store: Store) -> None:
     card = response.json()
     assert card["name"] == "SellerOS Partner Agent"
     assert {s["id"] for s in card["skills"]} == set(SKILLS)
+    assert len(card["skills"]) == 5
+    assert "price_intent_check" in {s["id"] for s in card["skills"]}
+
+
+@pytest.mark.parametrize(
+    ("seller_id", "sku", "source", "verdict"),
+    [
+        ("S-14", "E02", "manual", "likely_error"),
+        ("S-14", "E04", "manual", "likely_error"),
+        ("S-14", "E05", "manual", "intended"),
+        ("S-03", "E02", "repricer", "intended"),
+        ("S-07", "E02", "repricer", "intended"),
+    ],
+)
+def test_price_intent_s8(
+    s8_store: Store, seller_id: str, sku: str, source: str, verdict: str
+) -> None:
+    data = ScopedData(
+        s8_store, s8_store.read(), Selection(seller_ids=[seller_id]), AS_OF
+    )
+    rows = data.query(
+        "price_intent_check", Selection(seller_ids=[seller_id], skus=[sku])
+    ).rows
+    assert len(rows) == 1
+    assert rows[0]["source"] == source
+    assert rows[0]["verdict"] == verdict
+    assert rows[0]["seller_id"] == seller_id
+    assert rows[0]["sku"] == sku
+    if seller_id == "S-14" and sku == "E02":
+        assert rows[0] == {
+            "seller_id": "S-14",
+            "sku": "E02",
+            "ts": "2026-12-25T10:00:00Z",
+            "old": 99,
+            "new": 9.9,
+            "source": "manual",
+            "unit_cost": 60,
+            "verdict": "likely_error",
+        }
+    if seller_id == "S-07":
+        assert rows[0]["old"] is None
+
+
+def test_price_intent_scope_and_missing_history(s8_store: Store) -> None:
+    snapshot = s8_store.read()
+    data = ScopedData(s8_store, snapshot, Selection(skus=["E02"]), AS_OF)
+    assert data.query("price_intent_check", Selection(skus=["H01"])).rows == []
+    assert data.query("price_intent_check", Selection(seller_ids=["S-55"])).rows == []
+    data = ScopedData(s8_store, snapshot, Selection(seller_ids=["S-14"]), AS_OF)
+    assert data.query("price_intent_check", Selection(skus=["E06"])).rows == []
+    before = ScopedData(
+        s8_store, snapshot, Selection(skus=["E02"]), datetime(2026, 12, 25, tzinfo=UTC)
+    )
+    rows = before.query("price_intent_check", Selection(seller_ids=["S-14"])).rows
+    assert rows[0]["new"] == 99
+    assert rows[0]["old"] is None
+    assert rows[0]["verdict"] == "intended"
+
+
+@pytest.mark.asyncio
+async def test_price_intent_tool_roundtrip(s8_store: Store) -> None:
+    seen: list[dict[str, Any]] = []
+    install_mock(
+        [
+            message("price_intent_check", {"seller_ids": ["S-14"], "skus": ["E02"]}),
+            message(
+                "submit",
+                {
+                    "agent": "selleros",
+                    "answered": True,
+                    "findings": [
+                        {
+                            "claim": "S-14 manual E02 price is likely_error",
+                            "numbers": {
+                                "old": 99,
+                                "new": 9.9,
+                                "unit_cost": 60,
+                                "source": "manual",
+                                "verdict": "likely_error",
+                            },
+                            "confidence": 1,
+                            "supports": ["price_change"],
+                        }
+                    ],
+                    "data_used": ["price_intent_check"],
+                },
+                1,
+            ),
+        ],
+        seen,
+    )
+    result = await rpc(
+        s8_store, request("price_intent_check S-14 E02").model_dump(mode="json")
+    )
+    task = result["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert (
+        "likely_error"
+        in task["artifacts"][0]["parts"][0]["data"]["findings"][0]["claim"]
+    )
+    evidence = json.loads(seen[1]["messages"][-1]["content"][0]["content"])
+    assert evidence["rows"][0]["verdict"] == "likely_error"
+    assert evidence["rows"][0]["unit_cost"] == 60
+    assert s8_store.paused == set()
+    assert not (s8_store.directory / "actions.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_revert_manual_price_alert(s8_store: Store) -> None:
+    alert = SellerAlert(
+        incident_id="s8",
+        seller_ids=["S-14", "S-03", "S-07"],
+        skus=["E02", "E04", "E05"],
+        summary="manual pricing error",
+        recommended_action="Please revert the manual prices",
+    )
+    result = await rpc(s8_store, alert.model_dump())
+    task = result["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    ack = task["artifacts"][0]["parts"][0]["data"]
+    assert ack == {
+        "received": True,
+        "actions_taken": ["reverted manual price for S-14 on E02, E04"],
+    }
+    assert s8_store.paused == set()
+    records = [
+        json.loads(line)
+        for line in (s8_store.directory / "actions.jsonl").read_text().splitlines()
+    ]
+    assert len(records) == 1
+    assert records[0]["seller_id"] == "S-14"
+    assert records[0]["skus"] == ["E02", "E04"]
+    assert records[0]["action"] == ack["actions_taken"][0]
+    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
+    assert len((s8_store.directory / "actions.jsonl").read_text().splitlines()) == 1
+
+
+@pytest.mark.parametrize(
+    ("seller_ids", "skus"),
+    [
+        ([], ["E02"]),
+        (["S-14"], []),
+        (["S-03", "S-07"], ["E02"]),
+        (["S-14"], ["E05", "E06"]),
+        (["S-55"], ["E02"]),
+    ],
+)
+def test_revert_alert_no_eligible_offer(
+    s8_store: Store, seller_ids: list[str], skus: list[str]
+) -> None:
+    alert = SellerAlert(
+        incident_id="s8",
+        seller_ids=seller_ids,
+        skus=skus,
+        summary="",
+        recommended_action="revert manual price",
+    )
+    assert s8_store.receive_alert(s8_store.read(), alert).actions_taken == []
+    assert s8_store.paused == set()
+    assert not (s8_store.directory / "actions.jsonl").exists()
+
+
+@pytest.mark.asyncio
+async def test_invalid_price_source_fails_request(s8_store: Store) -> None:
+    path = s8_store.directory / "sellers.json"
+    snapshot = json.loads(path.read_text())
+    snapshot["sellers"][0]["price_history"][0]["source"] = "unknown"
+    path.write_text(json.dumps(snapshot))
+    result = await rpc(
+        s8_store, request("price_intent_check S-14 E02").model_dump(mode="json")
+    )
+    assert result["result"]["task"]["status"]["state"] == "TASK_STATE_FAILED"
+
+
+def test_revert_log_failure_does_not_mark_reverted(s8_store: Store) -> None:
+    (s8_store.directory / "actions.jsonl").mkdir()
+    alert = SellerAlert(
+        incident_id="s8",
+        seller_ids=["S-14"],
+        skus=["E02"],
+        summary="",
+        recommended_action="revert manual price",
+    )
+    with pytest.raises(IsADirectoryError):
+        s8_store.receive_alert(s8_store.read(), alert)
+    assert s8_store.reverted == set()
+    assert s8_store.paused == set()
 
 
 @pytest.mark.asyncio
