@@ -79,9 +79,10 @@ class A2AClient:
     def _unavailable(self, agent: str, exc: Exception) -> str:
         # Exception text can contain remote payloads; only expose a safe reason.
         reason = f"agent unavailable: {type(exc).__name__}"
-        self._health[agent] = AgentCardInfo(
-            name=agent, url=self._urls.get(agent, ""), healthy=False, reason=reason
-        )
+        if agent in self._urls:
+            self._health[agent] = AgentCardInfo(
+                name=agent, url=self._urls[agent], healthy=False, reason=reason
+            )
         if self._on_unavailable:
             self._on_unavailable(agent, reason)
         return reason

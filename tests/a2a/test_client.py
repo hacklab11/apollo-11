@@ -120,6 +120,9 @@ async def test_unavailable_cards_and_unknown_agent() -> None:
         cards = await client.fetch_cards()
         assert len(cards) == 4 and all(not card.healthy for card in cards.values())
         assert not (await client.ask("unknown", request())).answered
+        cards = await client.fetch_cards()
+        assert set(cards) == {"growth", "marketplace", "discovery", "selleros"}
+        assert "unknown" not in client._health
 
 
 @pytest.mark.asyncio
