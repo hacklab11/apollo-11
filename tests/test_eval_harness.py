@@ -426,6 +426,48 @@ async def test_a2a_snapshot_replays_without_network(
         await replayed.aclose()
 
 
+@pytest.mark.asyncio
+async def test_local_specialist_uses_bound_eval_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seen = []
+
+    async def answer(
+        module: object, client: object, request: object, settings: object
+    ) -> tuple:
+        seen.append((module.NAME, client, request, settings))
+        return harness.SpecialistResponse(
+            agent=module.NAME, answered=True, findings=[]
+        ), []
+
+    async def forbidden(*args: object) -> None:
+        raise AssertionError("remote specialist reached")
+
+    monkeypatch.setattr(harness, "answer_specialist", answer)
+    monkeypatch.setattr(harness.A2AClient, "ask", forbidden)
+    client = harness.EvalA2AClient(A2aSettings(), "live", tmp_path / "fixture.jsonl")
+    client.local_data, client.local_settings = object(), object()
+    try:
+        request = harness.SpecialistRequest(
+            investigation_id="eval",
+            question="Why?",
+            metric="orders",
+            segment={},
+            window_start_ts=CAMPAIGN_TS,
+            window_end_ts=CAMPAIGN_TS + harness.HOUR,
+            baseline_start_ts=CAMPAIGN_TS - harness.HOUR,
+            baseline_end_ts=CAMPAIGN_TS,
+            context="eval",
+        )
+        result = await client.ask("discovery", request)
+        assert result.answered
+        assert seen == [
+            ("discovery", client.local_data, request, client.local_settings)
+        ]
+    finally:
+        await client.aclose()
+
+
 def test_seeded_identity_streams() -> None:
     def values(seed: int) -> list:
         stream = harness.seeded_ids(seed, "S3", "detective")

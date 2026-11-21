@@ -16,18 +16,21 @@ from typing import Any
 from unittest.mock import patch
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+import httpx
 import yaml
 
-from eye.a2a_client import A2AClient, AgentCardInfo
+from eye.a2a_client import A2AClient, AgentCardInfo, _FAILURES
 from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
 from eye.agents.sentinel import Sentinel
+from eye.api.app import create_app
 from eye.config import load_settings
 from eye.contracts import (
     AddMetricRequest,
     Incident,
     SellerAlertAck,
     SpecialistResponse,
+    SpecialistRequest,
     TrailStep,
 )
 from eye.graph.bootstrap import load_or_bootstrap
@@ -40,6 +43,8 @@ from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
 from eye.sim.scenarios import _TITLES, ScenarioManager
+from eye.specialists.app import SPECIALISTS, answer as answer_specialist
+from eye.specialists.tools import DataClient
 from eye.tools.stats import expected
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -90,6 +95,7 @@ class EvalLLMClient(LLMClient):
         super().__init__(settings)
         self.trace = trace
         self.replay_misses = 0
+
         self.total_calls = 0
         self.replayed_calls = 0
 
@@ -124,6 +130,8 @@ class EvalA2AClient(A2AClient):
         super().__init__(settings)
         self.mode, self.path = mode, path
         self.replay_misses = 0
+        self.local_data: DataClient | None = None
+        self.local_settings: Any = None
 
     async def exchange(self, method: str, args: dict) -> Any:
         key = "a2a:" + digest({"method": method, "args": args})
@@ -139,7 +147,37 @@ class EvalA2AClient(A2AClient):
             raise LLMUnavailable(
                 f"Offline replay has no A2A snapshot for {method}: {key}"
             )
-        if method == "fetch_cards":
+        if method == "fetch_cards" and self.local_data is not None:
+            try:
+                await self._card("selleros", refresh=True)
+            except _FAILURES as exc:
+                self._unavailable("selleros", exc)
+            cards = {"selleros": self._health["selleros"]}
+            cards.update(
+                {
+                    module.NAME: AgentCardInfo(
+                        name=module.NAME,
+                        url=f"inprocess://{module.NAME}",
+                        skills=list(module.SKILLS),
+                        healthy=True,
+                    )
+                    for module in SPECIALISTS
+                }
+            )
+            value = {name: card.model_dump(mode="json") for name, card in cards.items()}
+        elif (
+            method == "ask"
+            and self.local_data is not None
+            and args["agent"] in {module.NAME for module in SPECIALISTS}
+        ):
+            module = next(
+                module for module in SPECIALISTS if module.NAME == args["agent"]
+            )
+            response, _ = await answer_specialist(
+                module, self.local_data, args["request"], self.local_settings
+            )
+            value = response.model_dump(mode="json")
+        elif method == "fetch_cards":
             value = {
                 name: card.model_dump(mode="json")
                 for name, card in (await super().fetch_cards()).items()
@@ -706,6 +744,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "eye.agents.detective",
             "eye.agents.skeptic",
             "eye.agents.cartographer",
+            "eye.specialists.app",
         ):
             stack.enter_context(
                 patch.object(import_module(module), "run_agent", deterministic_agent)
@@ -778,6 +817,14 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             add_metric=Cartographer(engine, graph, llm=settings.llm).add_metric,
             invalidate=engine.invalidate,
         )
+        world_http = httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=create_app(core, connection, registry, graph, engine)
+            ),
+            base_url="http://eval",
+        )
+        a2a.local_data = DataClient(world_http, "http://eval/data")
+        a2a.local_settings = settings
 
         async def recorded_investigate(anomaly: Any, on_step: Any) -> Any:
             result = await investigate(anomaly, on_step)
@@ -839,6 +886,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                     await actions.poll(core, store.all(), stored_trails(store))
         finally:
             await core.close()
+            await world_http.aclose()
         incidents = store.all()
         trails = stored_trails(store)
         checks = evaluate(entry, incidents, trails)
