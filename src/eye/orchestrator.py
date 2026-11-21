@@ -81,7 +81,7 @@ class Status(BaseModel):
     tick: int
     running: bool
     paused: bool
-    llm_mode: str
+    llm_mode: Literal["live", "record", "replay"]
     llm_calls: int
     tokens_in: int
     tokens_out: int
@@ -189,6 +189,12 @@ class Orchestrator:
     async def start(self) -> None:
         if self.refine is not None:
             await self.refine(self.clean_hours(), self.record_step)
+        if self.investigate is not None:
+            self._pending.extend(
+                item
+                for item in self._open_incidents()
+                if item.status == "investigating" and not item.investigation_ids
+            )
         await self.refresh_agents()
         if self.settings.sim.autostart:
             self.resume()
@@ -401,15 +407,19 @@ class Orchestrator:
             and not self.llm.status()["budget_paused"]
         ):
             item = self._pending.popleft()
-            task = asyncio.create_task(self._investigate(item))
+            task = asyncio.create_task(self._run_investigation(item))
             self._tasks.add(task)
-            task.add_done_callback(self._investigation_done)
 
-    def _investigation_done(self, task: asyncio.Task[None]) -> None:
-        self._tasks.remove(task)
-        if not task.cancelled() and (exc := task.exception()) is not None:
-            _log_error("incident_upsert_failed", exc)
-        self._dispatch()
+    async def _run_investigation(self, item: Incident) -> None:
+        try:
+            await self._investigate(item)
+        except Exception as exc:  # noqa: BLE001 -- remaining investigations must still run
+            _log_error("incident_upsert_failed", exc, item.id)
+        finally:
+            task = asyncio.current_task()
+            assert task is not None
+            self._tasks.remove(task)
+            self._dispatch()
 
     async def _investigate(self, item: Incident) -> None:
         assert self.investigate is not None

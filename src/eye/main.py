@@ -2,7 +2,7 @@
 
 import json
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import ExitStack, closing, contextmanager
 from datetime import UTC, datetime
 from importlib import import_module
@@ -12,7 +12,6 @@ from types import ModuleType
 from typing import Any
 from uuid import uuid4
 
-import duckdb
 import uvicorn
 from anthropic import AnthropicError
 
@@ -24,7 +23,7 @@ from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, ScenarioId, TrailStep
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, configure_client
-from eye.orchestrator import HOUR, Orchestrator, Scenarios
+from eye.orchestrator import HOUR, Orchestrator, Scenarios, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
@@ -215,6 +214,17 @@ def main() -> None:
         ]
         graph = bootstrap.load_or_bootstrap(engine, scenario_hours=scenario_hours)
 
+        async def refine(clean_hours: Sequence[datetime], on_step: StepSink) -> None:
+            assert cartographer is not None
+            seeds = [edge for edge in graph.edges() if edge.created_by == "seed"]
+            if any(not edge.evidence.get("llm_refined") for edge in seeds):
+                await cartographer.refine_causal_seeds(clean_hours, on_step)
+                for edge in graph.edges():
+                    if edge.created_by == "seed":
+                        graph.set_edge_status(
+                            edge.id, edge.status, {"llm_refined": True}
+                        )
+
         def unavailable(name: str, reason: str) -> None:
             orchestrator.agent_unavailable(name, reason)
 
@@ -261,7 +271,7 @@ def main() -> None:
             a2a=a2a,
             investigate=detective.investigate if detective else None,
             add_metric=cartographer.add_metric if cartographer else None,
-            refine=cartographer.refine_causal_seeds if cartographer else None,
+            refine=refine if cartographer else None,
             invalidate=engine.invalidate,
             record_scenario=record_scenario,
         )

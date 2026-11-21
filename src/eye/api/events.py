@@ -19,13 +19,18 @@ class EventBus:
     async def stream(self, heartbeat_seconds: float = 15) -> AsyncIterator[str]:
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=256)
         self._subscribers.add(queue)
+        loop = asyncio.get_running_loop()
+        next_heartbeat = loop.time() + heartbeat_seconds
         try:
             while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), heartbeat_seconds)
-                except TimeoutError:
+                if loop.time() >= next_heartbeat:
                     yield ": heartbeat\n\n"
-                else:
-                    yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
+                    next_heartbeat = loop.time() + heartbeat_seconds
+                try:
+                    async with asyncio.timeout_at(next_heartbeat):
+                        event = await queue.get()
+                except TimeoutError:
+                    continue
+                yield f"event: {event.type}\ndata: {event.model_dump_json()}\n\n"
         finally:
             self._subscribers.remove(queue)
