@@ -1,14 +1,14 @@
 """Sponsored-product auctions and paid acquisition."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 
 import numpy as np
 from numpy.random import Generator
 
-from eye.sim.demand import _HOUR_PROFILE, COUNTRIES
+from eye.sim.demand import _HOUR_PROFILE, _WEEKDAY_PROFILE, COUNTRIES
 from eye.sim.store import Batches
-from eye.sim.world import CATEGORIES, World
+from eye.sim.world import CATEGORIES, CATEGORY_SHARES, World
 
 
 @dataclass
@@ -20,6 +20,31 @@ class Ads:
     recovered_hours: dict[str, int] = field(default_factory=dict)
     day: date | None = None
 
+    def calibrate_budgets(self, ts: datetime, world: World) -> None:
+        for category, share in zip(CATEGORIES, CATEGORY_SHARES, strict=True):
+            ranked = sorted(
+                (a for a in world.advertisers.values() if a.category == category),
+                key=lambda a: (-a.base_bid, a.advertiser_id),
+            )
+            clicks = (
+                20_000
+                * sum(_HOUR_PROFILE)
+                * _WEEKDAY_PROFILE[ts.weekday()]
+                * 0.55
+                * 1.6
+                * share
+                * 0.9
+                * 0.02
+            )
+            for rank, adv in enumerate(ranked):
+                cpc = (
+                    max(0.10, ranked[rank + 1].base_bid + 0.01)
+                    if rank + 1 < len(ranked)
+                    else 0.10
+                )
+                budget = round(clicks * cpc, 2)
+                world.advertisers[adv.advertiser_id] = replace(adv, daily_budget=budget)
+
     def auction(
         self,
         ts: datetime,
@@ -29,6 +54,7 @@ class Ads:
         batches: Batches,
     ) -> dict[tuple[int, str], int]:
         if self.day != ts.date():
+            self.calibrate_budgets(ts, world)
             self.spent.clear()
             self.day = ts.date()
         planned = sum(_HOUR_PROFILE[: ts.hour + 1]) / sum(_HOUR_PROFILE)

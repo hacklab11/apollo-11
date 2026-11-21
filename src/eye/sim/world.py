@@ -1,6 +1,6 @@
 """Seeded catalog and in-memory marketplace state."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Literal
 
@@ -205,4 +205,26 @@ def build_world(seed: int, *, joined_ts: datetime) -> World:
             round(rng.uniform(400, 3000), 2),
             round(rng.uniform(0.40, 1.60), 2),
         )
+    remaining = dict.fromkeys(CATEGORIES, 2)
+    assignments: dict[str, Category] = {}
+
+    def assign(index: int) -> bool:
+        if index == len(advertisers):
+            return True
+        adv = list(advertisers.values())[index]
+        eligible = {skus[sku].category for sku in catalogs[adv.seller_id]}
+        for category in sorted(eligible, key=lambda c: (c != adv.category, c)):
+            if remaining[category]:
+                remaining[category] -= 1
+                assignments[adv.advertiser_id] = category
+                if assign(index + 1):
+                    return True
+                remaining[category] += 1
+        return False
+
+    if not assign(0):
+        raise ValueError("seller catalogs cannot support two advertisers per category")
+    advertisers = {
+        aid: replace(adv, category=assignments[aid]) for aid, adv in advertisers.items()
+    }
     return World(skus, sellers, offers, suppliers, advertisers)

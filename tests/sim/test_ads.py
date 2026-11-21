@@ -1,10 +1,15 @@
+from collections import Counter
+from contextlib import closing
 from datetime import UTC, datetime
+from pathlib import Path
 
 import duckdb
 import numpy as np
 import pytest
 
+from eye.config import Settings
 from eye.sim.ads import Ads, marketing
+from eye.sim.engine import Simulator
 from eye.sim.world import build_world
 
 
@@ -23,16 +28,36 @@ def test_budget_cap_and_daily_reset(reader: duckdb.DuckDBPyConnection) -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Spec auction traffic and 400–3000 EUR budgets cannot ensure every advertiser spends to plan",
-)
 def test_noon_pacing(reader: duckdb.DuckDBPyConnection) -> None:
     ratios = reader.execute(
         "SELECT advertiser_id, spent_today / (daily_budget * planned_cum_share) FROM ads_hourly WHERE hour(ts) = 12"
     ).fetchall()
-    assert ratios
+    assert len(ratios) == 28 * 8 * 2
     assert all(0.8 <= ratio <= 1.2 for _, ratio in ratios)
+
+
+def test_second_seed_pacing(tmp_path: Path) -> None:
+    settings = Settings()
+    settings.sim.seed = 7
+    with closing(Simulator(settings, db_path=tmp_path / "seed7.duckdb")) as sim:
+        sim.backfill()
+        with sim.store.cursor() as reader:
+            test_noon_pacing(reader)
+            test_budget_cap_and_daily_reset(reader)
+
+
+@pytest.mark.parametrize("seed", [42, 7])
+def test_balanced_advertiser_categories(seed: int) -> None:
+    world = build_world(seed, joined_ts=datetime(2026, 1, 1, tzinfo=UTC))
+    assert Counter(a.category for a in world.advertisers.values()) == dict.fromkeys(
+        ("electronics", "home", "fashion", "toys"), 2
+    )
+    for adv in world.advertisers.values():
+        assert any(
+            sku.category == adv.category
+            and any(o.seller_id == adv.seller_id for o in world.offers[sku.sku])
+            for sku in world.skus.values()
+        )
 
 
 def test_empty_auction_and_bid_escalation() -> None:
