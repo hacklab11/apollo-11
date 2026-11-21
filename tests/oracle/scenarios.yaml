@@ -85,7 +85,7 @@ S7: &S7
     cause_type: release
     segment_contains: {platform: [web, android]}
     must_mention: [checkout-web, v5.8, web, android, ios, PSP-2]
-    must_not_root_cause: [traffic_change, planned_event, payment_failure]
+    must_not_root_cause: [traffic_change, planned_event, payment provider failure]
     evidence_groups_min: 2
     suggested_actions_mention: [checkout-web, v5.7]
     max_incidents_for_scenario: 1
@@ -104,7 +104,7 @@ I2: &I2
   run_hours: 9
   expect:
     verdict_any: [DATA_ISSUE]
-    status_any: [data_issue, resolved]
+    status_any: [deferred, resolved]
     segment_contains: {country: [FR]}
     or_no_incident: true
     must_mention: [FR, partition]

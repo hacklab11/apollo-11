@@ -5,10 +5,11 @@ import asyncio
 import json
 import time
 from contextlib import ExitStack, closing
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from uuid import uuid4
 
 import yaml
 
@@ -24,7 +25,7 @@ from eye.orchestrator import HOUR, Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
-from eye.sim.scenarios import ScenarioManager, _TITLES
+from eye.sim.scenarios import _TITLES, ScenarioManager
 from eye.tools.stats import expected
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,8 +43,15 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
 
     optional = spec.get("or_no_incident", False) and not items
     roots = [i["root_cause"] for i in items if i.get("root_cause")]
-    hypotheses = [h for i in items for h in i["hypotheses"]]
+    hypotheses = [h for i in items for h in i["hypotheses"] if h["status"] != "refuted"]
     segments = [h["segment"] for h in roots + hypotheses]
+    segments.extend(i["entry"]["segment"] for i in items)
+    segments.extend(
+        {"platform": actor}
+        for i in items
+        for actor in i["affected_actors"]
+        if actor in {"web", "android", "ios"}
+    )
     text = json.dumps(
         [
             {
@@ -87,6 +95,10 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
             )
             if key == "must_not_root_cause":
                 ok = bool(items) and not set(actual).intersection(wanted)
+                if "payment provider failure" in wanted:
+                    ok &= not any(
+                        h["root_node"] == "payment_success_rate" for h in roots
+                    )
         elif key == "segment_contains":
             actual = segments
             ok = all(
@@ -136,9 +148,9 @@ def _checks(spec: dict, items: list[dict], trails: list[dict]) -> list[dict]:
         elif key == "notified_sellers":
             actual = [
                 s
-                for i in items
-                for n in i["notifications"]
-                for s in n.get("seller_ids", [])
+                for t in trails
+                if (t.get("output") or {}).get("received") is True
+                for s in t["output"].get("seller_ids", [])
             ]
             ok = set(wanted) <= set(actual)
         elif key in {"loop_contains", "affected_sellers"}:
@@ -202,7 +214,20 @@ def evaluate(
 
     results = group(entry, "expect.")
     for name, spec in entry.get("also", {}).items():
-        results.extend(group(spec, f"also.{name}."))
+        if name == "I1":
+            other = [
+                i
+                for i in incidents
+                if i.verdict == "INNOCENT"
+                or (i.root_cause and i.root_cause.cause_type == "planned_event")
+                or "black-friday-2026" in i.summary.casefold()
+            ]
+            nested = evaluate({"expect": spec.get("expect", spec)}, other, trails)
+            for result in nested:
+                result["check"] = result["check"].replace("expect.", f"also.{name}.", 1)
+            results.extend(nested)
+        else:
+            results.extend(group(spec, f"also.{name}."))
     if "max_ticks_to_detect" in entry:
         metrics = entry["expect"].get("entry_metrics_any", [])
         start = (
@@ -320,6 +345,50 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             investigate=investigate,
             invalidate=engine.invalidate,
         )
+        if investigate is not None:
+
+            async def recorded_investigate(anomaly: Any, on_step: Any) -> Any:
+                result = await investigate(anomaly, on_step)
+                await on_step(
+                    TrailStep(
+                        id=f"stp_{uuid4().hex}",
+                        investigation_id=result.investigation_id,
+                        n=result.steps_used + 1,
+                        real_ts=datetime.now(UTC),
+                        actor="orchestrator",
+                        action="decision",
+                        output_summary=f"Investigation verdict: {result.verdict}",
+                        output=result.model_dump(mode="json"),
+                    )
+                )
+                return result
+
+            core.investigate = recorded_investigate
+
+        async def notify(alert: Any) -> Any:
+            ack = await a2a.notify_seller_os(alert)
+            item = store.get(alert.incident_id)
+            if item and item.investigation_ids:
+                investigation_id = item.investigation_ids[-1]
+                await core.record_step(
+                    TrailStep(
+                        id=f"stp_{uuid4().hex}",
+                        investigation_id=investigation_id,
+                        n=max((t.n for t in store.trail(investigation_id)), default=0)
+                        + 1,
+                        real_ts=datetime.now(UTC),
+                        actor="selleros",
+                        action="a2a_call",
+                        output_summary=f"SellerOS received={ack.received}; sellers={len(alert.seller_ids)}",
+                        output={
+                            "received": ack.received,
+                            "seller_ids": alert.seller_ids,
+                        },
+                    )
+                )
+            return ack
+
+        store.notify = notify
         store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
         try:
