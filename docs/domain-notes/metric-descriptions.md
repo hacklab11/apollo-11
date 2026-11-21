@@ -1,0 +1,52 @@
+# Metric descriptions
+
+- `gmv`: Total value of merchandise sold, in euros.
+- `orders`: Total units ordered.
+- `aov`: Merchandise value in euros per unit ordered, calculated as GMV divided by orders.
+- `fee_revenue`: Total marketplace fees earned from orders, in euros.
+- `first_party_margin`: First-party merchandise value minus its cost of goods, in euros.
+- `platform_discounts`: Total discounts funded by the platform, in euros.
+- `fulfillment_cost`: Total order fulfillment costs, in euros.
+- `ad_revenue`: Total advertiser spending earned by the platform, in euros.
+- `marketing_cost`: Total platform spending on external marketing, in euros.
+- `refund_cost`: Total cost of refunds, in euros.
+- `refunds`: Total number of refunds.
+- `contribution_margin`: Fee revenue plus ad revenue and first-party margin, minus platform discounts, fulfillment costs, marketing costs, and refund costs, in euros.
+- `contribution_per_order`: Contribution margin in euros per unit ordered.
+- `sessions`: Total visits to the marketplace.
+- `searches`: Total searches made on the marketplace.
+- `search_ctr`: Search-result clicks divided by searches.
+- `search_relevance`: Average search relevance score, weighted by the number of searches.
+- `search_conversion`: Units ordered through search divided by searches.
+- `feed_impressions`: Total item impressions in the recommendation feed.
+- `feed_ctr`: Feed clicks divided by feed impressions.
+- `feed_purchase_rate`: Units ordered through the feed divided by feed clicks.
+- `feed_unavailable_exposure_share`: Share of feed impressions showing out-of-stock items.
+- `carts`: Total carts created.
+- `cart_rate`: Carts created divided by marketplace sessions.
+- `cart_to_checkout_rate`: Checkout starts divided by carts created.
+- `checkout_to_payment_rate`: Payment attempts divided by checkout starts.
+- `payment_success_rate`: Successful payments divided by payment attempts.
+- `payment_latency_p95`: Attempt-weighted average of reported 95th-percentile payment latencies, in milliseconds; not a pooled payment percentile.
+- `checkout_conversion`: Units ordered divided by carts created.
+- `client_error_rate`: Client-side errors divided by sessions, by platform.
+- `buybox_share`: Share of category merchandise value sold by each seller tier, used as a Buy Box share measure.
+- `small_seller_gmv_share`: Share of merchandise value sold by small third-party sellers.
+- `price_index_vs_1p`: Average price-to-reference-price ratio of third-party Buy Box offers, for comparison with the first-party price index.
+- `price_change_rate`: Share of offers whose price changed since the previous hour.
+- `active_small_sellers`: Number of distinct small third-party sellers with at least one order in the hour.
+- `seller_hhi`: Sum of squared seller merchandise-value shares within a category; higher values mean sales are more concentrated.
+- `in_stock_rate`: Demand-weighted share of Buy Box holding or eligible offers that are in stock, using item popularity as the weight.
+- `stockout_skus`: Number of SKUs with no in-stock offer.
+- `po_fill_rate`: Delivered units divided by ordered units for first-party purchase orders, grouped by delivery day.
+- `po_qty_vs_forecast`: Purchase-order quantity divided by the stock needed to reach ten days of supply, using average daily sales over the previous seven days at order time.
+- `supplier_delay_hours`: Average hours between expected and actual delivery across deliveries; positive values mean late delivery.
+- `fba_blocked_units`: Total units blocked by fulfillment capacity limits.
+- `ad_impressions`: Total advertising impressions shown.
+- `ad_clicks`: Total clicks on advertisements.
+- `ad_spend`: Total advertiser spending in euros, the same amount recorded as platform ad revenue.
+- `avg_cpc`: Advertising spend in euros divided by ad clicks.
+- `ad_ctr`: Ad clicks divided by ad impressions.
+- `budget_pace_ratio`: Cumulative daily advertiser spend divided by daily budget times the planned cumulative spending share, using each advertiser's latest hour.
+- `refund_rate`: Refund count divided by units ordered.
+- `delivery_delay_hours`: Delivery delay in hours from purchase orders, comparing actual delivery with the expected arrival time.
