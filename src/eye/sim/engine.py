@@ -85,8 +85,8 @@ class Simulator:
             self.finance.book(hour.ts, hour.rng, hour.batches.get("orders_hourly", []))
         )
         self.store.append(hour.batches)
-        self.selleros_export.write(hour.ts)
         self.now += _HOUR
+        self.selleros_export.write(hour.ts)
 
     def close(self) -> None:
         self.store.close()
