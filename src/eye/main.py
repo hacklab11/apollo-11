@@ -216,12 +216,17 @@ def main() -> None:
             for i in range(((state.cleared_ts or sim.now) - start) // HOUR)
         ]
         graph = bootstrap.load_or_bootstrap(engine, scenario_hours=scenario_hours)
+        cart = (
+            cartographer.Cartographer(engine, graph, llm=settings.llm)
+            if cartographer is not None
+            else None
+        )
 
         async def refine(clean_hours: Sequence[datetime], on_step: StepSink) -> None:
-            assert cartographer is not None
+            assert cart is not None
             seeds = [edge for edge in graph.edges() if edge.created_by == "seed"]
             if any(not edge.evidence.get("llm_refined") for edge in seeds):
-                await cartographer.refine_causal_seeds(clean_hours, on_step)
+                await cart.refine_causal_seeds(clean_hours, on_step)
                 for edge in graph.edges():
                     if edge.created_by == "seed":
                         graph.set_edge_status(
@@ -286,8 +291,8 @@ def main() -> None:
             scenario_titles=scenario_module._TITLES if scenario_module else {},
             a2a=a2a,
             investigate=investigate,
-            add_metric=cartographer.add_metric if cartographer else None,
-            refine=refine if cartographer else None,
+            add_metric=cart.add_metric if cart else None,
+            refine=refine if cart else None,
             invalidate=engine.invalidate,
             record_scenario=record_scenario,
         )
