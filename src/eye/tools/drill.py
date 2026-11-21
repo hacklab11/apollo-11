@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from eye.contracts import Contribution
 from eye.registry.engine import MetricEngine
-from eye.tools.identity import parse_identity
+from eye.tools.identity import parse_identity, ratio_sums
 
 
 class AttributionResult(BaseModel):
@@ -93,12 +93,9 @@ def mix_rate_split(
     base_end = base_end or end - timedelta(weeks=1)
     if end <= start or base_end <= base_start:
         raise ValueError("windows must have positive duration")
-    definition = engine._metric(ratio_metric, [*(segment or {}), dim])
-    if not engine._registry.has_den.get(ratio_metric):
-        raise ValueError("mix/rate requires a SQL metric with num and den")
 
     def pooled(a: datetime, b: datetime) -> dict[str, tuple[float, float]]:
-        sums = engine._sums(definition, a, b, segment or {}, [dim], by_ts=False)
+        sums = ratio_sums(engine, ratio_metric, a, b, segment or {}, [dim], by_ts=False)
         return {
             key[0]: (float(points[a][0] or 0), float(points[a][1] or 0))
             for key, points in sums.items()
