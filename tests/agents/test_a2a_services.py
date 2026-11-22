@@ -19,7 +19,12 @@ from agent_runtime import ModelPrice, PriceTable
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import PORTS, create_app
 from eye.config import LlmPrice, Settings
-from eye.contracts import AddMetricRequest, AddMetricResult, SentinelDecision
+from eye.contracts import (
+    AddMetricRequest,
+    AddMetricResult,
+    SentinelDecision,
+    SpecialistResponse,
+)
 from eye.contracts_v2 import (
     Budget,
     DetectRequest,
@@ -228,12 +233,25 @@ async def test_sentinel_watch_crosses_replicas(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("seller_available", [False, True])
 async def test_detective_delegates_and_reports(
     metadata: TaskMetadata,
     model: deque,
     warehouse: DataClient,
     monkeypatch: pytest.MonkeyPatch,
+    seller_available: bool,
 ) -> None:
+    specialist_calls = []
+
+    async def ask_specialist(self, agent, request):
+        specialist_calls.append((agent, request))
+        return SpecialistResponse(agent=agent, answered=seller_available, findings=[])
+
+    async def specialist_cards(self):
+        return {}
+
+    monkeypatch.setattr("eye.a2a_client.A2AClient.ask", ask_specialist)
+    monkeypatch.setattr("eye.a2a_client.A2AClient.fetch_cards", specialist_cards)
     skeptic_url = "http://skeptic:8230/"
     monkeypatch.setenv("EYE_SKEPTIC_URL", skeptic_url)
     settings = Settings()
@@ -330,8 +348,12 @@ async def test_detective_delegates_and_reports(
     assert all(
         not step.input and step.output is None for step in investigated.result.trail
     )
+    assert len(specialist_calls) == 1
+    assert specialist_calls[0][0] == "selleros"
+    assert specialist_calls[0][1].question == "Why did orders fall?"
     assert any(
-        step.tool == "selleros" and "unavailable" in step.output_summary
+        step.tool == "selleros"
+        and ("SellerOS:" if seller_available else "unavailable") in step.output_summary
         for step in investigated.result.trail
     )
     assert len(calls) == 1

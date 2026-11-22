@@ -23,7 +23,13 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from scripted_agents import ScriptedAgents
 
-from eye.api.app import MetricDefinition, create_app, human_actor
+from eye.api.app import (
+    IncidentDetail,
+    MetricDefinition,
+    UIStatus,
+    create_app,
+    human_actor,
+)
 from eye.config import Settings
 from eye.contracts import (
     AddMetricResult,
@@ -33,12 +39,11 @@ from eye.contracts import (
     Incident,
     MetricDef,
     SellerAlert,
-    SentinelDecision,
     Series,
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import AgentResult
+from eye.contracts_v2 import AgentResult, IncidentV2
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
@@ -133,6 +138,28 @@ def service(
             settings,
             orchestrator,
         )
+
+
+def test_ui_reads_v2_lifecycle_and_sanitized_exchange(service) -> None:
+    app, _, core = service
+    sample = make_incident_s7()
+    with TestClient(app) as client:
+        status = UIStatus.model_validate(client.get("/api/ui/status").json())
+        assert status.sim_ts == core.status().sim_ts
+        rows = client.get("/api/ui/incidents").json()
+        assert len(rows) == 1
+        listed = IncidentV2.model_validate(rows[0])
+        assert listed.root_cause is None and not listed.hypotheses
+        detail = IncidentDetail.model_validate(
+            client.get(f"/api/ui/incidents/{sample.id}").json()
+        )
+        assert detail.incident.root_cause == sample.root_cause
+        assert detail.incident.tenant_id == "default"
+        assert client.get("/api/ui/incidents/unknown").status_code == 404
+        sample.status = "resolved"
+        sample.resolved_ts = sample.updated_ts
+        core.incidents._save(sample)
+        assert client.get("/api/ui/incidents").json()[0]["status"] == "recovered"
 
 
 @pytest.mark.asyncio
@@ -331,10 +358,7 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
                 "expression": "orders / sessions",
             },
         )
-        assert all(
-            SentinelDecision.model_validate(item) for item in get("/api/anomalies")
-        )
-        assert get("/api/anomalies", since="2027-01-01T00:00:00Z") == []
+        assert client.get("/api/anomalies").status_code == 404
         (item,) = get("/api/incidents", status="open")
         sample = Incident.model_validate(item)
         assert not sample.hypotheses
@@ -348,10 +372,11 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         assert client.get("/api/demo/truth").status_code == 404
         settings.demo.show_truth = True
         assert client.get("/api/demo/truth").status_code == 404
-        assert client.get("/").status_code == 200
-        assert client.get("/web/app.js").status_code == 200
-        assert client.get("/app.js").status_code == 200
-        assert client.get("/styles.css").status_code == 200
+        assert client.get("/").status_code == 404
+        assert client.get("/web/app.js").status_code == 404
+        assert client.get("/app.js").status_code == 404
+        assert client.get("/styles.css").status_code == 404
+        assert client.post("/api/chat", json={"messages": []}).status_code == 404
         for path in (
             "/mock/status.json",
             "/web/mock/status.json",
@@ -501,8 +526,12 @@ def test_legacy_incident_statuses(
     ],
 )
 def test_human_actor(
-    person: str | None, header: str | None, expected: str | None
+    person: str | None,
+    header: str | None,
+    expected: str | None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("EYE_TRUST_PROXY_PERSON_HEADER", "1")
     request = Request(
         {
             "type": "http",
@@ -519,7 +548,10 @@ def test_human_actor(
         assert human_actor(request) == expected
 
 
-def test_human_control_routes(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
+def test_human_control_routes(
+    service: tuple[FastAPI, Settings, Orchestrator], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EYE_TRUST_PROXY_PERSON_HEADER", "1")
     app, _, core = service
     incident = core.incidents.all()[0]
     with TestClient(app) as client:

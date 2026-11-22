@@ -170,7 +170,7 @@ services:
       EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
       EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
       EYE_SELLER_REVERT_OPERATOR_TOKEN: ${EYE_SELLER_REVERT_OPERATOR_TOKEN:-}
-      EYE_TRUST_PROXY_PERSON_HEADER: ${EYE_TRUST_PROXY_PERSON_HEADER:-}
+      EYE_TRUST_PROXY_PERSON_HEADER: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -195,10 +195,20 @@ services:
       # Keep the original mount for existing incident and investigation history.
       - eye-data:/app/data
     networks: [eye, warehouse]
-    ports: ["127.0.0.1:${CORE_PORT:-8000-8009}:8000"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=2)"]
+
+  web:
+    build:
+      context: .
+      dockerfile: packages/web/Dockerfile
+    init: true
+    ports: ["127.0.0.1:${WEB_PORT:-8080}:8080"]
+    networks: [eye]
+    depends_on:
+      eye-core:
+        condition: service_healthy
 
   eye-mcp:
     <<: *service

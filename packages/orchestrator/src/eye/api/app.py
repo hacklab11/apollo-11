@@ -1,20 +1,18 @@
-"""Public HTTP API and static application."""
+"""Public HTTP API. The React application is served by the edge proxy."""
 
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from secrets import compare_digest
 from typing import Annotated, Protocol
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from eye.api import chat
 from eye.contracts import (
     AddMetricRequest,
     AddMetricResult,
@@ -25,7 +23,6 @@ from eye.contracts import (
     IncidentStatus,
     MetricDef,
     SellerAlert,
-    SentinelDecision,
     Series,
     SeriesPoint,
     TrailStep,
@@ -60,9 +57,22 @@ class ApprovalDecision(BaseModel):
     approve: bool
 
 
+class UIStatus(Status):
+    data_complete_ts: datetime | None
+
+
+class SellerExchange(BaseModel):
+    summary: str
+
+
+class IncidentDetail(BaseModel):
+    incident: IncidentV2
+    seller_exchange: list[SellerExchange]
+
+
 def human_actor(request: Request) -> str:
     actor = getattr(request.state, "person", None)
-    if actor is None:
+    if actor is None and os.environ.get("EYE_TRUST_PROXY_PERSON_HEADER") == "1":
         actor = request.headers.get("X-Eye-Person")
     if not isinstance(actor, str) or not actor.strip():
         raise HTTPException(401, "authenticated person required")
@@ -127,7 +137,6 @@ def create_app(
     registry: Registry | None,
     graph: Graph,
     engine: MetricEngine | None,
-    web_dir: Path = Path("web"),
     *,
     data: DataClient | None = None,
 ) -> FastAPI:
@@ -150,16 +159,6 @@ def create_app(
     @app.exception_handler(DataUnavailable)
     async def warehouse_unavailable(_: Request, exc: DataUnavailable) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=503)
-
-    app.include_router(
-        chat.create_router(
-            orchestrator.settings.llm,
-            os.environ.get(
-                "EYE_MCP_URL",
-                f"http://127.0.0.1:{orchestrator.settings.ports.mcp}/mcp",
-            ),
-        )
-    )
 
     def compare(
         name: str, start: datetime, end: datetime, segment: dict[str, str]
@@ -189,6 +188,50 @@ def create_app(
     @app.get("/api/status")
     async def status() -> Status:
         return orchestrator.status()
+
+    @app.get("/api/ui/status")
+    def ui_status() -> UIStatus:
+        return UIStatus(
+            **orchestrator.status().model_dump(),
+            data_complete_ts=queries.partitions().latest,
+        )
+
+    @app.get("/api/ui/incidents")
+    async def ui_incidents() -> list[IncidentV2]:
+        return [
+            orchestrator.incidents.as_v2(item).model_copy(
+                update={"root_cause": None, "hypotheses": []}
+            )
+            for item in orchestrator.incidents.all()
+            if item.merged_into is None
+        ]
+
+    @app.get("/api/ui/incidents/{id}")
+    async def ui_incident(id: str) -> IncidentDetail:
+        item = await incident(id)
+        exchange = [
+            SellerExchange(summary=step.output_summary)
+            for investigation_id in item.investigation_ids
+            for step in orchestrator.incidents.trail(investigation_id)
+            if step.action == "a2a_call" and step.tool == "selleros"
+        ]
+        for notification in item.notifications:
+            if notification.get("to") == "selleros":
+                actions = notification.get("ack", {}).get("actions_taken", [])
+                exchange.append(
+                    SellerExchange(
+                        summary=(
+                            "; ".join(actions)
+                            if actions
+                            else "SellerOS received the incident alert."
+                            if notification.get("ok")
+                            else "SellerOS delivery failed."
+                        )
+                    )
+                )
+        return IncidentDetail(
+            incident=orchestrator.incidents.as_v2(item), seller_exchange=exchange
+        )
 
     @app.get("/api/graph")
     def graph_view(
@@ -258,14 +301,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
-    @app.get("/api/anomalies")
-    async def anomalies(since: AwareDatetime | None = None) -> list[SentinelDecision]:
-        return [
-            item
-            for item in orchestrator.decisions
-            if since is None or item.anomaly.ts >= since
-        ]
-
     @app.get("/api/incidents")
     async def incidents(status: IncidentStatus | None = None) -> list[Incident]:
         return [
@@ -316,6 +351,20 @@ def create_app(
         if seller_revert_actor(request, credentials) is not None:
             return rows
         return [row for row in rows if row["tool_name"] != SELLER_REVERT_TOOL]
+
+    @app.get("/api/approvals/seller-revert")
+    async def seller_revert_approvals(
+        request: Request, credentials: Bearer
+    ) -> list[SellerRevertApproval]:
+        if seller_revert_actor(request, credentials) is None:
+            raise HTTPException(401, "authenticated person required")
+        return [
+            SellerRevertApproval.model_validate(
+                {key: row[key] for key in SellerRevertApproval.model_fields}
+            )
+            for row in orchestrator.control.approval_rows()
+            if row["tool_name"] == SELLER_REVERT_TOOL
+        ]
 
     def check_seller_revert_running(run_id: str) -> None:
         try:
@@ -461,16 +510,5 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-
-    @app.get("/", include_in_schema=False)
-    async def index() -> FileResponse:
-        return FileResponse(web_dir / "index.html")
-
-    @app.get("/web/{asset}", include_in_schema=False)
-    @app.get("/{asset}", include_in_schema=False)
-    async def web_asset(asset: str) -> FileResponse:
-        if asset not in {"app.js", "styles.css", "index.html"}:
-            raise HTTPException(404, "not found")
-        return FileResponse(web_dir / asset)
 
     return app

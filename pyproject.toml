@@ -40,6 +40,7 @@ package = false
 
 [tool.uv.workspace]
 members = ["packages/*", "sim"]
+exclude = ["packages/web"]
 
 [tool.uv.sources]
 agent-runtime = { workspace = true }
