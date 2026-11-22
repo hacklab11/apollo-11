@@ -1,11 +1,55 @@
 """W3C trace context propagation and run-level OTel spans and metrics."""
 
+import os
+import re
 from collections.abc import MutableMapping
 
+import logfire
+from logfire.types import StringValue
 from opentelemetry import metrics, propagate, trace
 from opentelemetry.context import Context
+from starlette.types import ASGIApp
 
 INSTRUMENTATION_NAME = "agent_runtime"
+_configured = False
+
+
+def redact_pii(item: StringValue) -> str:
+    value = re.sub(r"[\w.+-]{1,128}@[\w.-]{1,128}\.[A-Za-z]{2,}", "[email]", item.value)
+    return re.sub(r"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[phone]", value)
+
+
+def setup_telemetry() -> bool:
+    """Configure local OTLP export once; remain inert outside instrumented deployments."""
+    global _configured
+    if not os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT"):
+        return False
+    if not _configured:
+        logfire.configure(
+            send_to_logfire=False,
+            console=False,
+            distributed_tracing=True,
+            scrubbing=logfire.ScrubbingOptions(
+                extra_patterns=[
+                    r"(?:first|last|full|person|customer)[_. -]?name",
+                    "email",
+                    "phone",
+                ],
+                transform_string=redact_pii,
+            ),
+        )
+        logfire.instrument_pydantic_ai()
+        logfire.instrument_httpx()
+        _configured = True
+    return True
+
+
+def instrument_app(app: ASGIApp) -> ASGIApp:
+    """Instrument an ASGI boundary without capturing headers or request bodies."""
+    if setup_telemetry():
+        return logfire.instrument_asgi(app)
+    return app
+
 
 tracer = trace.get_tracer(INSTRUMENTATION_NAME)
 meter = metrics.get_meter(INSTRUMENTATION_NAME)

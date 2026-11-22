@@ -18,7 +18,6 @@ from a2a.utils.errors import A2AError
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Struct, Value
 from opentelemetry import propagate, trace
-from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
 
 from eye.config import A2aSettings
@@ -41,8 +40,7 @@ class AgentDirectory:
         self.transport = transport
         self.cards: dict[str, AgentCard] = {}
         self.urls: dict[str, str] = {}
-        self.provider = TracerProvider()
-        self.tracer = self.provider.get_tracer(__name__)
+        self.tracer = trace.get_tracer(__name__)
 
     async def resolve(self) -> None:
         cards: dict[str, AgentCard] = {}

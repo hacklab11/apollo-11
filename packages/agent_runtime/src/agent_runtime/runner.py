@@ -91,6 +91,7 @@ async def run_agent[T](
         status = outcome.result.status
         span.set_attribute("agent.end_state", status)
         span.set_attribute("agent.cost_usd", outcome.result.usage.cost_usd)
+        span.set_attribute("gen_ai.usage.cost", outcome.result.usage.cost_usd)
         if status in ("failed", "gave_up"):
             span.set_status(Status(StatusCode.ERROR, outcome.result.reason))
         end_state_counter.add(1, {"status": status})

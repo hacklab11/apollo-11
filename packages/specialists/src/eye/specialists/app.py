@@ -29,6 +29,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
 
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import Settings, load_settings
 from eye.contracts import SpecialistRequest, SpecialistResponse, TrailStep
 from eye.llm.runtime import AgentSpec, run_agent
@@ -196,9 +197,10 @@ def create_app(
 
 
 def main() -> None:
+    setup_telemetry()
     settings = load_settings()
     uvicorn.run(
-        create_app(settings),
+        instrument_app(create_app(settings)),
         host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=settings.ports.specialists,
         access_log=False,

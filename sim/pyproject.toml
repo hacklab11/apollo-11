@@ -13,6 +13,7 @@ dependencies = [
     "numpy==2.5.5",
     "pydantic==2.14.4",
     "pyyaml==6.0.4",
+    "agent-runtime",
 ]
 
 [project.scripts]
@@ -28,3 +29,4 @@ packages = ["src/eye"]
 [tool.uv.sources]
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
+agent-runtime = { workspace = true }

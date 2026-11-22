@@ -3,6 +3,7 @@ name = "eye-data"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "agent-runtime",
     "duckdb==2.0.1",
     "eye-contracts",
     "fastapi==0.165.0",
@@ -26,3 +27,4 @@ packages = ["src/eye"]
 
 [tool.uv.sources]
 eye-contracts = { workspace = true }
+agent-runtime = { workspace = true }

@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from agent_runtime import PriceTable
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.contracts_v2 import SELLER_REVERT_APPROVAL_METADATA_KEY
 from selleros.actions import receive_alert
 from selleros.agent import answer
@@ -146,8 +147,9 @@ def create_app(
 
 
 def main() -> None:
+    setup_telemetry()
     uvicorn.run(
-        create_app(),
+        instrument_app(create_app()),
         host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=8300,
         access_log=False,

@@ -9,6 +9,8 @@ x-service: &service
     EYE_BIND_HOST: 0.0.0.0
     EYE_CORE_URL: http://eye-core:8000
     EYE_MCP_URL: http://eye-mcp:8100/mcp
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
+    OTEL_METRIC_EXPORT_INTERVAL: "5000"
   volumes:
     - ./config/compose.yaml:/app/config/settings.yaml:ro
   networks: [eye]
@@ -22,6 +24,7 @@ x-health: &health
 x-agent: &agent
   <<: *service
   environment: &agent-environment
+    <<: *environment
     EYE_BIND_HOST: 0.0.0.0
     EYE_DATA_URL: http://eye-data:8150
   depends_on: &agent-dependencies
@@ -37,6 +40,19 @@ x-agent: &agent
       - "import os, urllib.parse, urllib.request; port = urllib.parse.urlsplit(os.environ['EYE_AGENT_URL']).port; urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2)"
 
 services:
+  lgtm:
+    image: grafana/otel-lgtm:0.22.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [eye, warehouse]
+    volumes:
+      - ./config/grafana/alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro
+    healthcheck:
+      <<: *health
+      test: [CMD-SHELL, "curl -fsS http://localhost:3000/api/health && curl -fsS http://localhost:13133/ready"]
   postgres:
     image: postgres:17
     environment:
@@ -55,6 +71,7 @@ services:
     command: [eye-sim, serve]
     environment:
       <<: *environment
+      OTEL_SERVICE_NAME: sim
       SIM_HOST: 0.0.0.0
       SIM_PORT: "8100"
       SIM_WORLD_DB: /app/data/world.duckdb
@@ -75,6 +92,8 @@ services:
     command: [eye-data]
     env_file: []
     environment:
+      <<: *environment
+      OTEL_SERVICE_NAME: eye-data
       EYE_DATA_HOST: 0.0.0.0
       SIM_LAKE_DIR: /app/data/lake
     depends_on:
@@ -91,6 +110,9 @@ services:
 
   eye-specialists:
     <<: *service
+    environment:
+      <<: *environment
+      OTEL_SERVICE_NAME: eye-specialists
     command: [eye-specialists]
     ports: ["127.0.0.1:${SPECIALISTS_PORT:-8200-8209}:8200"]
     healthcheck:
@@ -102,6 +124,7 @@ services:
     command: [eye-agent, sentinel]
     environment:
       <<: *agent-environment
+      OTEL_SERVICE_NAME: sentinel
       EYE_AGENT_URL: http://sentinel:8210/
 
   detective:
@@ -109,6 +132,7 @@ services:
     command: [eye-agent, detective]
     environment:
       <<: *agent-environment
+      OTEL_SERVICE_NAME: detective
       EYE_AGENT_URL: http://detective:8220/
       EYE_SKEPTIC_URL: http://skeptic:8230/
     depends_on:
@@ -121,12 +145,15 @@ services:
     command: [eye-agent, skeptic]
     environment:
       <<: *agent-environment
+      OTEL_SERVICE_NAME: skeptic
       EYE_AGENT_URL: http://skeptic:8230/
 
   reporter:
     <<: *agent
     command: [eye-agent, reporter]
     environment:
+      <<: *environment
+      OTEL_SERVICE_NAME: reporter
       EYE_BIND_HOST: 0.0.0.0
       EYE_AGENT_URL: http://reporter:8240/
     depends_on: {}
@@ -137,6 +164,7 @@ services:
     command: [eye-agent, cartographer]
     environment:
       <<: *agent-environment
+      OTEL_SERVICE_NAME: cartographer
       EYE_AGENT_URL: http://cartographer:8250/
       SIM_LAKE_DIR: /app/data/lake
     volumes:
@@ -148,6 +176,7 @@ services:
     command: [selleros]
     environment:
       <<: *environment
+      OTEL_SERVICE_NAME: selleros
       SELLEROS_URL: http://selleros:8300/
       SELLEROS_DATA_DIR: /app/packages/selleros/data
       EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
@@ -166,6 +195,7 @@ services:
     command: [eye-core]
     environment:
       <<: *environment
+      OTEL_SERVICE_NAME: eye-core
       EYE_DATA_URL: http://eye-data:8150
       EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
       EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
@@ -215,6 +245,7 @@ services:
     command: [eye-mcp]
     environment:
       <<: *environment
+      OTEL_SERVICE_NAME: eye-mcp
       EYE_MCP_ALLOWED_HOSTS: eye-mcp:8100
     depends_on:
       eye-core:

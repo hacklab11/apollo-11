@@ -11,6 +11,7 @@ from importlib import import_module
 import uvicorn
 from fastapi import FastAPI
 
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.api.app import create_app
 from eye.config import Settings, load_settings
 from eye.datasource import ServiceClock, open_source
@@ -80,13 +81,14 @@ def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[Fas
 
 
 def main() -> None:
+    setup_telemetry()
     logging.basicConfig(
         level=logging.WARNING, format="%(message)s", stream=sys.stdout, force=True
     )
     settings = load_settings()
     with core_app(settings, data_url=os.environ.get("EYE_DATA_URL")) as app:
         uvicorn.run(
-            app,
+            instrument_app(app),
             host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
             port=settings.ports.core,
             access_log=False,
