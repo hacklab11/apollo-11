@@ -3,24 +3,13 @@
 from datetime import UTC, datetime
 from typing import Any, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
-
 from agent_runtime.errors import DelegationRefused
+from eye.contracts_v2 import BUDGET_METADATA_KEY
+from eye.contracts_v2 import Budget as BudgetModel
 
-BUDGET_METADATA_KEY = "budget"
 
-
-class Budget(BaseModel):
+class Budget(BudgetModel):
     """What is left for a run and everything it delegates to."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    tokens: int = Field(ge=0)
-    cost_usd: float = Field(ge=0)
-    deadline: AwareDatetime
-    depth: int = Field(default=0, ge=0)
-    max_depth: int = Field(default=2, ge=0)
-    max_fan_out: int = Field(default=3, ge=1)
 
     def seconds_left(self, now: datetime | None = None) -> float:
         now = now or datetime.now(UTC)
