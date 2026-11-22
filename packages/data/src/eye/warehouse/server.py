@@ -51,7 +51,7 @@ class Warehouse:
 
     @contextmanager
     def snapshot(self) -> Iterator[LocalQueries]:
-        # The manifest-backed views and engine cache must change together.
+        # The landed snapshot and engine cache must change together.
         with self.lock:
             changed = self.landing is not None and self.landing.refresh()
             if self.queries is None or (

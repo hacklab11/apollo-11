@@ -79,6 +79,14 @@ def test_reads_only_published_hours_and_refreshes(tmp_path: Path, monkeypatch) -
             series = client.post("/v1/series", json=args.model_dump(mode="json"))
             assert series.status_code == 200, series.text
             assert [p["value"] for p in series.json()[0]["points"]] == [12]
+            publish_hour(writer, lake, TS, 13, manifest=False)
+            now[0] += 2
+            series = client.post("/v1/series", json=args.model_dump(mode="json"))
+            assert [p["value"] for p in series.json()[0]["points"]] == [12]
+            publish_hour(writer, lake, TS, 13)
+            now[0] += 2
+            series = client.post("/v1/series", json=args.model_dump(mode="json"))
+            assert [p["value"] for p in series.json()[0]["points"]] == [13]
             publish_hour(writer, lake, TS + HOUR, 23, loaded=0)
             now[0] += 2
             window = ops.PartitionWindow.model_validate(
@@ -89,10 +97,10 @@ def test_reads_only_published_hours_and_refreshes(tmp_path: Path, monkeypatch) -
                 "/v1/complete-hour", json={"ts": (TS + HOUR).isoformat()}
             )
             assert complete.json() is False
-            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(12.0,)]
+            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(13.0,)]
             publish_hour(writer, lake, TS + HOUR, 25)
             now[0] += 2
-            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(12.0,)]
+            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(13.0,)]
             window = ops.PartitionWindow.model_validate(
                 client.get("/v1/partitions").json()
             )

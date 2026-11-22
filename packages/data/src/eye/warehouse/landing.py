@@ -1,4 +1,4 @@
-"""Expose only manifest-published Parquet hours through DuckDB views."""
+"""Refresh a local DuckDB snapshot from manifest-published Parquet hours."""
 
 from datetime import UTC, datetime
 from pathlib import Path
@@ -6,7 +6,7 @@ from time import monotonic
 
 import duckdb
 
-from eye.schema import SCHEMA
+from eye.schema import SCHEMA, create_tables
 
 COMPLETE_HOURS = (
     "SELECT ts FROM partition_status GROUP BY ts "
@@ -24,8 +24,10 @@ class ParquetLanding:
     def __init__(self, root: Path, connection: duckdb.DuckDBPyConnection) -> None:
         self.root = root.resolve()
         self.connection = connection
-        self._manifests: dict[str, int] | None = None
+        self._manifests: dict[str, int] = {}
+        self._snapshot: tuple[str, int] | None = None
         self._last_refresh = float("-inf")
+        create_tables(connection)
 
     def refresh(self) -> bool:
         now = monotonic()
@@ -36,25 +38,46 @@ class ParquetLanding:
             self._last_refresh = now
             return False
 
-        hours = tuple(sorted(manifests))
-        # A manifest is the commit marker. Do not glob an individual fact table.
+        changed = sorted(
+            hour
+            for hour, stamp in manifests.items()
+            if self._manifests.get(hour) != stamp
+        )
+        replaced = (self._manifests.keys() - manifests.keys()) | (
+            self._manifests.keys() & changed
+        )
+        timestamps = [
+            datetime.strptime(hour, _HOUR_FORMAT).replace(tzinfo=UTC)
+            for hour in replaced
+        ]
+        # Copy on publication so queries do not rescan per-hour files or see
+        # new fact files before their manifest is replaced.
         self.connection.begin()
         try:
-            self._view("partition_status", hours)
+            for table in sorted(_HOURLY_TABLES):
+                if timestamps:
+                    self.connection.execute(
+                        f"DELETE FROM {table} WHERE ts IN (SELECT unnest(?))",
+                        [timestamps],
+                    )
+                self._insert(table, changed)
             [(latest,)] = self.connection.execute(
                 f"SELECT max(ts) FROM ({COMPLETE_HOURS})"
             ).fetchall()
-            snapshot = (
-                (latest.astimezone(UTC).strftime(_HOUR_FORMAT),) if latest else ()
-            )
-            for table in SCHEMA:
-                if table != "partition_status":
-                    self._view(table, hours if table in _HOURLY_TABLES else snapshot)
+            snapshot = None
+            if latest is not None:
+                hour = latest.astimezone(UTC).strftime(_HOUR_FORMAT)
+                snapshot = (hour, manifests[hour])
+            if snapshot != self._snapshot:
+                for table in SCHEMA.keys() - _HOURLY_TABLES:
+                    self.connection.execute(f"DELETE FROM {table}")
+                    self._insert(table, [snapshot[0]] if snapshot else [])
             self.connection.commit()
         except Exception:
             self.connection.rollback()
             raise
         self._manifests = manifests
+        self._snapshot = snapshot
         self._last_refresh = now
         return True
 
@@ -68,19 +91,12 @@ class ParquetLanding:
                     continue
         return manifests
 
-    def _view(self, table: str, hours: tuple[str, ...]) -> None:
+    def _insert(self, table: str, hours: list[str]) -> None:
         if hours:
             paths = [str(self.root / table / hour / "data.parquet") for hour in hours]
-            self.connection.read_parquet(paths, hive_partitioning=False).create_view(
-                table, replace=True
-            )
-        else:
-            fields = [
-                f"CAST(NULL AS {dtype}) AS {name}"
-                for name, dtype in (col.split() for col in SCHEMA[table].split(","))
-            ]
             self.connection.execute(
-                f"CREATE OR REPLACE VIEW {table} AS SELECT {', '.join(fields)} WHERE false"
+                f"INSERT INTO {table} BY NAME SELECT * FROM read_parquet(?, hive_partitioning=false)",
+                [paths],
             )
 
 
