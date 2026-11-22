@@ -1,6 +1,6 @@
 # Cartographer and graph refinement
 
-`packages/agents/src/eye/agents/cartographer.py` implements `refine_graph`;
+`packages/agents/src/eye/agents/cartographer.py` implements the A2A `map` skill;
 `service.py` exposes it over A2A. Graph storage/validation lives in `packages/data`.
 
 Cartographer dry-runs a metric definition against available data, proposes graph placement,
