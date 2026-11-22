@@ -29,7 +29,7 @@ export default function App() {
   const items = incidents.data ?? [];
   const selectedId = items.some((item) => item.id === selected)
     ? selected
-    : items[0]?.id;
+    : (items.find((item) => group(item) === "Open")?.id ?? items[0]?.id);
   const pending = new Set(
     approvals.data
       ?.filter((item) => item.status === "pending")
@@ -94,6 +94,12 @@ export default function App() {
               </span>
               <span className="text-xs">UTC</span>
             </>
+          ) : incidents.isError ? (
+            <p role="alert" className="empty-state">
+              Could not load incidents. Retrying automatically…
+            </p>
+          ) : incidents.isPending ? (
+            <p className="empty-state">Loading incidents…</p>
           ) : (
             "Connecting to the system…"
           )}

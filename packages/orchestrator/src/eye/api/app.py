@@ -197,7 +197,7 @@ def create_app(
         )
 
     @app.get("/api/ui/incidents")
-    def ui_incidents() -> list[IncidentV2]:
+    async def ui_incidents() -> list[IncidentV2]:
         return [
             orchestrator.incidents.as_v2(item).model_copy(
                 update={"root_cause": None, "hypotheses": []}
