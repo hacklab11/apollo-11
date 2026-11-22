@@ -631,18 +631,22 @@ name = "eye-llm"
 version = "0.1.0"
 source = { editable = "packages/llm" }
 dependencies = [
+    { name = "agent-runtime" },
     { name = "anthropic" },
     { name = "eye-contracts" },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "openai"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-runtime", editable = "packages/agent_runtime" },
     { name = "anthropic", specifier = "==2.12.0" },
     { name = "eye-contracts", editable = "packages/contracts" },
     { name = "httpx", specifier = "==0.28.1" },
     { name = "pydantic", specifier = "==2.14.4" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "openai"], specifier = "==2.66.0" },
 ]
 
 [[package]]

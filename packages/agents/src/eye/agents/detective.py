@@ -3,18 +3,30 @@
 import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import replace
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from inspect import isawaitable
 from itertools import count
 from math import fsum
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 from uuid import uuid4
 
 import duckdb
 from pydantic import AwareDatetime, BaseModel, Field
+from pydantic_ai import Agent, ModelRetry, RunContext, Tool
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import ModelResponse
+from pydantic_ai.models import Model, ModelRequestContext
 
+from agent_runtime import (
+    Budget,
+    KillSwitch,
+    RunLimits,
+    RunScope,
+    end_state_outputs,
+    run_agent,
+)
 from eye.a2a_client import A2AClient
 from eye.agents.investigation_tools import (
     _ControlInput,
@@ -43,7 +55,7 @@ from eye.contracts import (
 )
 from eye.contracts_v2 import IncidentV2, SkepticResult
 from eye.llm.client import BudgetExceeded, LLMUnavailable
-from eye.llm.runtime import AgentRefused, AgentSpec, ToolSpec, run_agent
+from eye.llm.models import PRICES, build_model
 from eye.registry.loader import Registry
 from eye.tools.drill import AttributionResult
 from eye.tools.models import (
@@ -59,6 +71,36 @@ from eye.warehouse.queries import DataQueries, LocalQueries
 
 _PROMPT = files("eye.llm").joinpath("prompts/detective.md")
 _WEEK = timedelta(weeks=1)
+
+
+@dataclass
+class _Deps:
+    investigation_id: str
+    emit: Callable[[TrailStep], Awaitable[None]]
+
+
+class _Trail(AbstractCapability[_Deps]):
+    async def after_model_request(
+        self,
+        ctx: RunContext[_Deps],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        await ctx.deps.emit(
+            TrailStep(
+                id=uuid4().hex,
+                investigation_id=ctx.deps.investigation_id,
+                n=0,
+                real_ts=datetime.now(UTC),
+                actor="detective",
+                action="llm_call",
+                output_summary="Model turn finished",
+                tokens_in=response.usage.input_tokens,
+                tokens_out=response.usage.output_tokens,
+            )
+        )
+        return response
 
 
 class _DrillInput(_MetricInput):
@@ -284,6 +326,8 @@ class Detective:
         llm: LlmSettings | None = None,
         data: DataQueries | None = None,
         review: SkepticReview | None = None,
+        model: Model | None = None,
+        kill_switch: KillSwitch | None = None,
     ) -> None:
         self._registry = registry
         self._graph = graph
@@ -296,6 +340,8 @@ class Detective:
             data = LocalQueries(con, registry, settings=self._freshness)
         self._data = data
         self._review = review
+        self._model = model
+        self._kill_switch = kill_switch
 
     def _metrics(self) -> dict[str, MetricDef]:
         if self._registry is not None:
@@ -436,6 +482,8 @@ class Detective:
         *,
         investigation_id: str | None = None,
         open_incidents: Iterable[Incident | IncidentV2] = (),
+        budget: Budget | None = None,
+        scope: RunScope | None = None,
     ) -> InvestigationResult:
         investigation_id = investigation_id or uuid4().hex
         window = _Window.from_anomaly(anomaly)
@@ -461,20 +509,53 @@ class Detective:
                     evidence_steps[reference] = step.id
             await on_step(step.model_copy(update={"n": trail_n}))
 
-        def cite(tool: ToolSpec) -> ToolSpec:
-            if not isinstance(self._data, LocalQueries):
-                tool = tool.offloaded()
-
-            async def invoke(args: BaseModel) -> BaseModel:
-                reference = f"ref-{next(references)}"
-                result = tool.fn(args)
-                output = await result if isawaitable(result) else result
-                summary = (
-                    f"{reference}: {output.model_dump(include={'summary'})['summary']}"
+        def tool(
+            name: str,
+            description: str,
+            input_model: type[BaseModel],
+            fn: Callable[..., Any],
+        ) -> Tool[_Deps]:
+            async def invoke(ctx: RunContext[_Deps], **kwargs: Any) -> BaseModel:
+                try:
+                    args = input_model.model_validate(kwargs)
+                    if not isinstance(
+                        self._data, LocalQueries
+                    ) and not asyncio.iscoroutinefunction(fn):
+                        result = await asyncio.to_thread(fn, args)
+                    else:
+                        result = fn(args)
+                    output = await result if isawaitable(result) else result
+                except (ValueError, KeyError) as exc:
+                    raise ModelRetry(str(exc)) from exc
+                if name != "update_hypotheses":
+                    reference = f"ref-{next(references)}"
+                    output = output.model_copy(
+                        update={"summary": f"{reference}: {output.summary}"[:300]}
+                    )
+                await ctx.deps.emit(
+                    TrailStep(
+                        id=uuid4().hex,
+                        investigation_id=ctx.deps.investigation_id,
+                        n=0,
+                        real_ts=datetime.now(UTC),
+                        actor="detective",
+                        action="tool_call",
+                        tool=name,
+                        input=args.model_dump(mode="json"),
+                        output=output.model_dump(mode="json"),
+                        output_summary=output.summary,
+                    )
                 )
-                return output.model_copy(update={"summary": summary[:300]})
+                return output
 
-            return replace(tool, fn=invoke)
+            return Tool.from_schema(
+                invoke,
+                name=name,
+                description=description,
+                json_schema=input_model.model_json_schema(),
+                takes_ctx=True,
+                sequential=True,
+            )
 
         async def record(
             action: Literal["note", "a2a_call", "decision"],
@@ -618,100 +699,6 @@ class Detective:
                 summary=f"{len(board)} hypotheses after {turns} Detective turns.",
             )
 
-        spec = AgentSpec(
-            name="detective",
-            system_prompt_file=str(_PROMPT),
-            tools=[
-                ToolSpec(
-                    "baseline_compare",
-                    "Measure against the seasonal baseline.",
-                    _MetricInput,
-                    common.baseline,
-                ),
-                ToolSpec(
-                    "drill_down",
-                    "Rank segments by contribution to the delta.",
-                    _DrillInput,
-                    drill,
-                ),
-                ToolSpec(
-                    "decompose",
-                    "Attribute the delta to formula components.",
-                    _MetricInput,
-                    formula,
-                ),
-                ToolSpec(
-                    "mix_rate_split",
-                    "Separate denominator mix shifts from rate changes.",
-                    _DrillInput,
-                    mix,
-                ),
-                ToolSpec(
-                    "compare_segments",
-                    "Compare a focus segment with a control.",
-                    _ControlInput,
-                    common.controls,
-                ),
-                ToolSpec(
-                    "first_change",
-                    "Find the first two consecutive anomalous hours per metric.",
-                    _ChangeInput,
-                    change,
-                ),
-                ToolSpec(
-                    "query_metric",
-                    "Read hourly series in the fixed current window.",
-                    _QueryInput,
-                    query,
-                ),
-                ToolSpec(
-                    "list_events",
-                    "Find change-log events and external status in the evidence window.",
-                    _EventsInput,
-                    common.events,
-                ),
-                ToolSpec(
-                    "check_freshness",
-                    "Check pipeline completeness in the fixed current window.",
-                    _MetricInput,
-                    common.freshness,
-                ),
-                ToolSpec(
-                    "get_graph",
-                    "Read incoming edges and cycles through the node.",
-                    _GraphInput,
-                    get_graph,
-                ),
-                ToolSpec(
-                    "ask_specialist",
-                    "Ask a matching A2A specialist one precise question.",
-                    _SpecialistInput,
-                    ask_specialist,
-                ),
-                ToolSpec(
-                    "ask_skeptic",
-                    "Have the Skeptic challenge a hypothesis on the current board.",
-                    _SkepticInput,
-                    ask_skeptic,
-                ),
-                ToolSpec(
-                    "update_hypotheses",
-                    "Replace the investigation hypothesis board.",
-                    _BoardInput,
-                    update_board,
-                ),
-            ],
-            submit_model=_Submission,
-            effort="high",
-            model=self._llm.model_for("detective"),
-            max_steps=self._settings.max_steps,
-            max_tokens=self._llm.max_tokens,
-            force_submit_on_final_turn=True,
-        )
-        spec.tools = [
-            cite(tool) if tool.name != "update_hypotheses" else tool
-            for tool in spec.tools
-        ]
         graph = await asyncio.to_thread(get_graph, _GraphInput())
         cards = await self._a2a.fetch_cards() if self._a2a is not None else {}
         active_incidents = [
@@ -742,13 +729,126 @@ class Detective:
         }
         stop: Literal["confirmed", "budget", "innocent", "data_issue", "error"]
         try:
-            answer = cast(
-                _Submission,
-                await run_agent(
-                    spec, json.dumps(payload, sort_keys=True), investigation_id, emit
-                ),
+            agent = Agent(
+                self._model or build_model(self._llm, "detective"),
+                name="detective",
+                system_prompt=_PROMPT.read_text(),
+                deps_type=_Deps,
+                output_type=end_state_outputs(_Submission),
+                capabilities=[_Trail()],
+                tools=[
+                    tool(
+                        "baseline_compare",
+                        "Measure against the seasonal baseline.",
+                        _MetricInput,
+                        common.baseline,
+                    ),
+                    tool(
+                        "drill_down",
+                        "Rank segments by contribution to the delta.",
+                        _DrillInput,
+                        drill,
+                    ),
+                    tool(
+                        "decompose",
+                        "Attribute the delta to formula components.",
+                        _MetricInput,
+                        formula,
+                    ),
+                    tool(
+                        "mix_rate_split",
+                        "Separate denominator mix shifts from rate changes.",
+                        _DrillInput,
+                        mix,
+                    ),
+                    tool(
+                        "compare_segments",
+                        "Compare a focus segment with a control.",
+                        _ControlInput,
+                        common.controls,
+                    ),
+                    tool(
+                        "first_change",
+                        "Find the first two consecutive anomalous hours per metric.",
+                        _ChangeInput,
+                        change,
+                    ),
+                    tool(
+                        "query_metric",
+                        "Read hourly series in the fixed current window.",
+                        _QueryInput,
+                        query,
+                    ),
+                    tool(
+                        "list_events",
+                        "Find change-log events and external status in the evidence window.",
+                        _EventsInput,
+                        common.events,
+                    ),
+                    tool(
+                        "check_freshness",
+                        "Check pipeline completeness in the fixed current window.",
+                        _MetricInput,
+                        common.freshness,
+                    ),
+                    tool(
+                        "get_graph",
+                        "Read incoming edges and cycles through the node.",
+                        _GraphInput,
+                        get_graph,
+                    ),
+                    tool(
+                        "ask_specialist",
+                        "Ask a matching A2A specialist one precise question.",
+                        _SpecialistInput,
+                        ask_specialist,
+                    ),
+                    tool(
+                        "ask_skeptic",
+                        "Have the Skeptic challenge a hypothesis on the current board.",
+                        _SkepticInput,
+                        ask_skeptic,
+                    ),
+                    tool(
+                        "update_hypotheses",
+                        "Replace the investigation hypothesis board.",
+                        _BoardInput,
+                        update_board,
+                    ),
+                ],
+                model_settings={
+                    "max_tokens": self._llm.max_tokens,
+                    **(
+                        {
+                            "anthropic_effort": "high",
+                            "anthropic_thinking": {"type": "adaptive"},
+                        }
+                        if self._llm.provider == "anthropic"
+                        else {}
+                    ),
+                },
             )
-        except (BudgetExceeded, LLMUnavailable, AgentRefused) as exc:
+            outcome = await run_agent(
+                agent,
+                json.dumps(payload, sort_keys=True),
+                scope=scope or RunScope(run_id=investigation_id, tenant_id="default"),
+                limits=RunLimits(max_steps=self._settings.max_steps),
+                prices=PRICES,
+                budget=budget,
+                deps=_Deps(investigation_id, emit),
+                kill_switch=self._kill_switch,
+            )
+            if outcome.result.status != "done":
+                reason = (
+                    outcome.result.reason
+                    or outcome.result.question
+                    or outcome.result.status
+                )
+                if outcome.result.status == "gave_up":
+                    raise BudgetExceeded(reason)
+                raise LLMUnavailable(reason)
+            answer = cast(_Submission, outcome.result.result)
+        except (BudgetExceeded, LLMUnavailable) as exc:
             stop = "budget" if isinstance(exc, BudgetExceeded) else "error"
             answer = _Submission(
                 verdict="HYPOTHESIS",
