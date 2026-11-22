@@ -26,6 +26,10 @@ Human mutations (kill/clear, approval decisions, recovered incident close) use
 The reverse proxy must strip untrusted values and supply the verified identity;
 requests without either identity return 401. Closing requires a note and a
 recovered incident; agents cannot close incidents.
+When SellerOS revert credentials are configured, approval and kill controls
+accept the operator bearer or an authenticated person. Set
+`EYE_TRUST_PROXY_PERSON_HEADER=1` only if clients cannot bypass a trusted
+identity-setting proxy to reach Core directly.
 
 ### Docker Compose (live stack or credential-free wave gate)
 

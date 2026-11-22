@@ -170,6 +170,7 @@ services:
       EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
       EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
       EYE_SELLER_REVERT_OPERATOR_TOKEN: ${EYE_SELLER_REVERT_OPERATOR_TOKEN:-}
+      EYE_TRUST_PROXY_PERSON_HEADER: ${EYE_TRUST_PROXY_PERSON_HEADER:-}
     depends_on:
       postgres:
         condition: service_healthy

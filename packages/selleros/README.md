@@ -20,7 +20,7 @@ With Compose, export these in the launch environment, not the shared `.env`.
 An operator reviews the exact offer and prices in `GET /api/approvals`, then
 uses `POST /api/approvals/{id}` with `{"approve": true}` to apply it. Both
 calls require the operator bearer credential or a trusted authenticated
-person; a caller-supplied identity header is not sufficient. SellerOS
+person; direct callers cannot supply their own identity header. SellerOS
 verifies the recorded human decision and current price at the tool boundary.
 Pending, rejected, unavailable or stale approvals cannot change prices.
 The simulator rechecks permission when consuming a queued revert, so a stop

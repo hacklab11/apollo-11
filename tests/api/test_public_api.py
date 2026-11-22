@@ -147,6 +147,7 @@ async def test_seller_revert_requires_exact_human_approval(
     service_token, operator_token = token_urlsafe(), token_urlsafe()
     monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", service_token)
     monkeypatch.setenv("EYE_SELLER_REVERT_OPERATOR_TOKEN", operator_token)
+    monkeypatch.delenv("EYE_TRUST_PROXY_PERSON_HEADER", raising=False)
     seller_client = {"Authorization": f"Bearer {service_token}"}
     operator = {"Authorization": f"Bearer {operator_token}"}
     api, settings, core = service
@@ -250,6 +251,11 @@ async def test_seller_revert_requires_exact_human_approval(
             await client.get(permission_url, headers=seller_client)
         ).status_code == 409
         (await client.delete("/api/kill", headers=operator)).raise_for_status()
+        with monkeypatch.context() as env:
+            env.setenv("EYE_TRUST_PROXY_PERSON_HEADER", "1")
+            proxy = {"X-Eye-Person": "proxy-verified-reviewer"}
+            (await client.post("/api/kill", headers=proxy)).raise_for_status()
+            (await client.delete("/api/kill", headers=proxy)).raise_for_status()
         if stale:
             assert not journal.exists()
         else:

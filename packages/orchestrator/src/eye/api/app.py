@@ -90,6 +90,10 @@ def seller_revert_actor(
         return actor
     if has_seller_revert_token(credentials, role="OPERATOR"):
         return "seller-revert-operator"
+    if os.environ.get("EYE_TRUST_PROXY_PERSON_HEADER") == "1":
+        actor = request.headers.get("X-Eye-Person")
+        if actor and actor.strip():
+            return actor
     return None
 
 
