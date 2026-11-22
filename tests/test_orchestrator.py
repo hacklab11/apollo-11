@@ -58,6 +58,19 @@ class Clock:
         self.now += HOUR
 
 
+def test_quickstart_pins_current_dbos_workflow_version() -> None:
+    root = Path(__file__).resolve().parents[1]
+    version = "eye-orchestrator-v2"
+    assert (
+        f"EYE_DBOS_APPLICATION_VERSION={version}\n"
+        in (root / ".env.example").read_text()
+    )
+    assert (
+        f"${{EYE_DBOS_APPLICATION_VERSION:-{version}}}"
+        in (root / "compose.yaml").read_text()
+    )
+
+
 @pytest.mark.parametrize("version", [None, "", "compatible-deploys-v2"])
 def test_pending_workflow_recovers_after_code_change(
     tmp_path: Path, version: str | None
