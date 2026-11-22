@@ -21,6 +21,7 @@ from eye.contracts import (
     AddMetricResult,
     Event,
     Incident,
+    InvestigationResult,
     SentinelDecision,
     TrailStep,
 )
@@ -437,6 +438,8 @@ class Orchestrator(DBOSConfiguredInstance):
                 incident.id,
             )
             if result is None:
+                incident = await self.finish_incomplete(incident)
+                self.emit("incident_upserted", incident)
                 continue
             self.save_trail(result.trail)
             incident = await self.upsert(result)
@@ -455,6 +458,24 @@ class Orchestrator(DBOSConfiguredInstance):
                 "incident_upserted",
                 self.incidents.get(incident.id),
             )
+
+    @DBOS.step()
+    async def finish_incomplete(self, incident: Incident) -> Incident:
+        return await self.incidents.upsert(
+            InvestigationResult(
+                investigation_id=incident.investigation_ids[-1],
+                entry=incident.entry,
+                verdict="HYPOTHESIS",
+                summary="Investigation did not complete; no cause confirmed.",
+                root_cause=None,
+                hypotheses=[],
+                contributions=[],
+                open_questions=[],
+                suggested_actions=[],
+                steps_used=len(self.incidents.trail(incident.investigation_ids[-1])),
+                stop_reason="error",
+            )
+        )
 
     @DBOS.step()
     async def upsert(self, result: InvestigateResult) -> Incident:

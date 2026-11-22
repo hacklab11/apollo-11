@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from factories import make_anomaly, make_trail_s7
 from scripted_agents import ScriptedAgents
 
@@ -204,3 +205,54 @@ async def test_non_success_and_empty_detection(tmp_path: Path, state: str) -> No
     finally:
         await core.close()
         store.close()
+
+
+@pytest_asyncio.fixture
+async def workflow(tmp_path: Path):
+    settings = Settings(sim={"autostart": False})
+    scripted = ScriptedAgents()
+    store = IncidentStore(":memory:")
+    core = Orchestrator(
+        settings,
+        Clock(),
+        store,
+        lambda *_: 0,
+        directory=scripted.directory(settings.a2a),
+        database_url=f"sqlite:///{tmp_path}/control.sqlite",
+    )
+    await core.start()
+    try:
+        yield core, scripted
+    finally:
+        await core.close()
+        store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhausted", [False, True])
+async def test_incomplete_investigation_leaves_pending_state(
+    workflow, exhausted: bool
+) -> None:
+    core, scripted = workflow
+    decision = SentinelDecision(
+        anomaly=make_anomaly().model_copy(update={"ts": core.sim.now}),
+        action="investigate",
+        reason="Investigate regression",
+    )
+    scripted.executors["detect"].result = AgentResult(
+        status="done",
+        result=DetectResult(decisions=[decision]),
+        usage=RunUsageSummary(input_tokens=core.settings.orchestrator.run_tokens)
+        if exhausted
+        else RunUsageSummary(),
+    )
+    await core.step_once()
+    (incident,) = core.incidents.all()
+    assert incident.status == "open"
+    assert incident.verdict == "HYPOTHESIS"
+    scripted.executors["detect"].result = AgentResult(
+        status="done", result=DetectResult(decisions=[])
+    )
+    for _ in range(core.incidents.settings.resolve_after_ticks):
+        await core.step_once()
+    assert core.incidents.get(incident.id).status == "resolved"
