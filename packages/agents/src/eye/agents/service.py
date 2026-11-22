@@ -10,7 +10,6 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Any
 
 import duckdb
 import httpx
@@ -19,12 +18,12 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
 from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
-from anthropic import AnthropicError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from agent_runtime import Budget, RunScope
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
 from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
@@ -41,7 +40,7 @@ from eye.contracts_v2 import (
     SkepticResult,
 )
 from eye.graph.store import GraphStore
-from eye.llm.client import LLMClient, configure_client, get_client
+from eye.llm.client import LLMClient, configure_client
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.warehouse.client import DataClient, RemoteGraph
@@ -176,36 +175,17 @@ def _report(settings: Settings) -> Skill[ReportRequest, ReportResult]:
     from eye.agents.reporter import Reporter
 
     async def report(request: ReportRequest, run: Run) -> ReportResult:
-        async def narrative(**args: Any) -> dict:
-            args["system"] = [{"type": "text", "text": args["system"]}]
-            schema = args["output_config"]["format"]["schema"]
-            for prop in schema["properties"].values():
-                prop.pop("minLength", None)
-                prop.pop("maxLength", None)
-            run.usage.requests += 1
-            try:
-                response = await get_client().create({**args, "tools": []})
-            except AnthropicError:
-                raise RuntimeError("Reporter model unavailable") from None
-            run.usage.input_tokens += (
-                response.usage.input_tokens
-                + (response.usage.cache_creation_input_tokens or 0)
-                + (response.usage.cache_read_input_tokens or 0)
-            )
-            run.usage.output_tokens += response.usage.output_tokens
-            run.check_tokens()
-            if response.stop_reason != "end_turn":
-                raise ValueError("Reporter did not finish the narrative")
-            return json.loads(
-                "".join(
-                    block.text for block in response.content if block.type == "text"
-                )
-            )
-
-        title, summary = await Reporter(narrative, settings=settings.llm).write(
-            request.investigation
+        reporter = Reporter(settings=settings.llm)
+        narrative = await reporter.write(
+            request.investigation,
+            scope=RunScope(
+                run_id=run.metadata.context_id, tenant_id=run.metadata.tenant_id
+            ),
+            budget=Budget.model_validate(run.metadata.budget.model_dump()),
         )
-        return ReportResult(title=title, summary=summary)
+        run.add_usage(narrative.usage)
+        run.check_tokens()
+        return ReportResult(title=narrative.title, summary=narrative.summary)
 
     return Skill(
         "report",

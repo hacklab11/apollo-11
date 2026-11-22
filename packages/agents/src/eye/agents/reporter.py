@@ -1,14 +1,26 @@
-"""Narrative generation with an injected structured-output LLM transport."""
+"""Grounded narrative generation through the shared agent runtime."""
 
 import json
+import logging
 import re
-from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from importlib.resources import files
-from typing import Any
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai import Agent, ModelRetry, RunContext
+from pydantic_ai.models import Model
 
+from agent_runtime import (
+    Budget,
+    RunLimits,
+    RunScope,
+    RunUsageSummary,
+    end_state_outputs,
+    run_agent,
+)
+from eye.agents.models import build_model, price_table
 from eye.config import LlmSettings
 from eye.contracts import InvestigationResult
 
@@ -19,6 +31,14 @@ class Narrative(BaseModel):
     summary: str = Field(min_length=1)
 
 
+@dataclass(frozen=True)
+class ReporterResult:
+    title: str
+    summary: str
+    usage: RunUsageSummary
+
+
+_LOG = logging.getLogger(__name__)
 _NUMBER = re.compile(r"(?<![\w])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 
@@ -29,12 +49,27 @@ def _numbers(text: str) -> set[Decimal]:
 class Reporter:
     def __init__(
         self,
-        llm: Callable[..., Awaitable[dict[str, Any] | Narrative]] | None = None,
+        model: Model | None = None,
         *,
         settings: LlmSettings | None = None,
     ) -> None:
-        self.llm = llm
         self.settings = settings or LlmSettings()
+        self.agent = Agent(
+            model or build_model(self.settings, "reporter"),
+            deps_type=set[Decimal],
+            instructions=files("eye.llm").joinpath("prompts/reporter.md").read_text(),
+            output_type=end_state_outputs(Narrative),
+            retries=1,
+            model_settings={"max_tokens": min(self.settings.max_tokens, 2048)},
+        )
+
+        @self.agent.output_validator
+        def grounded(ctx: RunContext[set[Decimal]], output: object) -> object:
+            if isinstance(output, Narrative) and not (
+                _numbers(output.title + " " + output.summary) <= ctx.deps
+            ):
+                raise ModelRetry("Use only the exact numbers supplied in the input.")
+            return output
 
     @staticmethod
     def template(result: InvestigationResult) -> tuple[str, str]:
@@ -48,42 +83,39 @@ class Reporter:
         )
         return title, summary
 
-    async def write(self, result: InvestigationResult) -> tuple[str, str]:
-        fallback = self.template(result)
-        if self.llm is None:
-            return fallback
+    async def write(
+        self,
+        result: InvestigationResult,
+        *,
+        scope: RunScope | None = None,
+        budget: Budget | None = None,
+    ) -> ReporterResult:
         payload = result.model_dump(mode="json")
         payload["display_numbers"] = {
             "delta_percent": result.entry.delta_pct * 100,
             "impact_eur_per_hour": result.entry.impact_eur_per_hour,
         }
         allowed = _numbers(json.dumps(payload))
-        prompt = (files("eye.llm").joinpath("prompts/reporter.md")).read_text()
-        messages = [{"role": "user", "content": json.dumps(payload)}]
-        for _ in range(2):
-            try:
-                response = await self.llm(
-                    model=self.settings.model_for("reporter"),
-                    max_tokens=self.settings.max_tokens,
-                    system=prompt,
-                    messages=messages,
-                    output_config={
-                        "effort": "medium",
-                        "format": {
-                            "type": "json_schema",
-                            "schema": Narrative.model_json_schema(),
-                        },
-                    },
-                )
-                narrative = Narrative.model_validate(response)
-                if _numbers(narrative.title + " " + narrative.summary) <= allowed:
-                    return narrative.title, narrative.summary
-            except (OSError, RuntimeError, ValueError, TypeError):
-                narrative = None
-            messages.append(
-                {
-                    "role": "user",
-                    "content": "The response was invalid or changed a number. Return the required title and summary using only the exact supplied numbers.",
-                }
+        outcome = await run_agent(
+            self.agent,
+            json.dumps(payload),
+            scope=scope or RunScope(run_id=str(uuid4()), tenant_id="default"),
+            limits=RunLimits(
+                max_steps=3, max_tool_calls=0, max_tokens=8192, max_wall_clock_s=30
+            ),
+            prices=price_table(self.settings),
+            budget=budget,
+            deps=allowed,
+        )
+        if outcome.result.status == "done":
+            narrative = outcome.result.result
+            return ReporterResult(
+                narrative.title, narrative.summary, outcome.result.usage
             )
-        return fallback
+        _LOG.warning(
+            "agent=reporter end_state=%s reason=%s",
+            outcome.result.status,
+            outcome.result.reason,
+        )
+        title, summary = self.template(result)
+        return ReporterResult(title, summary, outcome.result.usage)
