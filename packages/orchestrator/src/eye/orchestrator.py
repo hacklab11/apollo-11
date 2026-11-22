@@ -1,53 +1,59 @@
-"""Core clock, agent dispatch, and incident lifecycle."""
+"""Durable deterministic clock workflows; agents execute exclusively over A2A."""
 
 import asyncio
 import json
 import logging
+import os
 from collections import deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Literal, Protocol
 from uuid import uuid4
 
+from dbos import DBOS, DBOSConfiguredInstance, SetEnqueueOptions, SetWorkflowID
 from pydantic import BaseModel
 
-from eye.a2a_client import A2AClient
-from eye.agents.reporter import Reporter
 from eye.api.events import EventBus
 from eye.config import Settings
 from eye.contracts import (
     AddMetricRequest,
     AddMetricResult,
-    Anomaly,
     Event,
-    Incident,
-    InvestigationResult,
     SentinelDecision,
     TrailStep,
 )
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    Budget,
+    DetectRequest,
+    DetectResult,
+    InvestigateRequest,
+    InvestigateResult,
+    MapRequest,
+    ReportRequest,
+    ReportResult,
+    TaskMetadata,
+)
+from eye.control import ControlPlane, RunKilled
+from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient, LLMUnavailable, RunCallLimitExceeded
-from eye.warehouse.client import DataUnavailable
 
 HOUR = timedelta(hours=1)
 log = logging.getLogger(__name__)
-type StepSink = Callable[[TrailStep], Awaitable[None]]
-type Investigate = Callable[[Anomaly, StepSink], Awaitable[InvestigationResult]]
-type AddMetric = Callable[
-    [AddMetricRequest, Sequence[datetime], StepSink], Awaitable[AddMetricResult]
-]
-type Refine = Callable[[Sequence[datetime], StepSink], Awaitable[None]]
-type EventType = Literal[
-    "tick",
-    "anomaly",
-    "sentinel_decision",
-    "investigation_started",
-    "trail_step",
-    "investigation_finished",
-    "incident_upserted",
-    "graph_changed",
-    "agent_status",
-]
+
+
+def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> None:
+    log.warning(
+        json.dumps(
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "component": "orchestrator",
+                "event": event,
+                "incident_id": incident_id,
+                "error": type(exc).__name__,
+            }
+        )
+    )
 
 
 class ClockSource(Protocol):
@@ -56,12 +62,6 @@ class ClockSource(Protocol):
     live_start: datetime
 
     def step(self) -> None: ...
-
-
-class SentinelSource(Protocol):
-    async def run(
-        self, ts: datetime, *, open_incidents: Sequence[Incident], on_step: StepSink
-    ) -> list[SentinelDecision]: ...
 
 
 class AgentHealth(BaseModel):
@@ -87,128 +87,90 @@ class StepInProgress(Exception):
     pass
 
 
-def _log_error(event: str, exc: Exception, incident_id: str | None = None) -> None:
-    log.warning(
-        json.dumps(
-            {
-                "ts": datetime.now(UTC).isoformat(),
-                "component": "orchestrator",
-                "event": event,
-                "incident_id": incident_id,
-                "error": type(exc).__name__,
-                **(
-                    {"detail": str(exc)[:500]}
-                    if isinstance(exc, (LLMUnavailable, RunCallLimitExceeded))
-                    else {}
-                ),
-            }
-        )
-    )
-
-
-class Orchestrator:
+@DBOS.dbos_class()
+class Orchestrator(DBOSConfiguredInstance):
     def __init__(
         self,
         settings: Settings,
         sim: ClockSource,
-        sentinel: SentinelSource,
         incidents: IncidentStore,
-        llm: LLMClient,
         z_lookup: Callable[
             [str, dict[str, str], datetime], float | tuple[float, float]
         ],
         *,
-        a2a: A2AClient | None = None,
-        investigate: Investigate | None = None,
-        add_metric: AddMetric | None = None,
-        refine: Refine | None = None,
+        directory: AgentDirectory | None = None,
+        control: ControlPlane | None = None,
+        database_url: str | None = None,
         invalidate: Callable[[], None] = lambda: None,
     ) -> None:
-        self.settings = settings
-        self.sim = sim
-        self.sentinel = sentinel
-        self.incidents = incidents
-        self.llm = llm
-        self.z_lookup = z_lookup
-        self.a2a = a2a
-        self.investigate = investigate
-        self.add_metric = add_metric
-        self.refine = refine
+        super().__init__("orchestrator")
+        self.settings, self.sim, self.incidents, self.z_lookup = (
+            settings,
+            sim,
+            incidents,
+            z_lookup,
+        )
+        self.directory = directory or AgentDirectory(settings.a2a)
+        self.database_url = database_url or os.environ.get(
+            "EYE_DATABASE_URL", "sqlite:///data/control.sqlite"
+        )
+        self.control = control or ControlPlane(self.database_url)
         self.invalidate = invalidate
         self.events = EventBus()
-        self.decisions: deque[SentinelDecision] = deque(maxlen=2_000)
+        self.decisions: deque[SentinelDecision] = deque(maxlen=2000)
         self.tick = max(0, (sim.now - sim.live_start) // HOUR)
         self.sim_ts = sim.now - HOUR if self.tick else sim.now
         self.paused = not settings.sim.autostart
-        self._agents = {
-            name: AgentHealth(ok=False, url=getattr(settings.a2a, f"{name}_url"))
-            for name in ("growth", "marketplace", "discovery", "selleros")
-        }
-        self._clock: asyncio.Task[None] | None = None
-        self._live_step: asyncio.Task[None] | None = None
-        self._seed_refinement: asyncio.Task[None] | None = None
-        self._tick_lock = asyncio.Lock()
-        self._metric_lock = asyncio.Lock()
-        self._upsert_lock = asyncio.Lock()
-        self._tasks: set[asyncio.Task[None]] = set()
-        self._pending: deque[Incident] = deque()
-        self._lifecycle_retry: datetime | None = None
-        self._closing = False
+        self._clock: asyncio.Task | None = None
         self._stop = asyncio.Event()
+        self._pending: set[asyncio.Task] = set()
+        self._stepping = False
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._usage = {"calls": 0, "tokens_in": 0, "tokens_out": 0}
 
     def emit(
-        self, kind: EventType, payload: BaseModel | dict, ts: datetime | None = None
+        self, kind: str, payload: BaseModel | dict, ts: datetime | None = None
     ) -> None:
-        body = (
-            payload.model_dump(mode="json")
+        event = Event(
+            type=kind,
+            sim_ts=ts or self.sim_ts,
+            payload=payload.model_dump(mode="json")
             if isinstance(payload, BaseModel)
-            else payload
+            else payload,
         )
-        self.events.publish(Event(type=kind, sim_ts=ts or self.sim_ts, payload=body))
-
-    async def record_step(self, step: TrailStep, ts: datetime | None = None) -> None:
-        self.incidents.add_step(step)
-        self.emit("trail_step", step, ts)
-
-    async def refresh_agents(self) -> None:
-        if self.a2a is None:
-            return
-        for name, card in (await self.a2a.fetch_cards()).items():
-            health = AgentHealth(ok=card.healthy, url=card.url)
-            if health != self._agents[name]:
-                self._agents[name] = health
-                self.emit("agent_status", {"name": name, **health.model_dump()})
-
-    def agent_unavailable(self, name: str, _reason: str) -> None:
-        health = self._agents[name]
-        if health.ok:
-            self._agents[name] = health.model_copy(update={"ok": False})
-            self.emit("agent_status", {"name": name, **self._agents[name].model_dump()})
+        if self._loop is not None:
+            self._loop.call_soon_threadsafe(self.events.publish, event)
+        else:
+            self.events.publish(event)
 
     async def start(self) -> None:
-        if self.investigate is not None:
-            self._pending.extend(
-                item
-                for item in self._open_incidents()
-                if item.status == "investigating"
-            )
-        await self.refresh_agents()
-        if self.refine is not None and (
-            self._seed_refinement is None or self._seed_refinement.done()
-        ):
-            self._seed_refinement = asyncio.create_task(
-                self._refine_seeds(self.refine), name="causal-seed-refinement"
-            )
+        self._loop = asyncio.get_running_loop()
+        DBOS(
+            config={
+                "name": "eye-orchestrator",
+                "system_database_url": self.database_url,
+            }
+        )
+        await asyncio.to_thread(DBOS.launch)
+        self.queue = await asyncio.to_thread(
+            DBOS.register_queue,
+            "data-hours",
+            global_concurrency=self.settings.orchestrator.max_concurrent_investigations,
+            partition_concurrency=1,
+        )
+        await self.directory.resolve()
         if self.settings.sim.autostart:
             self.resume()
 
-    async def _refine_seeds(self, refine: Refine) -> None:
-        try:
-            # Both Cartographer jobs share the graph and their validation window.
-            async with self._metric_lock:
-                await refine(self.clean_hours(), self.record_step)
-        except Exception as exc:  # noqa: BLE001 -- isolate a failed background run
-            _log_error("seed_refinement_failed", exc)
+    async def close(self) -> None:
+        self.pause()
+        self._stop.set()
+        if self._clock:
+            await self._clock
+        if self._pending:
+            await asyncio.gather(*self._pending, return_exceptions=True)
+        await asyncio.to_thread(DBOS.destroy, workflow_completion_timeout_sec=30)
+        self.control.close()
 
     def pause(self) -> None:
         self.paused = True
@@ -218,295 +180,292 @@ class Orchestrator:
         if self._clock is None:
             self._clock = asyncio.create_task(self._run_clock())
 
-    async def close(self) -> None:
-        self._closing = True
-        self._stop.set()
-        self.pause()
-        if self._seed_refinement is not None:
-            self._seed_refinement.cancel()
-            await asyncio.gather(self._seed_refinement, return_exceptions=True)
-        if self._clock is not None:
-            await self._clock
-        if self._live_step is not None:
-            await self._live_step
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-        if self.a2a is not None:
-            await self.a2a.aclose()
-
     async def _run_clock(self) -> None:
-        interval = self.settings.sim.seconds_per_sim_hour
-        while not self._closing:
+        while not self._stop.is_set():
             try:
-                await asyncio.wait_for(self._stop.wait(), interval)
-                return
+                await asyncio.wait_for(
+                    self._stop.wait(), self.settings.sim.seconds_per_sim_hour
+                )
             except TimeoutError:
-                pass
-            if self._closing or self.paused:
-                continue
-            try:
-                if not all(agent.ok for agent in self._agents.values()):
-                    await self.refresh_agents()
-                await self._step(manual=False)
-            except Exception as exc:  # noqa: BLE001 -- preserve the clock after a failed tick
-                _log_error("tick_failed", exc)
+                if (
+                    not self.paused
+                    and not self._stepping
+                    and not (
+                        self._pending
+                        and self.settings.orchestrator.pause_sim_during_investigation
+                    )
+                ):
+                    try:
+                        await self.step_once(wait_for_analysis=False)
+                    except Exception as exc:  # noqa: BLE001 -- preserve the clock
+                        _log_error("clock_step_failed", exc)
 
     def status(self) -> Status:
-        usage = self.llm.status()
-        llm_stop = self.llm.terminal_error()
-        running = bool(self._clock and not self._clock.done())
         return Status(
             sim_ts=self.sim_ts,
             tick=self.tick,
-            running=running
-            and not self.paused
-            and not (
-                self.settings.orchestrator.pause_sim_during_investigation
-                and self._tasks
-            ),
+            running=not self.paused,
             paused=self.paused,
             llm_mode=self.settings.llm.mode,
-            llm_calls=int(usage["calls_per_hour"]),
-            tokens_in=int(usage["tokens_in"]),
-            tokens_out=int(usage["tokens_out"]),
-            agents=self._agents,
-            investigations_running=len(self._tasks),
-            llm_stop_reason=str(llm_stop) if llm_stop else None,
+            llm_calls=self._usage["calls"],
+            tokens_in=self._usage["tokens_in"],
+            tokens_out=self._usage["tokens_out"],
+            investigations_running=len(self._pending),
+            agents={
+                skill: AgentHealth(
+                    ok=skill in self.directory.cards,
+                    url=getattr(self.settings.a2a, f"{name}_url"),
+                )
+                for skill, name in (
+                    ("detect", "sentinel"),
+                    ("investigate", "detective"),
+                    ("report", "reporter"),
+                    ("map", "cartographer"),
+                )
+            },
         )
 
-    def clean_hours(self) -> list[datetime]:
-        start = self.sim.history_start
-        excluded = self.incidents.excluded_hours(self.sim.now)
-        hours = (start + i * HOUR for i in range((self.sim.now - start) // HOUR))
-        return [hour for hour in hours if hour not in excluded]
-
-    async def register_metric(self, request: AddMetricRequest) -> AddMetricResult:
-        if self.add_metric is None:
-            raise NotImplementedError
-        async with self._metric_lock:
-            return await self.add_metric(request, self.clean_hours(), self.record_step)
+    def _metadata(self, context_id: str) -> TaskMetadata:
+        settings = self.settings.orchestrator
+        return TaskMetadata(
+            tenant_id=DEFAULT_TENANT,
+            context_id=context_id,
+            traceparent=f"00-{uuid4().hex}-{uuid4().hex[:16]}-01",
+            budget=Budget(
+                tokens=settings.run_tokens,
+                cost_usd=settings.run_cost_usd,
+                deadline=datetime.now(UTC) + timedelta(seconds=settings.run_deadline_s),
+            ),
+        )
 
     async def step_once(self, *, wait_for_analysis: bool = True) -> Status:
-        """Advance one hour without starting the timer."""
-        if wait_for_analysis:
-            return await self._step(manual=True)
-        if self._live_step is not None and not self._live_step.done():
+        if self._stepping:
             raise StepInProgress("The previous clock step is still processing.")
-        advanced = asyncio.get_running_loop().create_future()
-        self._live_step = asyncio.create_task(self._run_live_step(advanced))
-        return await advanced
-
-    async def _run_live_step(self, advanced: asyncio.Future[Status]) -> None:
+        self._stepping = True
         try:
-            status = await self._step(manual=True, advanced=advanced)
-        except Exception as exc:  # noqa: BLE001 -- relay failures until the response is ready
-            if advanced.done():
-                _log_error("tick_failed", exc)
-            else:
-                advanced.set_exception(exc)
-        else:
-            if not advanced.done():
-                advanced.set_result(status)
-
-    async def _step(
-        self, *, manual: bool, advanced: asyncio.Future[Status] | None = None
-    ) -> Status:
-        async with self._tick_lock:
-            self._dispatch()
-            if manual:
-                while self._tasks:
-                    await asyncio.gather(*self._tasks, return_exceptions=True)
-            elif self.paused or (
-                self.settings.orchestrator.pause_sim_during_investigation
-                and self._tasks
-            ):
-                return self.status()
             ts = self.sim.now
             await asyncio.to_thread(self.sim.step)
             if self.sim.now == ts:
-                if self._lifecycle_retry is not None:
-                    self._update_incidents(self.sim_ts)
                 return self.status()
             self.invalidate()
-            self.sim_ts = ts
-            self.tick += 1
+            self.sim_ts, self.tick = ts, self.tick + 1
             self.emit("tick", {"tick": self.tick})
-            if advanced is not None and not advanced.done():
-                advanced.set_result(self.status())
-            decisions = []
-            if self.llm.terminal_error() is None:
-                try:
-                    decisions = await self.sentinel.run(
-                        ts,
-                        open_incidents=self._open_incidents(),
-                        on_step=self.record_step,
-                    )
-                except Exception as exc:  # noqa: BLE001 -- lifecycle must still run
-                    _log_error("sentinel_failed", exc)
-
-            for decision in decisions:
-                self.decisions.append(decision)
-                self.emit("anomaly", decision.anomaly)
-                self.emit("sentinel_decision", decision)
-                self._match(decision)
-            self._dispatch()
-            if manual:
-                while self._tasks:
-                    await asyncio.gather(*self._tasks, return_exceptions=True)
-            self._update_incidents(ts)
+            run_id = f"hour-{DEFAULT_TENANT}-{ts.isoformat()}"
+            with (
+                SetWorkflowID(run_id),
+                SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
+            ):
+                handle = await self.queue.enqueue_async(
+                    self.run_hour, run_id, ts, self._metadata(run_id)
+                )
+            task = asyncio.create_task(handle.get_result())
+            self._pending.add(task)
+            task.add_done_callback(self._pending.discard)
+            if wait_for_analysis:
+                await task
             return self.status()
+        finally:
+            self._stepping = False
 
-    def _update_incidents(self, ts: datetime) -> None:
-        hour = self._lifecycle_retry or ts
-        # Replay at most one extra hour per poll; the store skips completed updates.
-        for _ in range(2):
-            if hour > ts:
-                break
-            try:
-                for incident in self.incidents.lifecycle(hour, self.z_lookup):
-                    self.emit("incident_upserted", incident, hour)
-            except DataUnavailable as exc:
-                _log_error("incident_lifecycle_unavailable", exc)
-                break
-            hour += HOUR
-        self._lifecycle_retry = hour if hour <= ts else None
+    @DBOS.step()
+    async def agent_call(
+        self,
+        run_id: str,
+        skill: str,
+        payload: BaseModel,
+        metadata: TaskMetadata,
+        result_type: type[BaseModel],
+        incident_id: str | None = None,
+    ) -> tuple[BaseModel | None, TaskMetadata]:
+        self.control.check(run_id, metadata.tenant_id)
+        budget = metadata.budget
+        if (
+            budget.tokens <= 0
+            or budget.cost_usd <= 0
+            or datetime.now(UTC) >= budget.deadline
+        ):
+            self.control.audit(
+                actor="orchestrator",
+                action="budget_exhausted",
+                run_id=run_id,
+                agent=skill,
+            )
+            return None, metadata
+        try:
+            result = await self.directory.call(skill, payload, metadata, result_type)
+        except Exception as exc:  # noqa: BLE001 -- an unavailable agent must not stop lifecycle
+            self.control.audit(
+                actor="orchestrator",
+                action="agent_error",
+                run_id=run_id,
+                incident_id=incident_id,
+                agent=skill,
+                detail={"error": type(exc).__name__},
+            )
+            log.warning("A2A %s failed: %s", skill, type(exc).__name__)
+            return None, metadata
+        self._usage["calls"] += result.usage.requests
+        self._usage["tokens_in"] += result.usage.input_tokens
+        self._usage["tokens_out"] += result.usage.output_tokens
+        metadata = metadata.model_copy(
+            update={
+                "budget": budget.model_copy(
+                    update={
+                        "tokens": max(0, budget.tokens - result.usage.total_tokens),
+                        "cost_usd": max(0, budget.cost_usd - result.usage.cost_usd),
+                    }
+                )
+            }
+        )
+        self.control.audit(
+            actor="orchestrator",
+            action=f"agent_{result.status}",
+            run_id=run_id,
+            incident_id=incident_id,
+            agent=skill,
+            detail={"usage": result.usage.model_dump()},
+        )
+        if result.status == "needs_input":
+            for approval in result.pending_approvals:
+                self.control.pending(
+                    run_id, incident_id, approval.tool_name, approval.args
+                )
+            if not result.pending_approvals:
+                self.control.pending(
+                    run_id, incident_id, "human_input", {"question": result.question}
+                )
+        elif result.status != "done":
+            log.warning("A2A %s ended %s", skill, result.status)
+        return result.result if result.status == "done" else None, metadata
 
-    def _open_incidents(self) -> list[Incident]:
+    @DBOS.step()
+    def _open_incidents(self) -> list:
         return [
-            item
+            self.incidents.as_v2(item)
             for item in self.incidents.all()
             if item.merged_into is None
-            and item.status in {"investigating", "open", "persisting"}
+            and self.incidents.as_v2(item).status not in {"recovered", "closed"}
         ]
 
-    def _match(self, decision: SentinelDecision) -> None:
-        if decision.action == "attach" and decision.attach_to_incident:
-            item = self.incidents.get(decision.attach_to_incident)
-            if (
-                item
-                and item.merged_into is None
-                and item.status in {"investigating", "open", "persisting"}
-            ):
-                item.occurrences += 1
-                item.last_seen_ts = item.updated_ts = decision.anomaly.ts
-                self.incidents._save(item)
-                self.emit("incident_upserted", item)
-        elif (
-            decision.action == "investigate"
-            and self.investigate is not None
-            and not self.llm.status()["budget_paused"]
-        ):
-            item = self.incidents.match(decision)
-            if item is not None:
-                self.emit("incident_upserted", item)
-                if (
-                    item.status == "investigating"
-                    and item.entry.id == decision.anomaly.id
-                    and item.occurrences == 1
-                ):
-                    self._pending.append(item)
+    @DBOS.step()
+    def save_trail(self, steps: list[TrailStep]) -> None:
+        for step in steps:
+            self.incidents.add_step(step)
+            self.emit("trail_step", step)
 
-    def _dispatch(self) -> None:
-        limit = self.settings.orchestrator.max_concurrent_investigations
-        while (
-            self._pending
-            and len(self._tasks) < limit
-            and not self._closing
-            and not self.llm.status()["budget_paused"]
-        ):
-            item = self._pending.popleft()
-            task = asyncio.create_task(self._run_investigation(item))
-            self._tasks.add(task)
+    @DBOS.step()
+    def previous_decisions(self, ts: datetime) -> list[SentinelDecision]:
+        return [item for item in self.decisions if item.anomaly.ts == ts - HOUR]
 
-    async def _run_investigation(self, item: Incident) -> None:
+    @DBOS.workflow()
+    async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
         try:
-            await self._investigate(item)
-        except Exception as exc:  # noqa: BLE001 -- remaining investigations must still run
-            _log_error("incident_upsert_failed", exc, item.id)
-        finally:
-            task = asyncio.current_task()
-            assert task is not None
-            self._tasks.remove(task)
-            self._dispatch()
-
-    async def _investigate(self, item: Incident) -> None:
-        assert self.investigate is not None
-        entry = item.entry
-        current = self.incidents.get(item.id)
-        assert current is not None
-        if current.investigation_ids:
-            investigation_id = current.investigation_ids[-1]
-        else:
-            investigation_id = f"inv_{uuid4().hex}"
-            current.investigation_ids.append(investigation_id)
-            self.incidents._save(current)
-        step_offset = max(
-            (step.n for step in self.incidents.trail(investigation_id)), default=0
-        )
-        self.emit(
-            "investigation_started",
-            {
-                "incident_id": item.id,
-                "investigation_id": investigation_id,
-                "anomaly": entry.model_dump(mode="json"),
-            },
-            entry.ts,
-        )
-
-        async def on_step(step: TrailStep) -> None:
-            await self.record_step(
-                step.model_copy(
-                    update={
-                        "investigation_id": investigation_id,
-                        "n": step_offset + step.n,
-                    }
+            detected, metadata = await self.agent_call(
+                run_id,
+                "detect",
+                DetectRequest(
+                    ts=ts,
+                    open_incidents=self._open_incidents(),
+                    previous_decisions=self.previous_decisions(ts),
                 ),
-                entry.ts,
+                metadata,
+                DetectResult,
+            )
+            if detected is not None:
+                await self._process_decisions(run_id, detected, metadata)
+            self.update_lifecycle(ts)
+        except RunKilled:
+            self.control.audit(actor="orchestrator", action="run_killed", run_id=run_id)
+
+    async def _process_decisions(
+        self, run_id: str, detected: DetectResult, metadata: TaskMetadata
+    ) -> None:
+        self.save_trail(detected.trail)
+        for decision in detected.decisions:
+            self.decisions.append(decision)
+            self.emit("anomaly", decision.anomaly)
+            self.emit("sentinel_decision", decision)
+            if decision.action != "investigate":
+                continue
+            incident = self.incidents.match(decision)
+            if incident is None:
+                continue
+            metadata = metadata.model_copy(update={"context_id": incident.id})
+            self.emit(
+                "investigation_started",
+                {
+                    "incident_id": incident.id,
+                    "anomaly": decision.anomaly.model_dump(mode="json"),
+                },
+            )
+            result, metadata = await self.agent_call(
+                run_id,
+                "investigate",
+                InvestigateRequest(
+                    anomaly=decision.anomaly,
+                    investigation_id=incident.investigation_ids[-1]
+                    if incident.investigation_ids
+                    else None,
+                    open_incidents=self._open_incidents(),
+                ),
+                metadata,
+                InvestigateResult,
+                incident.id,
+            )
+            if result is None:
+                continue
+            self.save_trail(result.trail)
+            incident = await self.upsert(result)
+            report, metadata = await self.agent_call(
+                run_id,
+                "report",
+                ReportRequest(investigation=result.investigation),
+                metadata,
+                ReportResult,
+                incident.id,
+            )
+            if report is not None:
+                self.save_report(incident.id, report)
+            self.emit("investigation_finished", result.investigation)
+            self.emit(
+                "incident_upserted",
+                self.incidents.as_v2(self.incidents.get(incident.id)),
             )
 
-        failure = None
-        try:
-            result = await self.investigate(entry, on_step)
-        except Exception as exc:  # noqa: BLE001 -- preserve and expose the investigation trail
-            _log_error("investigation_failed", exc, item.id)
-            failure = f"investigation failed: {type(exc).__name__}"
-            result = InvestigationResult(
-                investigation_id=investigation_id,
-                entry=entry,
-                verdict="HYPOTHESIS",
-                summary=failure,
-                root_cause=None,
-                hypotheses=[],
-                contributions=[],
-                open_questions=[],
-                suggested_actions=[],
-                steps_used=len(self.incidents.trail(investigation_id)),
-                stop_reason="error",
-            )
-        result = result.model_copy(
-            update={"investigation_id": investigation_id, "entry": entry}
+    @DBOS.step()
+    async def upsert(self, result: InvestigateResult):
+        return await self.incidents.upsert(result.investigation)
+
+    @DBOS.step()
+    def save_report(self, incident_id: str, report: ReportResult) -> None:
+        incident = self.incidents.get(incident_id)
+        incident.title, incident.summary = report.title, report.summary
+        self.incidents._save(incident)
+
+    @DBOS.step()
+    def update_lifecycle(self, ts: datetime) -> None:
+        for incident in self.incidents.lifecycle(ts, self.z_lookup):
+            self.emit("incident_upserted", self.incidents.as_v2(incident), ts)
+
+    @DBOS.workflow()
+    async def map_metric(
+        self, run_id: str, request: AddMetricRequest, metadata: TaskMetadata
+    ) -> AddMetricResult:
+        result, _ = await self.agent_call(
+            run_id, "map", MapRequest(metric=request), metadata, AddMetricResult
         )
-        self.emit("investigation_finished", result, entry.ts)
-        async with self._upsert_lock:
-            reporter = self.incidents.reporter
-            narrative = await (reporter or Reporter().write)(result)
+        if result is None:
+            raise ValueError("Cartographer did not complete the request")
+        self.emit("graph_changed", {})
+        return result
 
-            async def prepared_narrative(_: InvestigationResult) -> tuple[str, str]:
-                return narrative
-
-            # Upsert must read its snapshot after the asynchronous narrative call.
-            current = self.incidents.get(item.id)
-            assert current is not None
-            self.incidents.reporter = prepared_narrative
-            try:
-                incident = await self.incidents.upsert(result)
-            finally:
-                self.incidents.reporter = reporter
-            if current.last_seen_ts > incident.last_seen_ts:
-                incident.last_seen_ts = current.last_seen_ts
-                incident.updated_ts = max(incident.updated_ts, incident.last_seen_ts)
-                self.incidents._save(incident)
-            if failure is not None:
-                incident.summary = failure
-                self.incidents._save(incident)
-        self.emit("incident_upserted", incident, entry.ts)
+    async def register_metric(self, request: AddMetricRequest) -> AddMetricResult:
+        run_id = f"map-{uuid4().hex}"
+        with (
+            SetWorkflowID(run_id),
+            SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
+        ):
+            handle = await self.queue.enqueue_async(
+                self.map_metric, run_id, request, self._metadata(run_id)
+            )
+        return await handle.get_result()

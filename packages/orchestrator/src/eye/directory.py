@@ -61,7 +61,7 @@ class AgentDirectory:
         with self.tracer.start_as_current_span(
             f"agent.{skill}", context=parent, kind=trace.SpanKind.CLIENT
         ):
-            headers: dict[str, str] = {}
+            headers: dict[str, str] = {"A2A-Version": "1.0"}
             propagate.inject(headers)
             metadata = metadata.model_copy(
                 update={"traceparent": headers["traceparent"]}

@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import duckdb
 
-from eye.agents.reporter import Reporter
 from eye.config import ReporterSettings
 from eye.contracts import (
     Anomaly,
@@ -18,6 +17,7 @@ from eye.contracts import (
     SentinelDecision,
     TrailStep,
 )
+from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure, IncidentV2
 
 OPS_DB = Path("data/ops.duckdb")
 
@@ -59,6 +59,9 @@ class IncidentStore:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS trail_steps (id VARCHAR PRIMARY KEY, investigation_id VARCHAR, step JSON)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS incident_closures (id VARCHAR PRIMARY KEY, closure JSON)"
+        )
         self.path_exists = path_exists
         self.reporter = reporter
         self.notify = notify
@@ -66,6 +69,41 @@ class IncidentStore:
 
     def close(self) -> None:
         self.db.close()
+
+    def as_v2(self, incident: Incident) -> IncidentV2:
+        data = incident.model_dump(exclude={"normal_ticks", "resolved_ts"})
+        data.update(
+            tenant_id=DEFAULT_TENANT,
+            context_id=incident.id,
+            recovered_ts=incident.resolved_ts,
+        )
+        data["status"] = {
+            "persisting": "mitigating",
+            "resolved": "recovered",
+            "deferred": "open",
+            "innocent": "open",
+        }.get(incident.status, incident.status)
+        closure = self.db.execute(
+            "SELECT closure FROM incident_closures WHERE id = ?", [incident.id]
+        ).fetchone()
+        if closure:
+            data.update(
+                status="closed", closure=IncidentClosure.model_validate_json(closure[0])
+            )
+        return IncidentV2.model_validate(data)
+
+    def human_close(self, incident_id: str, closure: IncidentClosure) -> IncidentV2:
+        incident = self.get(incident_id)
+        if incident is None:
+            raise ValueError("unknown incident")
+        current = self.as_v2(incident)
+        if current.tenant_id != closure.tenant_id or current.status != "recovered":
+            raise ValueError("only a recovered incident in this tenant can be closed")
+        self.db.execute(
+            "INSERT INTO incident_closures VALUES (?, ?)",
+            [incident_id, closure.model_dump_json()],
+        )
+        return self.as_v2(incident)
 
     def all(self) -> list[Incident]:
         return [
@@ -316,7 +354,11 @@ class IncidentStore:
         if item is None:
             item = self._new(result.entry)
         assert item is not None
-        title, summary = await (self.reporter or Reporter().write)(result)
+        title, summary = (
+            await self.reporter(result)
+            if self.reporter
+            else (f"{result.entry.metric}: {result.verdict}"[:89], result.summary)
+        )
         item.fingerprint = final
         item.title, item.summary = title, summary
         item.status = {"INNOCENT": "innocent", "DATA_ISSUE": "deferred"}.get(

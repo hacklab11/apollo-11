@@ -3,14 +3,14 @@
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Protocol
 
 import duckdb
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import AwareDatetime, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from eye.api import chat
 from eye.contracts import (
@@ -19,13 +19,18 @@ from eye.contracts import (
     Dimension,
     Edge,
     GraphView,
-    Incident,
-    IncidentStatus,
     MetricDef,
     SentinelDecision,
     Series,
     SeriesPoint,
     TrailStep,
+)
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    IncidentCloseRequest,
+    IncidentClosure,
+    IncidentStatus,
+    IncidentV2,
 )
 from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
@@ -38,6 +43,18 @@ from eye.warehouse.queries import LocalQueries
 
 _SEGMENT = TypeAdapter(dict[Dimension, str])
 _PARAMS = TypeAdapter(dict)
+
+
+class ApprovalDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    approve: bool
+
+
+def human_actor(request: Request) -> str:
+    actor = getattr(request.state, "person", None)
+    if not isinstance(actor, str) or not actor.strip():
+        raise HTTPException(401, "authenticated person required")
+    return actor
 
 
 class Graph(Protocol):
@@ -201,19 +218,93 @@ def create_app(
         ]
 
     @app.get("/api/incidents")
-    async def incidents(status: IncidentStatus | None = None) -> list[Incident]:
+    async def incidents(status: IncidentStatus | None = None) -> list[IncidentV2]:
         return [
             item.model_copy(update={"root_cause": None, "hypotheses": []})
-            for item in orchestrator.incidents.all()
+            for raw in orchestrator.incidents.all()
+            for item in [orchestrator.incidents.as_v2(raw)]
             if item.merged_into is None and (status is None or item.status == status)
         ]
 
     @app.get("/api/incidents/{id}")
-    async def incident(id: str) -> Incident:
+    async def incident(id: str) -> IncidentV2:
         item = orchestrator.incidents.get(id)
         if item is None:
             raise HTTPException(404, "unknown incident")
+        return orchestrator.incidents.as_v2(item)
+
+    @app.post("/api/incidents/{id}/close")
+    async def close_incident(
+        id: str, request: IncidentCloseRequest, actor: str = Depends(human_actor)
+    ) -> IncidentV2:
+        try:
+            item = orchestrator.incidents.human_close(
+                id,
+                IncidentClosure(
+                    tenant_id=request.tenant_id,
+                    closed_by=actor,
+                    note=request.note,
+                    closed_ts=datetime.now(UTC),
+                ),
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        orchestrator.control.audit(
+            actor=actor,
+            action="incident_closed",
+            incident_id=id,
+            detail={"note": request.note},
+        )
+        orchestrator.emit("incident_upserted", item)
         return item
+
+    @app.get("/api/audit")
+    async def audit() -> list[dict]:
+        return orchestrator.control.audit_rows()
+
+    @app.get("/api/approvals")
+    async def approvals() -> list[dict]:
+        return orchestrator.control.approval_rows()
+
+    @app.post("/api/approvals/{id}")
+    async def decide_approval(
+        id: str, decision: ApprovalDecision, actor: str = Depends(human_actor)
+    ) -> dict:
+        try:
+            orchestrator.control.decide(id, decision.approve, actor)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"id": id, "approved": decision.approve}
+
+    @app.post("/api/runs/{id}/kill")
+    async def kill_run(id: str, actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("run", id, True, actor)
+        return {"active": True}
+
+    @app.delete("/api/runs/{id}/kill")
+    async def clear_run(id: str, actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("run", id, False, actor)
+        return {"active": False}
+
+    @app.post("/api/tenants/{id}/kill")
+    async def kill_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("tenant", id, True, actor)
+        return {"active": True}
+
+    @app.delete("/api/tenants/{id}/kill")
+    async def clear_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("tenant", id, False, actor)
+        return {"active": False}
+
+    @app.post("/api/kill")
+    async def kill_system(actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("system", DEFAULT_TENANT, True, actor)
+        return {"active": True}
+
+    @app.delete("/api/kill")
+    async def clear_system(actor: str = Depends(human_actor)) -> dict:
+        orchestrator.control.set_kill("system", DEFAULT_TENANT, False, actor)
+        return {"active": False}
 
     @app.get("/api/incidents/{id}/trail")
     async def trail(id: str) -> list[TrailStep]:
