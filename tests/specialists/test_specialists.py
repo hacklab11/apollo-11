@@ -9,7 +9,6 @@ from google.protobuf.json_format import MessageToDict
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
     ModelResponse,
-    RetryPromptPart,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -166,7 +165,12 @@ async def test_invalid_tool_arguments_are_retried(
             args = {} if not invalid else {**valid, **invalid}
             return ModelResponse(parts=[ToolCallPart("marketing", args)])
         if calls == 2:
-            assert any(isinstance(part, RetryPromptPart) for part in messages[-1].parts)
+            assert any(
+                isinstance(part, ToolReturnPart)
+                and part.outcome != "success"
+                and "validation error" in str(part.content)
+                for part in messages[-1].parts
+            )
             return ModelResponse(parts=[ToolCallPart("marketing", valid)])
         assert any(isinstance(part, ToolReturnPart) for part in messages[-1].parts)
         return ModelResponse(
