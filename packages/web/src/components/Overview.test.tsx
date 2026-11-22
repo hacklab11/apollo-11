@@ -102,3 +102,35 @@ it("keeps other tiles when one metric request fails", async () => {
     ),
   );
 });
+
+it("keeps showing tiles while the next hour's window loads", async () => {
+  let hang = false;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === "/api/metrics")
+        return Response.json([{ name: "gmv", unit: "eur" }]);
+      if (hang) return new Promise<Response>(() => {});
+      return Response.json({
+        metric: "gmv",
+        segment: {},
+        points: [{ ts: "2026-12-04T09:00:00Z", value: 110, expected: 100 }],
+      });
+    }),
+  );
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = (s: Status) => (
+    <QueryClientProvider client={client}>
+      <Overview status={s} incidents={[]} onOpenIncident={vi.fn()} />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view(status));
+  const tile = screen.getByRole("region", { name: "gmv tile" });
+  await waitFor(() => expect(tile).toHaveTextContent("€110"));
+  hang = true;
+  rerender(view({ ...status, data_complete_ts: "2026-12-04T10:00:00Z" }));
+  expect(tile).not.toHaveTextContent("Loading");
+  expect(tile).toHaveTextContent("€110");
+});
