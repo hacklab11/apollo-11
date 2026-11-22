@@ -1,9 +1,9 @@
 # Eye Auth
 
 Leaf workspace package for the OAuth issuer and A2A trust library. It imports
-no application packages. **Application and Compose integration is not yet
-implemented:** installing this package alone does not protect existing agents
-or replace the existing SellerOS service credential.
+no application packages. A2A services enroll signed cards at startup and require
+OAuth tokens. SellerOS and sim use scoped JWTs for price-revert permissions.
+Compose service wiring is pending.
 
 ## Issuer
 

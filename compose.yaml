@@ -93,7 +93,6 @@ services:
       SIM_PORT: "8100"
       SIM_WORLD_DB: /app/data/world.duckdb
       SIM_LAKE_DIR: /app/data/lake
-      EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       - sim-world:/app/data
@@ -197,7 +196,6 @@ services:
       OTEL_SERVICE_NAME: selleros
       SELLEROS_URL: http://selleros:8300/
       SELLEROS_DATA_DIR: /app/packages/selleros/data
-      EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
     depends_on:
       sim:
         condition: service_healthy
@@ -217,7 +215,6 @@ services:
       EYE_DATA_URL: http://eye-data:8150
       EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
       EYE_DBOS_APPLICATION_VERSION: ${EYE_DBOS_APPLICATION_VERSION:-eye-orchestrator-v1}
-      EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
       EYE_SELLER_REVERT_OPERATOR_TOKEN: ${EYE_SELLER_REVERT_OPERATOR_TOKEN:-}
       EYE_TRUST_PROXY_PERSON_HEADER: "1"
     depends_on:
