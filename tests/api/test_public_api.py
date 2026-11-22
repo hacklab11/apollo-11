@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import aclosing, closing
 from datetime import datetime
 from pathlib import Path
+from secrets import token_urlsafe
 from typing import Any
 
 import httpx
@@ -141,7 +142,13 @@ async def test_seller_revert_requires_exact_human_approval(
     repo_root: Path,
     tmp_path: Path,
     stale: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    service_token, operator_token = token_urlsafe(), token_urlsafe()
+    monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", service_token)
+    monkeypatch.setenv("EYE_SELLER_REVERT_OPERATOR_TOKEN", operator_token)
+    seller_client = {"Authorization": f"Bearer {service_token}"}
+    operator = {"Authorization": f"Bearer {operator_token}"}
     api, settings, core = service
     snapshot_path = tmp_path / "sellers.json"
     shutil.copyfile(
@@ -174,16 +181,27 @@ async def test_seller_revert_requires_exact_human_approval(
             ack = await core.directory.notify_seller_os(alert)
             assert ack.received and ack.actions_taken == []
         assert not journal.exists()
-        approvals = (await client.get("/api/approvals")).json()
+        assert (await client.get("/api/approvals", headers=seller_client)).json() == []
+        approvals = (await client.get("/api/approvals", headers=operator)).json()
         assert len(approvals) == 2
         assert all(row["status"] == "pending" for row in approvals)
         by_sku = {row["args"]["sku"]: row["id"] for row in approvals}
         approve_url = f"/api/approvals/{by_sku['E02']}"
-        assert (
-            await client.post(approve_url, json={"approve": True})
-        ).status_code == 401
+        bogus = dict(approvals[0]["args"], incident_id="not-the-approved-incident")
+        for untrusted in ({}, {"X-Eye-Person": "reviewer"}, operator):
+            assert (
+                await client.put(
+                    "/api/approvals/seller-revert", json=bogus, headers=untrusted
+                )
+            ).status_code == 401
+        for untrusted in ({}, {"X-Eye-Person": "reviewer"}, seller_client):
+            assert (
+                await client.post(
+                    approve_url, json={"approve": True}, headers=untrusted
+                )
+            ).status_code == 401
+        assert len((await client.get("/api/approvals", headers=operator)).json()) == 2
         assert not journal.exists()
-        operator = {"X-Eye-Person": "reviewer"}
         (
             await client.post(
                 f"/api/approvals/{by_sku['E04']}",

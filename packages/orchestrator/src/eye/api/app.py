@@ -5,11 +5,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from secrets import compare_digest
 from typing import Annotated, Protocol
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from eye.api import chat
@@ -48,6 +50,8 @@ from eye.warehouse.queries import LocalQueries
 
 _SEGMENT = TypeAdapter(dict[Dimension, str])
 _PARAMS = TypeAdapter(dict)
+_BEARER = HTTPBearer(auto_error=False)
+Bearer = Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
 
 
 class ApprovalDecision(BaseModel):
@@ -62,6 +66,30 @@ def human_actor(request: Request) -> str:
     if not isinstance(actor, str) or not actor.strip():
         raise HTTPException(401, "authenticated person required")
     return actor
+
+
+def has_seller_revert_token(
+    credentials: HTTPAuthorizationCredentials | None, *, role: str
+) -> bool:
+    expected = os.environ.get(f"EYE_SELLER_REVERT_{role}_TOKEN")
+    other_role = "OPERATOR" if role == "SERVICE" else "SERVICE"
+    return bool(
+        expected
+        and expected != os.environ.get(f"EYE_SELLER_REVERT_{other_role}_TOKEN")
+        and credentials
+        and compare_digest(credentials.credentials.encode(), expected.encode())
+    )
+
+
+def seller_revert_actor(
+    request: Request, credentials: HTTPAuthorizationCredentials | None
+) -> str | None:
+    actor = getattr(request.state, "person", None)
+    if isinstance(actor, str) and actor.strip():
+        return actor
+    if has_seller_revert_token(credentials, role="OPERATOR"):
+        return "seller-revert-operator"
+    return None
 
 
 class Graph(Protocol):
@@ -269,11 +297,18 @@ def create_app(
         return orchestrator.control.audit_rows()
 
     @app.get("/api/approvals")
-    async def approvals() -> list[dict]:
-        return orchestrator.control.approval_rows()
+    async def approvals(request: Request, credentials: Bearer) -> list[dict]:
+        rows = orchestrator.control.approval_rows()
+        if seller_revert_actor(request, credentials) is not None:
+            return rows
+        return [row for row in rows if row["tool_name"] != SELLER_REVERT_TOOL]
 
     @app.put("/api/approvals/seller-revert")
-    async def request_seller_revert(action: SellerPriceRevert) -> SellerRevertApproval:
+    async def request_seller_revert(
+        action: SellerPriceRevert, credentials: Bearer
+    ) -> SellerRevertApproval:
+        if not has_seller_revert_token(credentials, role="SERVICE"):
+            raise HTTPException(401, "SellerOS service credential required")
         key = action.idempotency_key()
         try:
             row = orchestrator.control.ensure_pending(
@@ -295,14 +330,23 @@ def create_app(
 
     @app.post("/api/approvals/{id}")
     async def decide_approval(
-        id: str, decision: ApprovalDecision, actor: str = Depends(human_actor)
+        id: str, decision: ApprovalDecision, request: Request, credentials: Bearer
     ) -> dict:
+        row = orchestrator.control.approval(id)
+        seller_revert = row is not None and row["tool_name"] == SELLER_REVERT_TOOL
+        if seller_revert:
+            actor = seller_revert_actor(request, credentials)
+            if actor is None:
+                raise HTTPException(401, "SellerOS operator credential required")
+        else:
+            actor = human_actor(request)
+        if row is None:
+            raise HTTPException(409, "unknown or already decided approval")
         try:
             orchestrator.control.decide(id, decision.approve, actor)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
-        row = orchestrator.control.approval(id)
-        if decision.approve and row and row["tool_name"] == SELLER_REVERT_TOOL:
+        if decision.approve and seller_revert:
             action = SellerPriceRevert.model_validate(row["args"])
             ack = await orchestrator.directory.notify_seller_os(
                 SellerAlert(

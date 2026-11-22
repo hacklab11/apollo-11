@@ -1,6 +1,7 @@
 """SellerOS alert tools; never exposed to the question model."""
 
 import asyncio
+import os
 import re
 from collections.abc import Iterator
 
@@ -113,8 +114,11 @@ async def receive_alert(
 
     snapshot = await asyncio.to_thread(store.read)
     reverted: dict[str, list[str]] = {}
+    token = os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN")
     async with resilient_client(
-        base_url=approvals_url, transport=transport
+        base_url=approvals_url,
+        transport=transport,
+        headers={"Authorization": f"Bearer {token}"} if token else None,
     ) as approvals:
         for seller, sku in selected_offers(snapshot, alert):
             action = proposed_revert(alert.incident_id, price_intent(seller, sku))
