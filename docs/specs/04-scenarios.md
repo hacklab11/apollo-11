@@ -1,5 +1,7 @@
 # 04 Scenarios (scenario bible)
 
+Current Wave 2 boundary: only S8 is implemented. Triggering it starts the planned coupon day immediately and the typo after `S8.typo_delay_hours` (default 1). I3 below describes that confounder, not a separate plugin. For the historical D6 timing, configure a 10-hour delay and trigger S8 once at midnight. Controls belong only to the [simulator service](../../sim/README.md); the other scenarios below are retained as historical specifications.
+
 This file is the ground truth. P3 owns the wording. Dev 1 owns the parameters.
 Machine-readable copy: `tests/oracle/scenarios.yaml` (task T23). Parameters: `config/scenarios.yaml`.
 

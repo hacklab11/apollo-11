@@ -22,7 +22,7 @@ uv run python scripts/eval_scenarios.py --all --mode replay
 
 ## 2. Scenario oracle (`tests/oracle/scenarios.yaml`, T23)
 
-Include I3 alone (`INNOCENT`, no alert; `must_mention`: `coupon-day-electronics`, `planned`) and D6 (`I3@0,S8@10`, add `fee_per_order` while open, clear S8 after SellerOS ack, resolved after 3 normal ticks).
+S8 owns both the campaign and the typo. S8 and D6 play `S8@0` with `scenario_params: {S8: {typo_delay_hours: 10}}`; D6 adds `fee_per_order` while open and clears S8 through the simulator manager after the SellerOS ack, then expects resolution after 3 normal ticks. `coupon_day` preserves the innocent campaign-only check (`INNOCENT`, no alert; mentions `coupon-day-electronics`, `planned`): it plays S8 with a 24-hour typo delay and checks the first 6 hours. Detection windows start at the typo, not at the coupon campaign. Other historical scenarios remain oracle specifications but return `simulator_available: false` in the S8-only simulator.
 
 Written by P3 from `04-scenarios.md`, one entry per scenario and per combined run (D1–D6):
 

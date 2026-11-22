@@ -4,7 +4,7 @@ from copy import deepcopy
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from factories import CAMPAIGN_TS, make_incident_s7
@@ -34,7 +34,7 @@ def test_oracle_ids() -> None:
         *(f"S{i}" for i in range(1, 9)),
         "I1",
         "I2",
-        "I3",
+        "coupon_day",
         *(f"D{i}" for i in range(1, 7)),
     }
     for entry in oracle.values():
@@ -182,7 +182,7 @@ def test_recording_replaces_old_responses_without_touching_replay(
     assert "old response" not in path.read_text()
 
 
-@pytest.mark.parametrize("name", ["S8", "I3", "D6"])
+@pytest.mark.parametrize("name", ["S8", "coupon_day", "D6"])
 def test_story_scenarios_are_available_in_simulator(name: str) -> None:
     entry = harness.load_oracle()[name]
     assert {
@@ -207,7 +207,8 @@ async def test_unavailable_scenarios_fail_clearly() -> None:
 def test_story_oracles() -> None:
     for name in ("S8", "D6"):
         entry = harness.load_oracle()[name]
-        assert entry["play"] == ["I3@0", "S8@10"]
+        assert entry["play"] == ["S8@0"]
+        assert entry["scenario_params"] == {"S8": {"typo_delay_hours": 10}}
         assert "Black Friday" not in entry["expect"]["must_mention"]
         assert "stockout" in entry["expect"]["must_not_root_cause"]
         assert entry["expect"]["symptom_nodes_all"] == ["buybox_share", "in_stock_rate"]
@@ -218,6 +219,58 @@ def test_story_oracles() -> None:
     assert (
         harness.load_oracle()["D6"]["on_incident_open"] == "add_metric(fee_per_order)"
     )
+
+
+@pytest.mark.parametrize("innocent", [True, False])
+def test_coupon_only_oracle_checks_reports_before_the_typo(innocent: bool) -> None:
+    entry = deepcopy(harness.load_oracle()["coupon_day"])
+    entry["start_ts"] = CAMPAIGN_TS.isoformat()
+    incident = make_incident_s7().model_copy(
+        update={
+            "opened_ts": CAMPAIGN_TS + harness.HOUR,
+            "summary": "coupon-day-electronics is a planned campaign",
+            "status": "innocent" if innocent else "open",
+            "verdict": "INNOCENT" if innocent else "CONFIRMED",
+        }
+    )
+    checks = {c["check"]: c for c in harness.evaluate(entry, [incident], [])}
+    assert checks["expect.status_any"]["passed"] is innocent
+    assert checks["expect.verdict_any"]["passed"] is innocent
+    assert checks["expect.must_mention"]["passed"]
+
+
+def test_eval_audit_distinguishes_campaign_trigger_from_price_fault() -> None:
+    state = harness.ScenarioState(
+        id="S8",
+        title="Price typo",
+        active=True,
+        injected_ts=CAMPAIGN_TS,
+        cleared_ts=None,
+    )
+    audit = harness.scenario_audit(state, {"typo_delay_hours": 10, "seller_id": "S-24"})
+    assert audit.output["trigger_ts"] == CAMPAIGN_TS.isoformat()
+    assert audit.output["inject_ts"] == (CAMPAIGN_TS + 10 * harness.HOUR).isoformat()
+    assert audit.output["scenario_seller"] == "S-24"
+    assert state.injected_ts == CAMPAIGN_TS
+
+
+@pytest.mark.parametrize(
+    "opened_hour,passed", [(9, False), (10, True), (11, True), (12, False)]
+)
+def test_detection_deadline_starts_at_the_delayed_typo(
+    opened_hour: int, passed: bool
+) -> None:
+    entry = {
+        "play": ["S8@0"],
+        "scenario_params": {"S8": {"typo_delay_hours": 10}},
+        "start_ts": CAMPAIGN_TS.isoformat(),
+        "run_hours": 20,
+        "max_ticks_to_detect": 2,
+        "expect": {"entry_metrics_any": ["aov"]},
+    }
+    incident = demo_incident(hour=opened_hour)
+    checks = {c["check"]: c for c in harness.evaluate(entry, [incident], [])}
+    assert checks["max_ticks_to_detect"]["passed"] is passed
 
 
 def test_matching_uses_report_and_window_not_just_entry() -> None:
@@ -284,7 +337,8 @@ def test_matching_cause_in_report_and_coupon_window() -> None:
         }
     )
     entry = {
-        "play": ["I3@0", "S8@10"],
+        "play": ["S8@0"],
+        "scenario_params": {"S8": {"typo_delay_hours": 10}},
         "run_hours": 20,
         "start_ts": CAMPAIGN_TS.isoformat(),
         "expect": {
@@ -385,7 +439,9 @@ def demo_incident(id_: str = "demo", hour: int = 10) -> Incident:
 def demo_actions() -> object:
     entry = deepcopy(harness.load_oracle()["D6"])
     entry["start_ts"] = CAMPAIGN_TS.isoformat()
-    return harness.ConditionalActions(entry, harness.DEMO_METRICS)
+    return harness.ConditionalActions(
+        entry, harness.DEMO_METRICS, SimpleNamespace(clear=Mock())
+    )
 
 
 def seller_ack(incident: Incident, received: bool = True) -> TrailStep:
@@ -404,7 +460,9 @@ def seller_ack(incident: Incident, received: bool = True) -> TrailStep:
 @pytest.mark.asyncio
 async def test_conditional_actions_match_first_open_incident_and_fire_once() -> None:
     actions = demo_actions()
-    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    core = SimpleNamespace(
+        register_metric=AsyncMock(),
+    )
     await actions.poll(core, [], [])
     await actions.poll(core, [demo_incident("before", 9)], [])
     await actions.poll(
@@ -416,14 +474,14 @@ async def test_conditional_actions_match_first_open_incident_and_fire_once() -> 
     core.register_metric.assert_awaited_once_with(harness.DEMO_METRICS["fee_per_order"])
     assert actions.incident_id == first.id
     assert actions.completed == {"on_incident_open"}
-    core.set_scenario.assert_not_awaited()
+    actions.scenarios.clear.assert_not_called()
     await actions.poll(
         core, [first, later], [seller_ack(first, False), seller_ack(later)]
     )
-    core.set_scenario.assert_not_awaited()
+    actions.scenarios.clear.assert_not_called()
     await actions.poll(core, [first, later], [seller_ack(first)])
     await actions.poll(core, [first, later], [seller_ack(first)])
-    core.set_scenario.assert_awaited_once_with("S8", active=False)
+    actions.scenarios.clear.assert_called_once_with("S8")
     core.register_metric.assert_awaited_once()
     assert actions.completed == {"on_incident_open", "on_selleros_ack"}
 
@@ -433,13 +491,21 @@ async def test_conditional_action_failure_is_not_marked_complete() -> None:
     actions = demo_actions()
     core = SimpleNamespace(
         register_metric=AsyncMock(side_effect=ValueError("registration rejected")),
-        set_scenario=AsyncMock(),
     )
     incident = demo_incident()
     with pytest.raises(ValueError, match="registration rejected"):
         await actions.poll(core, [incident], [seller_ack(incident)])
     assert not actions.completed
-    core.set_scenario.assert_not_awaited()
+    actions.scenarios.clear.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_conditional_clear_requires_a_simulator_manager() -> None:
+    entry = {"play": ["S8@0"], "on_incident_open": "clear(S8)", "expect": {}}
+    actions = harness.ConditionalActions(entry, {})
+    with pytest.raises(RuntimeError, match="simulator scenario manager"):
+        await actions.poll(SimpleNamespace(), [demo_incident()], [])
+    assert not actions.completed
 
 
 @pytest.mark.asyncio
@@ -456,18 +522,19 @@ async def test_conditional_actions_parse_other_targets() -> None:
             "on_selleros_ack": "add_metric(another_metric)",
         },
         {"another_metric": metric},
+        SimpleNamespace(clear=Mock()),
     )
-    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    core = SimpleNamespace(register_metric=AsyncMock())
     incident = demo_incident()
     await actions.poll(core, [incident], [])
-    core.set_scenario.assert_awaited_once_with("S4", active=False)
+    actions.scenarios.clear.assert_called_once_with("S4")
     core.register_metric.assert_not_awaited()
     await actions.poll(core, [incident], [seller_ack(incident)])
     core.register_metric.assert_awaited_once_with(metric)
 
 
 @pytest.mark.parametrize(
-    "action", ["unknown(S8)", "clear(S8); clear(I3)", "add_metric(unknown_metric)"]
+    "action", ["unknown(S8)", "clear(S8); clear(S8)", "add_metric(unknown_metric)"]
 )
 def test_invalid_conditional_actions_fail_clearly(action: str) -> None:
     with pytest.raises(ValueError):
@@ -487,8 +554,10 @@ GROUP BY ts, country, platform, category, seller_tier, channel"""
 async def test_s8_registers_its_expected_demo_metric_on_open() -> None:
     entry = deepcopy(harness.load_oracle()["S8"])
     entry["start_ts"] = CAMPAIGN_TS.isoformat()
-    actions = harness.ConditionalActions(entry, harness.DEMO_METRICS)
-    core = SimpleNamespace(register_metric=AsyncMock(), set_scenario=AsyncMock())
+    actions = harness.ConditionalActions(
+        entry, harness.DEMO_METRICS, SimpleNamespace(clear=Mock())
+    )
+    core = SimpleNamespace(register_metric=AsyncMock())
     await actions.poll(core, [demo_incident()], [])
     core.register_metric.assert_awaited_once_with(
         harness.DEMO_METRICS[entry["expect"]["metric_attached"]["metric"]]
@@ -558,8 +627,8 @@ def test_early_unrelated_alert_is_not_attributed_to_coupon_day(name: str) -> Non
         }
     )
     checks = {c["check"]: c for c in harness.evaluate(entry, [incident], [])}
-    assert checks["also.I3.status_any"] == {
-        "check": "also.I3.status_any",
+    assert checks["also.coupon_day.status_any"] == {
+        "check": "also.coupon_day.status_any",
         "passed": True,
         "actual": [],
     }
@@ -886,7 +955,7 @@ def test_empty_business_scenario_fails() -> None:
     assert not any(c["passed"] for c in results if not c["check"].startswith("also."))
 
 
-@pytest.mark.parametrize("name", ["I1", "I3"])
+@pytest.mark.parametrize("name", ["I1", "coupon_day"])
 def test_innocent_and_deferred_may_have_no_incident(name: str) -> None:
     assert all(
         c["passed"] for c in harness.evaluate(harness.load_oracle()[name], [], [])
@@ -998,7 +1067,10 @@ def test_campaign_mention_in_non_campaign_root_is_not_attribution(
     entry = deepcopy(harness.load_oracle()[name])
     entry["start_ts"] = CAMPAIGN_TS.isoformat()
     good = make_incident_s7()
-    offset = int(next(p for p in entry["play"] if p.startswith("S")).rsplit("@", 1)[1])
+    scenario, hour = next(p for p in entry["play"] if p.startswith("S")).rsplit("@", 1)
+    offset = int(hour) + entry.get("scenario_params", {}).get(scenario, {}).get(
+        "typo_delay_hours", 0
+    )
     good = good.model_copy(
         update={
             "opened_ts": CAMPAIGN_TS + offset * harness.HOUR,
@@ -1014,7 +1086,7 @@ def test_campaign_mention_in_non_campaign_root_is_not_attribution(
         }
     )
     results = {c["check"]: c for c in harness.evaluate(entry, [good], [])}
-    campaign = "I1" if name == "S7" else "I3"
+    campaign = "I1" if name == "S7" else "coupon_day"
     assert results[f"also.{campaign}.status_any"]["passed"]
     assert results[f"also.{campaign}.status_any"]["actual"] == []
 

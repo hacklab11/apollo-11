@@ -1,5 +1,6 @@
 D6:
-  play: [I3@0, S8@10]
+  play: [S8@0]
+  scenario_params: {S8: {typo_delay_hours: 10}}
   run_hours: 24
   on_incident_open: add_metric(fee_per_order)
   on_selleros_ack: clear(S8)
@@ -29,7 +30,7 @@ D6:
       max_incidents_for_scenario: 1
     status_any: [resolved]
   also:
-    I3: {status_any: [innocent], or_no_incident: true}
+    coupon_day: {status_any: [innocent], or_no_incident: true}
 S1: &S1
   play: [S1@0]
   run_hours: 14
@@ -124,7 +125,8 @@ S7: &S7
   also:
     I1: {status_any: [innocent], or_no_incident: true}
 S8:
-  play: [I3@0, S8@10]
+  play: [S8@0]
+  scenario_params: {S8: {typo_delay_hours: 10}}
   run_hours: 20
   on_incident_open: add_metric(fee_per_order)
   expect:
@@ -132,7 +134,7 @@ S8:
     verdict_any: [HYPOTHESIS, CONFIRMED]
     status_any: [open, persisting, resolved]
   also:
-    I3: {status_any: [innocent], or_no_incident: true}
+    coupon_day: {status_any: [innocent], or_no_incident: true}
 I1: &I1
   play: [I1@0]
   run_hours: 6
@@ -152,8 +154,10 @@ I2: &I2
     deferral_required: {country: FR}
     must_mention: [FR, partition]
     must_mention_any: [incomplete, late]
-I3:
-  play: [I3@0]
+coupon_day:
+  focus: coupon_day
+  play: [S8@0]
+  scenario_params: {S8: {typo_delay_hours: 24}}
   run_hours: 6
   expect:
     verdict_any: [INNOCENT]

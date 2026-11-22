@@ -48,7 +48,13 @@ so services can be independently replicated (for example,
 Core and SellerOS currently retain process-local state/file-backed storage;
 multiple replicas are not a distributed-state or multi-writer deployment.
 
-### Local stack and rehearsal
+### Simulator controls
+
+Scenario controls now belong exclusively to the [continuous simulator service](sim/README.md), not Core, MCP, chat or the Observatory. Start `uv run eye-sim serve`; trigger with `curl -fsS -X POST http://127.0.0.1:8100/scenarios/s8`, inspect `/status`, and clear with `DELETE /scenarios/s8`. S8 starts the planned coupon day immediately and the seller typo after `typo_delay_hours` (default 1).
+
+The legacy `scripts/demo_run.py` and rehearsal instructions below predate this boundary and are not compatible with the removed core scenario endpoints. A separate demo CLI follows in Wave 2. Do not run Core and the simulator service as concurrent writers to the same world. Until the data-service migration, use Core's existing DuckDB source for externally ingested data.
+
+### Legacy local stack and rehearsal
 
 From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):
 
@@ -97,7 +103,7 @@ Once ready, open [the observatory](http://127.0.0.1:8000/) and run:
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
+The legacy runner prepared 09:00 with a coupon campaign active since midnight and injected S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
@@ -164,7 +170,7 @@ Code computes the numbers; agents decide what evidence to collect and how to exp
 
 ## Scenarios
 
-These are expected outcomes, not measured scores. See the [scenario spec](docs/specs/04-scenarios.md) for the controls and decoys.
+Only S8 is enabled by the simulator. It includes the planned electronics coupon day; I3 is no longer a separate trigger. The table below preserves historical oracle expectations, not supported controls or measured scores. See the [scenario spec](docs/specs/04-scenarios.md) for background.
 
 | ID | Scenario | Expected outcome |
 | --- | --- | --- |
@@ -178,7 +184,7 @@ These are expected outcomes, not measured scores. See the [scenario spec](docs/s
 | S8 | One seller enters the wrong electronics price | Confirm the price error with SellerOS; track recovery |
 | I1 | Planned Black Friday campaign | Innocent; no business alert |
 | I2 | French orders arrive late | Defer or flag a data issue; no business alert |
-| I3 | Planned 10% electronics coupon day | Recognize the expected change; no business alert |
+| coupon_day (S8 confounder) | Planned 10% electronics coupon day | Recognize the expected change; no business alert |
 
 ## A2A and MCP
 
