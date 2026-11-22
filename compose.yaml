@@ -9,10 +9,6 @@ x-service: &service
     EYE_BIND_HOST: 0.0.0.0
     EYE_CORE_URL: http://eye-core:8000
     EYE_MCP_URL: http://eye-mcp:8100/mcp
-    # Replay is not fail-closed: misses can call a provider. Never pass credentials.
-    EYE_MODEL_API_KEY: ""
-    ANTHROPIC_API_KEY: ""
-    OPENROUTER_API_KEY: ""
   volumes:
     - ./config/compose.yaml:/app/config/settings.yaml:ro
   networks: [eye]
@@ -46,8 +42,6 @@ services:
     environment:
       <<: *environment
       SELLEROS_URL: http://selleros:8300/
-      SELLEROS_PROVIDER: openai_compatible
-      SELLEROS_API_KEY_ENV: EYE_MODEL_API_KEY
       SELLEROS_DATA_DIR: /app/packages/selleros/data
     depends_on:
       sim-generate:
