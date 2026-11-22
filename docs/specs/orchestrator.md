@@ -12,8 +12,11 @@ root budgets, kill checks, trace context and incident context accompany executio
 Agent-directory URLs come from `a2a` settings, not agent implementation imports.
 
 DBOS workflows and A2A call steps persist in Postgres selected by `EYE_DATABASE_URL`;
-local fallback is SQLite control state. `control.py` stores kill switches,
-approval decisions and hash-chained audit records. DBOS checkpoints A2A steps;
+local fallback is SQLite control state.
+`EYE_DBOS_APPLICATION_VERSION` pins workflow compatibility (default `eye-orchestrator-v1`).
+Keep it stable across compatible deployments so pending workflows recover; drain old-version
+runs before changing it for an incompatible workflow update.
+`control.py` stores kill switches, approval decisions and hash-chained audit records. DBOS checkpoints A2A steps;
 it does not checkpoint each private model/tool call inside a remote agent.
 
 `incidents/store.py` persists incidents/trails in DuckDB, matches related symptoms and
