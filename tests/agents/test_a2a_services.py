@@ -10,7 +10,7 @@ import httpx
 import pytest
 from anthropic.types.beta import BetaMessage
 from factories import make_anomaly, make_incident_s7
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
@@ -48,7 +48,7 @@ def metadata() -> TaskMetadata:
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
     turns: deque[list[dict[str, Any]]] = deque()
 
@@ -108,6 +108,23 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
     monkeypatch.setattr(
         "eye.agents.detective.build_model",
         lambda *_: FunctionModel(detective_response, model_name="detective"),
+    )
+
+    def skeptic_response(messages: object, info: object) -> ModelResponse:
+        content = turns.popleft()
+        return ModelResponse(
+            usage=RequestUsage(input_tokens=7, output_tokens=5),
+            parts=[
+                ToolCallPart(part["name"], part["input"])
+                if part["type"] == "tool_use"
+                else TextPart(part["text"])
+                for part in content
+            ],
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.skeptic._model",
+        lambda _: FunctionModel(skeptic_response, model_name="claude-opus-5-5"),
     )
     return turns
 
