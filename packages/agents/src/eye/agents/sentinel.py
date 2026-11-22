@@ -11,10 +11,12 @@ from uuid import uuid4
 
 import duckdb
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, ToolOutput
+from pydantic_ai import Agent, RunContext, ToolOutput
+from pydantic_ai.capabilities import PrepareOutputTools, PrepareTools
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
+from pydantic_ai.tools import ToolDefinition
 
 from agent_runtime import (
     Budget,
@@ -52,6 +54,28 @@ _HOUR = timedelta(hours=1)
 _PROMPT = files("eye.agents").joinpath("prompts/sentinel.md")
 # Compact ASCII JSON at roughly 3 characters per token; counting via the API costs a call.
 _MAX_CONTEXT_CHARS = 18_000
+_MAX_TOKENS = 64_000
+# Some models keep checking and never submit; after this, only `submit` is offered.
+_CHECK_STEPS = 2
+_CHECK_TOKENS = _MAX_TOKENS // 2
+
+
+def _must_submit(ctx: RunContext[object]) -> bool:
+    return ctx.run_step > _CHECK_STEPS or ctx.usage.total_tokens > _CHECK_TOKENS
+
+
+async def _data_tools(
+    ctx: RunContext[object], defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    return [] if _must_submit(ctx) else defs
+
+
+async def _end_tools(
+    ctx: RunContext[object], defs: list[ToolDefinition]
+) -> list[ToolDefinition]:
+    return [d for d in defs if d.name == "submit"] if _must_submit(ctx) else defs
+
+
 _OPEN = {"investigating", "open", "persisting", "mitigating"}
 type _WatchKey = tuple[str, tuple[tuple[str, str], ...], AnomalyKind]
 
@@ -143,6 +167,7 @@ class Sentinel:
                 *end_state_outputs(SentinelSubmission)[1:],
             ],
             model_settings={"max_tokens": self._llm.max_tokens},
+            capabilities=[PrepareTools(_data_tools), PrepareOutputTools(_end_tools)],
         )
         n = 0
 
@@ -336,7 +361,7 @@ class Sentinel:
             limits=RunLimits(
                 max_steps=5,
                 max_tool_calls=16,
-                max_tokens=64000,
+                max_tokens=_MAX_TOKENS,
                 max_cost_usd=1,
                 max_wall_clock_s=60,
             ),

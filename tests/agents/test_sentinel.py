@@ -140,8 +140,10 @@ async def test_caller_budget_stops_before_model(
 @pytest.mark.asyncio
 async def test_loop_surfaces_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     def repeat(*_):
+        # Data tools are hidden after two rounds, so repeat within one response.
         return ModelResponse(
-            parts=[ToolCallPart("get_graph", {})], model_name="scripted"
+            parts=[ToolCallPart("get_graph", {}) for _ in range(3)],
+            model_name="scripted",
         )
 
     agent = sentinel(monkeypatch, repeat)
@@ -149,6 +151,38 @@ async def test_loop_surfaces_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     agent._data.read.return_value.events = []
     with pytest.raises(UsageLimitExceeded, match="gave_up: loop detected"):
         await agent.run(TICK)
+
+
+@pytest.mark.asyncio
+async def test_endless_checking_is_cut_to_submit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    offered: list[tuple[list[str], list[str]]] = []
+    decide = submit("investigate")
+
+    def keep_checking(messages, info):
+        offered.append(
+            (
+                [t.name for t in info.function_tools],
+                [t.name for t in info.output_tools],
+            )
+        )
+        if info.function_tools:
+            node = f"n{len(offered)}"
+            return ModelResponse(
+                parts=[ToolCallPart("get_graph", {"args": {"node": node}})],
+                model_name="scripted",
+            )
+        return decide(messages, info)
+
+    agent = sentinel(monkeypatch, keep_checking)
+    monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
+    agent._data.read.return_value.events = []
+    decisions = await agent.run(TICK)
+    assert decisions[0].action == "investigate"
+    assert len(offered) == 3
+    assert all("get_graph" in tools for tools, _ in offered[:2])
+    assert offered[2] == ([], ["submit"])
 
 
 @pytest.mark.asyncio
