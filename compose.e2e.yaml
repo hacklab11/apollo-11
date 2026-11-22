@@ -48,6 +48,7 @@ services:
 
   detective:
     <<: *offline
+    scale: 3
 
   skeptic:
     <<: *offline

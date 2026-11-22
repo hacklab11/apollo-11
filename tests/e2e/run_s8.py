@@ -1,4 +1,4 @@
-"""Inject S8 through the continuous sim and observe investigation through Core."""
+"""Exercise S8 investigation, recovery and human closure through Core."""
 
 import time
 from datetime import datetime, timedelta
@@ -10,6 +10,7 @@ import yaml
 from pydantic import TypeAdapter
 
 from eye.contracts import Incident, TrailStep
+from eye.contracts_v2 import DEFAULT_TENANT, IncidentCloseRequest, IncidentV2
 from eye.orchestrator import Status
 from eye.sim.scenarios import ScenarioState
 from eye.sim.service import Status as SimStatus
@@ -20,8 +21,24 @@ SCENARIOS = TypeAdapter(list[ScenarioState])
 REPORT_TITLE = "Electronics price-change investigation"
 
 
-def request(client: httpx.Client, method: str, path: str) -> httpx.Response:
-    return client.request(method, path).raise_for_status()
+def request(
+    client: httpx.Client, method: str, path: str, **kwargs: Any
+) -> httpx.Response:
+    return client.request(method, path, **kwargs).raise_for_status()
+
+
+def step(client: httpx.Client, last_tick: int) -> Status:
+    status = Status.model_validate_json(
+        request(client, "POST", "/api/clock/step").content
+    )
+    assert not status.llm_stop_reason, status
+    if status.tick != last_tick:
+        print(
+            f"OK Core consumed tick {status.tick}: {status.sim_ts.isoformat()}",
+            flush=True,
+        )
+    time.sleep(0.5)
+    return status
 
 
 def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
@@ -94,7 +111,6 @@ def run() -> None:
             "/scenario", json={"investigate_after": typo_ts.isoformat()}
         ).raise_for_status()
         deadline = time.monotonic() + 90
-        last_tick = status.tick
         while (incident := reported(core, typo_ts)) is None:
             if time.monotonic() >= deadline:
                 raise AssertionError(
@@ -103,32 +119,69 @@ def run() -> None:
                     f"sim={request(sim, 'GET', '/status').text}; "
                     f"model={request(model, 'GET', '/stats').text}"
                 )
-            status = Status.model_validate_json(
-                request(core, "POST", "/api/clock/step").content
-            )
-            assert not status.llm_stop_reason, status
-            if status.tick != last_tick:
-                print(
-                    f"OK Core consumed tick {status.tick}: {status.sim_ts.isoformat()}",
-                    flush=True,
-                )
-                last_tick = status.tick
-            time.sleep(0.5)
-        stats: dict[str, Any] = request(model, "GET", "/stats").json()
-        assert not stats["errors"], stats
-        for actor in ("sentinel", "detective", "skeptic", "reporter"):
-            assert stats["calls"].get(actor, 0) > 0, stats
+            status = step(core, status.tick)
         print(
             f"OK S8 incident {incident.id}: status={incident.status}, "
             f"verdict={incident.verdict}, report={incident.title!r}",
             flush=True,
         )
+        close_path = f"/api/incidents/{incident.id}/close"
+        person = "offline-operator"
+        identity = {"X-Eye-Person": person}
+        close_body = IncidentCloseRequest(
+            tenant_id=DEFAULT_TENANT, note="Reviewed measured S8 recovery."
+        ).model_dump(mode="json")
+        early = core.post(close_path, headers=identity, json=close_body)
+        assert early.status_code == 409, early.text
+        print("OK human close rejected before recovery (409)", flush=True)
+        timeline = SCENARIOS.validate_json(
+            request(sim, "DELETE", "/scenarios/s8").content
+        )
+        assert any(s.id == "S8" and not s.active for s in timeline), timeline
+        print("OK S8 cleared through sim; waiting for measured recovery", flush=True)
+        deadline = time.monotonic() + 120
+        while incident.status != "resolved":
+            if time.monotonic() >= deadline:
+                raise AssertionError(
+                    f"S8 never recovered; incident={incident.model_dump_json()}; "
+                    f"Core={request(core, 'GET', '/api/status').text}; "
+                    f"sim={request(sim, 'GET', '/status').text}"
+                )
+            status = step(core, status.tick)
+            incident = Incident.model_validate_json(
+                request(core, "GET", f"/api/incidents/{incident.id}").content
+            )
+        assert incident.resolved_ts is not None
+        print(
+            f"OK S8 incident recovered (legacy status=resolved): {incident.resolved_ts.isoformat()}",
+            flush=True,
+        )
+        unauthenticated = core.post(close_path, json=close_body)
+        assert unauthenticated.status_code == 401, unauthenticated.text
+        print("OK human close requires identity (401)", flush=True)
+        closed = IncidentV2.model_validate_json(
+            request(core, "POST", close_path, headers=identity, json=close_body).content
+        )
+        assert closed.status == "closed" and closed.recovered_ts == incident.resolved_ts
+        assert closed.closure is not None and closed.closure.closed_by == person
+        assert closed.closure.note == close_body["note"]
+        assert any(
+            row["action"] == "incident_closed"
+            and row["incident_id"] == incident.id
+            and row["actor"] == person
+            for row in request(core, "GET", "/api/audit").json()
+        ), "Human closure must be audited"
+        print(f"OK S8 incident closed by {person}: {closed.id} (audited)", flush=True)
+        stats: dict[str, Any] = request(model, "GET", "/stats").json()
+        assert not stats["errors"], stats
+        for actor in ("sentinel", "detective", "skeptic", "reporter"):
+            assert stats["calls"].get(actor, 0) > 0, stats
         print(
             f"OK offline model calls: {stats['calls']}; unexpected requests: 0",
             flush=True,
         )
         print(
-            "Compose S8 e2e passed (sim injection -> eye-data -> investigation -> report).",
+            "Compose S8 e2e passed (3 Detectives; sim injection -> eye-data -> investigation -> report -> recovered -> human close).",
             flush=True,
         )
 
