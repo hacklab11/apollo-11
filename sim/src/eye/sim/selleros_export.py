@@ -27,6 +27,17 @@ class SellerOSExport:
         )
         self.last_prices[seller_id, sku] = price
 
+    def is_current_manual_change(
+        self, seller_id: str, sku: str, changed_at: datetime
+    ) -> bool:
+        for point in reversed(self.history.get(seller_id, [])):
+            if point["sku"] == sku:
+                return (
+                    point.get("source") == "manual"
+                    and datetime.fromisoformat(point["ts"]) == changed_at
+                )
+        return False
+
     def write(self, ts: datetime) -> None:
         sellers = []
         for seller in self.world.sellers.values():

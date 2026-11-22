@@ -163,11 +163,13 @@ def small_sim_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Setti
     return settings
 
 
+@pytest.mark.parametrize("stale", [None, "price", "timestamp"])
 def test_file_store_revert_reaches_marketplace(
     small_sim_settings: Settings,
     tmp_path: Path,
     repo_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    stale: str | None,
 ) -> None:
     monkeypatch.syspath_prepend(str(repo_root / "external" / "selleros"))
     data = importlib.import_module("selleros.data")
@@ -199,7 +201,23 @@ def test_file_store_revert_reaches_marketplace(
             intent,
             idempotency_key="integration",
         )
+        if stale == "price":
+            # The live offer is restored before the next SellerOS snapshot.
+            offer.price = old
+            offer.repricer_mode = "beat"
+        elif stale == "timestamp":
+            sim.selleros_export.record_manual_price(
+                offer.seller_id, offer.sku, offer.price, sim.now + timedelta(minutes=1)
+            )
         sim.step()
+        if stale is not None:
+            assert offer.repricer_mode != "fixed"
+            assert feed.pending() == []
+            with sim.store.cursor() as reader:
+                assert reader.execute(
+                    "SELECT count(*) FROM seller_actions"
+                ).fetchone() == (0,)
+            return
         assert offer.price == old
         sim.market.run_repricers()
         assert offer.price == old
