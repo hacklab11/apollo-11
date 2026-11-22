@@ -28,7 +28,7 @@ Three specialist agents and one external agent (SellerOS) over A2A. An MCP serve
 - No agent tool may read the `scenario_log` table (ground truth).
 - Bind servers to `127.0.0.1`.
 
-Production cannot import `eye.sim`; contracts/config are foundational; data/LLM stay below agents and orchestration; agents/specialists stay below orchestration. SellerOS is independent; `packages/agent_runtime` imports neither Eye nor SellerOS and its scripted-model tests run in the root suite. Import-linter documents temporary wave 3 exceptions.
+Production cannot import `eye.sim`; contracts are leaf models with no workspace dependencies; contracts/config are foundational; data/LLM stay below agents and orchestration; agents/specialists stay below orchestration. SellerOS is independent; `packages/agent_runtime` may import only `eye.contracts_v2` from Eye and nothing from SellerOS; its scripted-model tests run in the root suite. Import-linter documents temporary wave 3 exceptions.
 
 ## Stack
 

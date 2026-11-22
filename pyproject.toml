@@ -59,7 +59,52 @@ root_packages = ["eye", "selleros", "agent_runtime"]
 name = "Agent runtime does not import application packages"
 type = "forbidden"
 source_modules = ["agent_runtime"]
-forbidden_modules = ["eye", "selleros"]
+forbidden_modules = [
+    "eye.contracts",
+    "eye.config",
+    "eye.schema",
+    "eye.registry",
+    "eye.graph",
+    "eye.tools",
+    "eye.llm",
+    "eye.agents",
+    "eye.specialists",
+    "eye.orchestrator",
+    "eye.incidents",
+    "eye.api",
+    "eye.a2a_client",
+    "eye.datasource",
+    "eye.main",
+    "eye.mcp_server",
+    "eye.sim",
+    "selleros",
+]
+ignore_imports = ["eye.contracts_v2 -> eye.contracts"]
+
+[[tool.importlinter.contracts]]
+name = "Contracts import nothing in the workspace"
+type = "forbidden"
+source_modules = ["eye.contracts", "eye.contracts_v2"]
+forbidden_modules = [
+    "eye.config",
+    "eye.schema",
+    "eye.registry",
+    "eye.graph",
+    "eye.tools",
+    "eye.llm",
+    "eye.agents",
+    "eye.specialists",
+    "eye.orchestrator",
+    "eye.incidents",
+    "eye.api",
+    "eye.a2a_client",
+    "eye.datasource",
+    "eye.main",
+    "eye.mcp_server",
+    "eye.sim",
+    "agent_runtime",
+    "selleros",
+]
 
 [[tool.importlinter.contracts]]
 name = "Production does not import simulator"

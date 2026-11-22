@@ -14,9 +14,11 @@ Conventions:
 ## v2 (new code)
 
 `eye.contracts_v2` adds strict tenant-scoped wire models beside unchanged v1.
-`AgentResult`, `EndState`, `A2A_TASK_STATES`, `Budget`, `PendingApproval`, and
-`RunUsageSummary` are re-exports from `agent_runtime`, not duplicate definitions.
-Every new wire model requires `tenant_id` (lowercase alphanumeric, `_` or `-`,
+Contracts are leaf models with no workspace dependencies. `AgentResult`, `EndState`,
+`A2A_TASK_STATES`, `NeedsInput`, `GaveUp`, `PendingApproval`, `RunUsageSummary`, and
+the pure-data `Budget` are defined here. `agent_runtime.results` re-exports result
+types; `agent_runtime.Budget` subclasses the wire model to add budget operations.
+Tenant-scoped wire models require `tenant_id` (lowercase alphanumeric, `_` or `-`,
 1–63 characters, starting alphanumeric); `DEFAULT_TENANT` is an explicit caller choice.
 `TaskMetadata` carries tenant, A2A `context_id`, version-00 W3C `traceparent`, and budget.
 `IncidentV2` reuses v1 investigation models without simulator lifecycle counters.

@@ -14,10 +14,12 @@ from eye.contracts_v2 import (
     AgentResult,
     Budget,
     EndState,
+    GaveUp,
     IncidentCloseRequest,
     IncidentClosure,
     IncidentStatus,
     IncidentV2,
+    NeedsInput,
     PendingApproval,
     RunUsageSummary,
     TaskMetadata,
@@ -62,13 +64,57 @@ def metadata_data() -> dict[str, Any]:
     }
 
 
-def test_runtime_types_are_reexports() -> None:
+def test_runtime_results_are_reexports() -> None:
     assert AgentResult is results.AgentResult
-    assert Budget is budget.Budget
+    assert issubclass(budget.Budget, Budget)
     assert EndState is results.EndState
+    assert NeedsInput is results.NeedsInput
+    assert GaveUp is results.GaveUp
     assert A2A_TASK_STATES is results.A2A_TASK_STATES
     assert PendingApproval is results.PendingApproval
     assert RunUsageSummary is results.RunUsageSummary
+
+
+def test_runtime_budget_in_metadata(metadata_data: dict[str, Any]) -> None:
+    runtime_budget = budget.Budget.model_validate(metadata_data["budget"])
+    metadata = TaskMetadata.model_validate({**metadata_data, "budget": runtime_budget})
+    assert metadata.budget is runtime_budget
+    assert TaskMetadata.model_validate_json(
+        metadata.model_dump_json()
+    ).budget == Budget(**metadata_data["budget"])
+
+
+def test_wire_budget_is_frozen_and_data_only(metadata_data: dict[str, Any]) -> None:
+    wire_budget = Budget.model_validate(metadata_data["budget"])
+    assert not hasattr(wire_budget, "delegate")
+    with pytest.raises(ValidationError, match="frozen_instance"):
+        wire_budget.tokens = 0
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        Budget.model_validate({**metadata_data["budget"], "unexpected": True})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("tokens", -1),
+        ("cost_usd", -1),
+        ("deadline", datetime(2026, 1, 1)),
+        ("depth", -1),
+        ("max_depth", -1),
+        ("max_fan_out", 0),
+    ],
+)
+def test_wire_budget_rejects_invalid_fields(
+    metadata_data: dict[str, Any], field: str, value: Any
+) -> None:
+    with pytest.raises(ValidationError):
+        Budget.model_validate({**metadata_data["budget"], field: value})
+
+
+@pytest.mark.parametrize("model", [NeedsInput, GaveUp, PendingApproval])
+def test_result_payload_requires_fields(model: type) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate({})
 
 
 @pytest.mark.parametrize(
