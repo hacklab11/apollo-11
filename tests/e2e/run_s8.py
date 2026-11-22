@@ -91,6 +91,11 @@ def run() -> None:
         httpx.Client(base_url="http://sim:8100", timeout=30) as sim,
     ):
         request(model, "GET", "/healthz")
+        rejected = core.post("/api/kill", headers={"Origin": "https://attacker.invalid"})
+        assert rejected.status_code == 403, rejected.text
+        assert core.get("/api/status", headers={"Host": "attacker.invalid"}).status_code == 403
+        assert core.get("/api/status", headers={"Origin": "http://web:8080"}).status_code == 200
+        print("OK edge rejects cross-origin mutations and unexpected Hosts", flush=True)
         html = request(core, "GET", "/").text
         assert "Eye of the System" in html and 'type="module"' in html
         assert request(core, "GET", "/api/ui/status").json()["data_complete_ts"]
@@ -214,7 +219,7 @@ def run() -> None:
         print(f"OK S8 incident closed by {person}: {closed.id} (audited)", flush=True)
         stats: dict[str, Any] = request(model, "GET", "/stats").json()
         assert not stats["errors"], stats
-        for actor in ("sentinel", "detective", "skeptic", "reporter", "selleros"):
+        for actor in ("sentinel", "detective", "skeptic", "reporter", "openai/gpt-oss-20b"):
             assert stats["calls"].get(actor, 0) > 0, stats
         print(
             f"OK offline model calls: {stats['calls']}; unexpected requests: 0",
