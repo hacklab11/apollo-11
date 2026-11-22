@@ -2,6 +2,10 @@
 
 Start with the [project README](../README.md) and [coding instructions](../AGENTS.md).
 
+[Interactive architecture walkthrough](architecture/walkthrough.html): offline service map
+and animated S8 incident. GitHub shows HTML source; open locally in a browser
+(`open docs/architecture/walkthrough.html` on macOS).
+
 ## Current specifications
 
 - [Architecture](specs/architecture.md), [deployment/Compose](specs/deployment.md)
