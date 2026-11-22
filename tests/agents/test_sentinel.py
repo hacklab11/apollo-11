@@ -8,8 +8,10 @@ from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
-from agent_runtime import InMemoryKillSwitch, ModelPrice, PriceTable, model_chain
+from agent_runtime import InMemoryKillSwitch, ModelPrice, PriceTable
+from eye.agents.models import build_model
 from eye.agents.sentinel import Sentinel, _Candidate
+from eye.config import LlmSettings
 from eye.contracts import TrailStep
 from eye.llm.client import BudgetExceeded
 
@@ -24,7 +26,7 @@ def candidate(ts: datetime = TICK, completeness: float = 1) -> _Candidate:
 
 def sentinel(monkeypatch: pytest.MonkeyPatch, function, **kwargs) -> Sentinel:
     model = FunctionModel(function, model_name="scripted")
-    monkeypatch.setattr("eye.agents.sentinel.configured_model", lambda *_: model)
+    monkeypatch.setattr("eye.agents.sentinel.build_model", lambda *_: model)
     return Sentinel(
         data=Mock(),
         prices=PriceTable(
@@ -155,8 +157,18 @@ async def test_provider_error_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> 
 
     agent = sentinel(monkeypatch, submit("investigate"))
     fallback = FunctionModel(submit("investigate"), model_name="scripted")
-    chain = model_chain(FunctionModel(broken, model_name="primary"), fallback)
-    monkeypatch.setattr("eye.agents.sentinel.configured_model", lambda *_: chain)
+    models = {
+        "primary": FunctionModel(broken, model_name="primary"),
+        "scripted": fallback,
+    }
+    monkeypatch.setattr(
+        "eye.agents.models.AnthropicModel", lambda name, **_: models[name]
+    )
+    monkeypatch.setattr("eye.agents.sentinel.build_model", build_model)
+    agent._llm = LlmSettings(
+        models={"sentinel": "primary"},
+        fallback_models={"sentinel": ["scripted"]},
+    )
     monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
     agent._data.read.return_value.events = []
     assert (await agent.run(TICK))[0].action == "investigate"

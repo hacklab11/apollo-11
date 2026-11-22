@@ -7,6 +7,8 @@ llm:
   base_url: http://scripted-model:8400/v1
   api_key_env: EYE_E2E_TOKEN
   mode: live
+  prices:
+    sentinel: {input_per_mtok: 0.0, output_per_mtok: 0.0}
   models:
     default: unsupported
     cartographer: cartographer

@@ -80,7 +80,7 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
         )
 
     monkeypatch.setattr(
-        "eye.agents.sentinel.configured_model",
+        "eye.agents.sentinel.build_model",
         lambda *_: FunctionModel(sentinel_response, model_name="claude-opus-5-5"),
     )
     return turns

@@ -16,14 +16,13 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart
 
 from agent_runtime import (
     KillSwitch,
-    ModelPrice,
     PriceTable,
     RunLimits,
     RunScope,
     end_state_outputs,
     run_agent,
 )
-from eye.agents.models import configured_model
+from eye.agents.models import build_model, price_table
 from eye.config import LlmSettings, SentinelSettings
 from eye.contracts import (
     Anomaly,
@@ -110,12 +109,7 @@ class Sentinel:
         self._data = data
         self._llm = llm or LlmSettings()
         self._kill_switch = kill_switch
-        self._prices = prices or PriceTable(
-            prices={
-                name: ModelPrice(input_per_mtok=5, output_per_mtok=25)
-                for name in self._llm.models.values()
-            }
-        )
+        self._prices = prices or price_table(self._llm)
         self._graph = graph
         self._watch_tick: datetime | None = None
         self._watched: set[_WatchKey] = set()
@@ -136,7 +130,7 @@ class Sentinel:
         self, run_id: str, on_step: Callable[[TrailStep], Awaitable[None]]
     ) -> Agent:
         agent = Agent(
-            configured_model(self._llm, "sentinel"),
+            build_model(self._llm, "sentinel"),
             instructions=_PROMPT.read_text(),
             output_type=[
                 ToolOutput(SentinelSubmission, name="submit"),
