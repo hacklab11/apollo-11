@@ -23,7 +23,6 @@ from eye.contracts import (
 )
 from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.loader import Registry
-from eye.tools.context import check_freshness, list_events
 from eye.tools.models import (
     BaselineCompareInput,
     CheckFreshnessInput,
@@ -31,7 +30,8 @@ from eye.tools.models import (
     ScanAnomaliesInput,
     ScanDivergentSegmentsInput,
 )
-from eye.tools.stats import baseline_compare, scan_anomalies, scan_divergent_segments
+from eye.warehouse import operations as ops
+from eye.warehouse.queries import DataQueries, LocalQueries
 
 _HOUR = timedelta(hours=1)
 _PROMPT = files("eye.llm").joinpath("prompts/sentinel.md")
@@ -80,16 +80,19 @@ async def _discard_step(step: TrailStep) -> None:
 class Sentinel:
     def __init__(
         self,
-        con: duckdb.DuckDBPyConnection,
-        registry: Registry,
+        con: duckdb.DuckDBPyConnection | None = None,
+        registry: Registry | None = None,
         *,
         settings: SentinelSettings | None = None,
         llm: LlmSettings | None = None,
         graph: GraphSource | None = None,
+        data: DataQueries | None = None,
     ) -> None:
-        self._con = con
-        self._registry = registry
         self._settings = settings or SentinelSettings()
+        if data is None:
+            assert con is not None and registry is not None
+            data = LocalQueries(con, registry, graph=graph, settings=self._settings)
+        self._data = data
         self._llm = llm or LlmSettings()
         self._graph = graph
         self._watch_tick: datetime | None = None
@@ -116,24 +119,19 @@ class Sentinel:
                     "baseline_compare",
                     "Compare actual and expected metric values for an hourly window.",
                     BaselineCompareInput,
-                    partial(baseline_compare, con=self._con, registry=self._registry),
+                    partial(self._data.read, ops.BASELINE),
                 ),
                 ToolSpec(
                     "check_freshness",
                     "Check pipeline completeness for a metric and segment or a list of tables.",
                     CheckFreshnessInput,
-                    partial(
-                        check_freshness,
-                        con=self._con,
-                        registry=self._registry,
-                        settings=self._settings,
-                    ),
+                    partial(self._data.read, ops.FRESHNESS),
                 ),
                 ToolSpec(
                     "list_events",
                     "Read change-log and external status events in a time window.",
                     ListEventsInput,
-                    partial(list_events, con=self._con),
+                    partial(self._data.read, ops.EVENTS),
                 ),
                 ToolSpec(
                     "get_graph",
@@ -150,32 +148,21 @@ class Sentinel:
         )
 
     def _candidates(self, ts: datetime) -> list[_Candidate]:
-        graph = self._graph.view() if self._graph is not None else None
-        scan_options = {
-            "con": self._con,
-            "registry": self._registry,
-            "settings": self._settings,
-            "graph": graph,
-        }
-        point = scan_anomalies(ScanAnomaliesInput(ts=ts), **scan_options)
-        divergent = scan_divergent_segments(
-            ScanDivergentSegmentsInput(ts=ts), **scan_options
-        )
+        point = self._data.read(ops.SCAN, ScanAnomaliesInput(ts=ts))
+        divergent = self._data.read(ops.DIVERGENT, ScanDivergentSegmentsInput(ts=ts))
         ranked = sorted(
             point.anomalies + divergent.anomalies, key=lambda a: (-a.priority, a.id)
         )
         candidates = []
         for anomaly in ranked[: self._settings.top_k]:
-            fresh = check_freshness(
+            fresh = self._data.read(
+                ops.FRESHNESS,
                 CheckFreshnessInput(
                     metric=anomaly.metric,
                     segment=anomaly.segment,
                     start=ts - (anomaly.window_hours - 1) * _HOUR,
                     end=ts + _HOUR,
                 ),
-                con=self._con,
-                registry=self._registry,
-                settings=self._settings,
             )
             completeness = min(
                 [anomaly.completeness, *(p.completeness for p in fresh.points)]
@@ -190,8 +177,8 @@ class Sentinel:
         if not candidates:
             return "", []
         end = ts + _HOUR
-        events = list_events(
-            ListEventsInput(start=end - 24 * _HOUR, end=end), con=self._con
+        events = self._data.read(
+            ops.EVENTS, ListEventsInput(start=end - 24 * _HOUR, end=end)
         )
         shown_candidates: list[dict[str, object]] = []
         shown_incidents: list[dict[str, object]] = []

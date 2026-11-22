@@ -3,11 +3,14 @@
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from eye.contracts import Edge, MetricDef
+from eye.contracts import Edge, GraphView, MetricDef
 from eye.warehouse import operations as ops
 from eye.warehouse.domain import DataParams, DataResponse
+
+_PARTITIONS = TypeAdapter(ops.PartitionWindow)
+_DOMAIN = TypeAdapter(DataResponse)
 
 
 class DataUnavailable(RuntimeError):
@@ -28,42 +31,50 @@ class DataClient:
     def close(self) -> None:
         self.http.close()
 
-    def request(self, method: str, path: str, **kwargs: Any) -> bytes:
+    def _request[R](
+        self, output: TypeAdapter[R], method: str, path: str, **kwargs: Any
+    ) -> R:
         try:
             response = self.http.request(method, path, **kwargs)
             if response.status_code in (400, 404, 422):
-                detail = response.json().get("detail", "invalid warehouse request")
+                try:
+                    body = response.json()
+                except ValueError as exc:
+                    raise DataUnavailable(
+                        f"Invalid warehouse response: {path}"
+                    ) from exc
+                detail = body.get("detail") if isinstance(body, dict) else None
                 raise ValueError(
                     detail if isinstance(detail, str) else "invalid warehouse request"
                 )
             response.raise_for_status()
         except httpx.HTTPError as exc:
             raise DataUnavailable(f"Warehouse request failed: {path}") from exc
-        return response.content
+        try:
+            return output.validate_json(response.content)
+        except ValidationError as exc:
+            raise DataUnavailable(f"Invalid warehouse response: {path}") from exc
 
     def read[T: BaseModel, R](self, operation: ops.Operation[T, R], args: T) -> R:
-        content = self.request(
-            "POST", f"/v1/{operation.path}", json=args.model_dump(mode="json")
+        return self._request(
+            operation.output,
+            "POST",
+            f"/v1/{operation.path}",
+            json=args.model_dump(mode="json"),
         )
-        try:
-            return operation.output.validate_json(content)
-        except ValidationError as exc:
-            raise DataUnavailable(
-                f"Invalid warehouse response: {operation.path}"
-            ) from exc
 
     def partitions(self) -> ops.PartitionWindow:
-        return ops.PartitionWindow.model_validate_json(
-            self.request("GET", "/v1/partitions")
-        )
+        return self._request(_PARTITIONS, "GET", "/v1/partitions")
+
+    def metrics(self) -> list[MetricDef]:
+        return self._request(ops.METRICS, "GET", "/v1/metrics")
 
     def domain(self, path: str, params: DataParams) -> DataResponse:
-        return DataResponse.model_validate_json(
-            self.request(
-                "GET",
-                f"/data/{path}",
-                params=params.model_dump(mode="json", exclude_none=True),
-            )
+        return self._request(
+            _DOMAIN,
+            "GET",
+            f"/data/{path}",
+            params=params.model_dump(mode="json", exclude_none=True),
         )
 
 
@@ -71,11 +82,11 @@ class RemoteGraph:
     def __init__(self, client: DataClient) -> None:
         self.client = client
 
-    def view(self, node: str | None = None, depth: int | None = None) -> ops.GraphView:
+    def view(self, node: str | None = None, depth: int | None = None) -> GraphView:
         return self.client.read(ops.GRAPH, ops.GraphInput(node=node, depth=depth))
 
     def metrics(self) -> list[MetricDef]:
-        return ops.METRICS.validate_json(self.client.request("GET", "/v1/metrics"))
+        return self.client.metrics()
 
     def in_edges(self, node: str) -> list[Edge]:
         return [edge for edge in self.view().edges if edge.dst == node]

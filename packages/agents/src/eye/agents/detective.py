@@ -1,14 +1,15 @@
 """Lead an investigation and enforce the evidence required for its verdict."""
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
-from inspect import isawaitable
+from inspect import isawaitable, iscoroutinefunction
 from itertools import count
 from math import fsum
-from typing import Literal, cast
+from typing import Literal, Protocol, cast
 from uuid import uuid4
 
 import duckdb
@@ -34,6 +35,7 @@ from eye.contracts import (
     Hypothesis,
     Incident,
     InvestigationResult,
+    MetricDef,
     Series,
     SpecialistRequest,
     SpecialistResponse,
@@ -41,25 +43,20 @@ from eye.contracts import (
     TrailStep,
     Verdict,
 )
-from eye.graph.store import GraphStore
 from eye.llm.client import BudgetExceeded, LLMUnavailable
 from eye.llm.runtime import AgentRefused, AgentSpec, ToolSpec, run_agent
-from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
-from eye.tools.drill import (
-    AttributionResult,
-    decompose,
-    drill_down,
-    first_change,
-    mix_rate_split,
-)
+from eye.tools.drill import AttributionResult
 from eye.tools.models import (
+    CompareWindowInput,
     DrillDownInput,
     DrillDownOutput,
     FirstChangeInput,
     FirstChangeOutput,
     ToolOutput,
 )
+from eye.warehouse import operations as ops
+from eye.warehouse.queries import DataQueries, LocalQueries
 
 _PROMPT = files("eye.llm").joinpath("prompts/detective.md")
 _WEEK = timedelta(weeks=1)
@@ -256,48 +253,68 @@ def _publish_hypothesis_ids(
     ]
 
 
+class DetectiveGraph(Protocol):
+    def view(self, node: str | None = None, depth: int | None = None) -> GraphView: ...
+
+    def metrics(self) -> list[MetricDef]: ...
+
+    def cycles_through(self, node: str) -> list[list[str]]: ...
+
+
 class Detective:
     def __init__(
         self,
-        con: duckdb.DuckDBPyConnection,
-        registry: Registry,
-        graph: GraphStore,
+        con: duckdb.DuckDBPyConnection | None,
+        registry: Registry | None,
+        graph: DetectiveGraph,
         *,
         a2a: A2AClient | None = None,
         settings: DetectiveSettings | None = None,
         freshness: SentinelSettings | None = None,
         llm: LlmSettings | None = None,
+        data: DataQueries | None = None,
     ) -> None:
-        self._con = con
         self._registry = registry
         self._graph = graph
         self._a2a = a2a
         self._settings = settings or DetectiveSettings()
         self._freshness = freshness or SentinelSettings()
         self._llm = llm or LlmSettings()
-        self._skeptic = Skeptic(con, registry, freshness=self._freshness, llm=self._llm)
+        if data is None:
+            assert con is not None and registry is not None
+            data = LocalQueries(con, registry, settings=self._freshness)
+        self._data = data
+        self._skeptic = Skeptic(data=data, freshness=self._freshness, llm=self._llm)
+
+    def _metrics(self) -> dict[str, MetricDef]:
+        if self._registry is not None:
+            return self._registry.metrics
+        return {metric.name: metric for metric in self._graph.metrics()}
 
     def _first_changes(
-        self, segment: dict[str, str], window: _Window, nodes: Iterable[str]
+        self,
+        segment: dict[str, str],
+        window: _Window,
+        nodes: Iterable[str],
+        catalog: dict[str, MetricDef],
     ) -> dict[str, datetime | None]:
         scoped: dict[tuple[tuple[str, str], ...], list[str]] = {}
         for node in sorted(nodes):
-            dims = self._registry.get(node).dimensions
+            dims = catalog[node].dimensions
             scope = tuple(
                 sorted((dim, value) for dim, value in segment.items() if dim in dims)
             )
             scoped.setdefault(scope, []).append(node)
         changes: dict[str, datetime | None] = {}
         for scope, metrics in scoped.items():
-            result = first_change(
+            result = self._data.read(
+                ops.FIRST_CHANGE,
                 FirstChangeInput(
                     metrics=metrics,
                     segment=dict(scope),
                     start=window.lookback,
                     end=window.end,
                 ),
-                con=self._con,
-                registry=self._registry,
             )
             changes.update(result.changes)
         return changes
@@ -307,6 +324,7 @@ class Detective:
     ) -> list[Symptom]:
         if cause is None:
             return []
+        catalog = self._metrics()
         names = frontier = {cause.root_node}
         edges = self._graph.view().edges
         while frontier:
@@ -320,18 +338,18 @@ class Detective:
             names |= frontier
         candidates = {
             node
-            for node in (names - {cause.root_node}) & self._registry.metrics.keys()
-            if self._registry.get(node).status == "active"
+            for node in (names - {cause.root_node}) & catalog.keys()
+            if catalog[node].status == "active"
         }
         measured = set(candidates)
         if (
             cause.first_change_ts is None
-            and cause.root_node in self._registry.metrics
-            and self._registry.get(cause.root_node).status == "active"
+            and cause.root_node in catalog
+            and catalog[cause.root_node].status == "active"
         ):
             measured.add(cause.root_node)
         changes = self._first_changes(
-            {**anomaly.segment, **cause.segment}, window, measured
+            {**anomaly.segment, **cause.segment}, window, measured, catalog
         )
         cause_ts = cause.first_change_ts or changes.get(cause.root_node)
         if cause_ts is None:
@@ -352,21 +370,24 @@ class Detective:
         nodes: Iterable[str],
         hypotheses: list[Hypothesis],
     ) -> tuple[list[str], str, datetime] | None:
+        catalog = self._metrics()
         cycles = {
             tuple(cycle)
             for node in dict.fromkeys(nodes)
-            if node in self._registry.metrics
+            if node in catalog
             for cycle in self._graph.cycles_through(node)
         }
         active = {
             node
             for cycle in cycles
             for node in cycle
-            if self._registry.get(node).status == "active"
+            if catalog[node].status == "active"
         }
         changes = {
             node: ts
-            for node, ts in self._first_changes(anomaly.segment, window, active).items()
+            for node, ts in self._first_changes(
+                anomaly.segment, window, active, catalog
+            ).items()
             if ts is not None
         }
         corroborated = {
@@ -407,8 +428,7 @@ class Detective:
     ) -> InvestigationResult:
         investigation_id = investigation_id or uuid4().hex
         window = _Window.from_anomaly(anomaly)
-        common = _WindowTools(self._con, self._registry, self._freshness, window)
-        engine = MetricEngine(self._con, self._registry)
+        common = _WindowTools(self._data, window)
         board: list[Hypothesis] = []
         reviews: dict[str, SkepticResult] = {}
         visited = {anomaly.metric}
@@ -433,7 +453,11 @@ class Detective:
         def cite(tool: ToolSpec) -> ToolSpec:
             async def invoke(args: BaseModel) -> BaseModel:
                 reference = f"ref-{next(references)}"
-                result = tool.fn(args)
+                result = (
+                    tool.fn(args)
+                    if iscoroutinefunction(tool.fn)
+                    else await asyncio.to_thread(tool.fn, args)
+                )
                 output = await result if isawaitable(result) else result
                 summary = (
                     f"{reference}: {output.model_dump(include={'summary'})['summary']}"
@@ -480,23 +504,25 @@ class Detective:
             )
 
         def drill(args: _DrillInput) -> DrillDownOutput:
-            return drill_down(
+            return self._data.read(
+                ops.DRILL,
                 DrillDownInput(**args.model_dump(), **window.bounds()),
-                con=self._con,
-                registry=self._registry,
             )
 
         def formula(args: _MetricInput) -> AttributionResult:
-            return decompose(engine, **args.model_dump(), **window.bounds())
+            return self._data.read(
+                ops.DECOMPOSE,
+                CompareWindowInput(**args.model_dump(), **window.bounds()),
+            )
 
         def mix(args: _DrillInput) -> AttributionResult:
-            return mix_rate_split(
-                engine, args.metric, args.dim, segment=args.segment, **window.bounds()
+            return self._data.read(
+                ops.MIX_RATE, DrillDownInput(**args.model_dump(), **window.bounds())
             )
 
         def query(args: _QueryInput) -> _SeriesOutput:
-            series = engine.query_metric(
-                args.metric, window.start, window.end, args.segment, args.group_by
+            series = self._data.read(
+                ops.SERIES, ops.SeriesInput(**args.model_dump(), **window.bounds())
             )
             return _SeriesOutput(
                 series=series,
@@ -504,14 +530,13 @@ class Detective:
             )
 
         def change(args: _ChangeInput) -> FirstChangeOutput:
-            result = first_change(
+            result = self._data.read(
+                ops.FIRST_CHANGE,
                 FirstChangeInput(
                     metrics=args.metrics,
                     segment=args.segment,
                     **window.bounded(args.start, None),
                 ),
-                con=self._con,
-                registry=self._registry,
             )
             visited.update(args.metrics)
             return result
@@ -769,8 +794,12 @@ class Detective:
             ]
             if answer.root_cause is not None:
                 nodes.append(answer.root_cause.root_node)
-            if inferred := self._detect_loop(
-                anomaly, window, answer.loop or nodes, answer.hypotheses
+            if inferred := await asyncio.to_thread(
+                self._detect_loop,
+                anomaly,
+                window,
+                answer.loop or nodes,
+                answer.hypotheses,
             ):
                 loop, node, changed_at = inferred
                 if not answer.loop:
@@ -793,7 +822,7 @@ class Detective:
                     )
                     if trigger is None:
                         trigger = f"trigger-{uuid4().hex}"
-                        metric = self._registry.get(node)
+                        metric = self._metrics()[node]
                         answer.hypotheses.append(
                             Hypothesis(
                                 id=trigger,
@@ -833,7 +862,7 @@ class Detective:
         cause = answer.root_cause or next(
             (hyp for hyp in answer.hypotheses if hyp.id == answer.trigger), None
         )
-        symptoms = self._symptoms(anomaly, window, cause)
+        symptoms = await asyncio.to_thread(self._symptoms, anomaly, window, cause)
         if symptoms:
             await record(
                 "note",

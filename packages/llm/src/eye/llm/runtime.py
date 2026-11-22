@@ -146,7 +146,11 @@ async def run_agent(
             else:
                 tool = tools[block.name]
                 args = tool.input_model.model_validate(block.input, extra="forbid")
-                output = tool.fn(args)
+                output = (
+                    tool.fn(args)
+                    if inspect.iscoroutinefunction(tool.fn)
+                    else await asyncio.to_thread(tool.fn, args)
+                )
                 if inspect.isawaitable(output):
                     output = await output
                 if not isinstance(output, BaseModel):

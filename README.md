@@ -76,6 +76,18 @@ To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your 
 
 Once [the deployment card](docs/tasks/T26-deployment.md) lands, use Docker Compose. Populate `.env` from `.env.example` with the API key and demo credentials, then run `docker compose up --build -d` and open `http://localhost:8080/`. See the [deployment guide](docs/specs/16-deployment.md#5-steps-to-deploy-for-the-team) for the password-protected tunnel and Codespaces backup.
 
+### Separate read-only data service
+
+With a running Parquet producer, start `uv run eye-data` with the same `SIM_LAKE_DIR`
+(default `data/lake`). To use an existing warehouse instead, set `EYE_WAREHOUSE_PATH`
+on the data service. Check readiness at `http://127.0.0.1:8150/healthz`; it returns
+the completed time range once at least one hour is ready.
+
+Run `EYE_DATA_URL=http://127.0.0.1:8150 uv run eye-core` to read metrics, the causal
+graph, and partition status over HTTP. The Core clock consumes completed hours
+without advancing the producer. Scenario controls and adding metrics from SQL
+remain available only in the legacy local mode.
+
 ## Workspace layout
 
 The implicit `eye` namespace is split across `packages/{contracts,data,llm,agents,orchestrator,specialists,mcp}/src/eye` and `sim/src/eye/sim`. SellerOS lives independently in `packages/selleros`. The reusable `agent_runtime` package lives in `packages/agent_runtime/src/agent_runtime` and imports neither Eye nor SellerOS. Eye tests and scripts stay at the root; the LLM member owns shared prompt resources.

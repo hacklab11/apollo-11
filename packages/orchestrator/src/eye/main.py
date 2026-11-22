@@ -2,10 +2,11 @@
 
 import json
 import logging
+import os
 import sys
 import time
-from collections.abc import Sequence
-from contextlib import ExitStack, closing
+from collections.abc import Iterator, Sequence
+from contextlib import ExitStack, closing, contextmanager
 from datetime import UTC, datetime
 from importlib import import_module
 from types import ModuleType
@@ -14,6 +15,7 @@ from uuid import uuid4
 
 import uvicorn
 from anthropic import AnthropicError
+from fastapi import FastAPI
 
 from eye.a2a_client import A2AClient
 from eye.agents.reporter import Reporter
@@ -21,7 +23,7 @@ from eye.agents.sentinel import Sentinel
 from eye.api.app import create_app
 from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, TrailStep
-from eye.datasource import open_source
+from eye.datasource import ServiceClock, open_source
 from eye.incidents.store import IncidentStore
 from eye.llm.client import (
     BudgetExceeded,
@@ -31,10 +33,13 @@ from eye.llm.client import (
     configure_client,
 )
 from eye.llm.runtime import AgentRefused
-from eye.orchestrator import Orchestrator, StepSink
+from eye.orchestrator import HOUR, Orchestrator, StepSink
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
-from eye.tools.stats import expected
+from eye.tools.models import BaselineCompareInput
+from eye.warehouse import operations as ops
+from eye.warehouse.client import DataClient, RemoteGraph
+from eye.warehouse.queries import LocalQueries
 
 if TYPE_CHECKING:
     from eye.agents.cartographer import Cartographer
@@ -183,26 +188,20 @@ def _reporter(
     return CoreReporter(settings=settings.llm)
 
 
-def main() -> None:
-    logging.basicConfig(
-        level=logging.WARNING,
-        format="%(message)s",
-        stream=sys.stdout,
-        force=True,
-    )
-    settings = load_settings()
-    bootstrap = import_module("eye.graph.bootstrap")
+@contextmanager
+def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[FastAPI]:
     detective = _optional_module("eye.agents.detective")
     cartographer = _optional_module("eye.agents.cartographer")
     llm = LLMClient(settings.llm)
     configure_client(llm)
 
     with ExitStack() as stack:
-        source = stack.enter_context(open_source(settings))
-        scenarios = source.scenarios
-        connection = stack.enter_context(source.cursor())
-        registry = load_registry(connection)
-        engine = MetricEngine(connection, registry)
+        client = (
+            stack.enter_context(closing(DataClient(data_url))) if data_url else None
+        )
+        local = stack.enter_context(open_source(settings)) if client is None else None
+        source = ServiceClock(client) if client is not None else local
+        assert source is not None
         incidents = stack.enter_context(
             closing(
                 IncidentStore(
@@ -212,14 +211,28 @@ def main() -> None:
                 )
             )
         )
-        graph = bootstrap.load_or_bootstrap(
-            engine, scenario_hours=sorted(incidents.excluded_hours(source.now))
-        )
-        cart = (
-            cartographer.Cartographer(engine, graph, llm=settings.llm)
-            if cartographer is not None
-            else None
-        )
+        if client is not None:
+            connection = registry = engine = None
+            graph = RemoteGraph(client)
+            queries = client
+            cart = None
+        else:
+            assert local is not None
+            bootstrap = import_module("eye.graph.bootstrap")
+            connection = stack.enter_context(local.cursor())
+            registry = load_registry(connection)
+            engine = MetricEngine(connection, registry)
+            graph = bootstrap.load_or_bootstrap(
+                engine, scenario_hours=sorted(incidents.excluded_hours(source.now))
+            )
+            queries = LocalQueries(
+                connection, registry, graph, settings.sentinel, engine
+            )
+            cart = (
+                cartographer.Cartographer(engine, graph, llm=settings.llm)
+                if cartographer is not None
+                else None
+            )
 
         async def refine(clean_hours: Sequence[datetime], on_step: StepSink) -> None:
             assert cart is not None
@@ -238,6 +251,7 @@ def main() -> None:
                 settings=settings.detective,
                 freshness=settings.sentinel,
                 llm=settings.llm,
+                data=queries,
             ).investigate
             if detective is not None
             else None
@@ -246,7 +260,12 @@ def main() -> None:
         def z_lookup(
             name: str, segment: dict[str, str], ts: datetime
         ) -> tuple[float, float]:
-            reading = expected(name, ts, segment, con=connection, registry=registry)
+            reading = queries.read(
+                ops.BASELINE,
+                BaselineCompareInput(
+                    name=name, start=ts, end=ts + HOUR, segment=segment
+                ),
+            ).points[0]
             return reading.z if reading.z is not None else float(
                 "inf"
             ), reading.completeness
@@ -260,24 +279,38 @@ def main() -> None:
                 settings=settings.sentinel,
                 llm=settings.llm,
                 graph=graph,
+                data=queries,
             ),
             incidents,
             llm,
             z_lookup,
-            scenarios=scenarios,
-            scenario_titles=source.scenario_titles,
+            scenarios=local.scenarios if local is not None else None,
+            scenario_titles=local.scenario_titles if local is not None else None,
             a2a=a2a,
             investigate=investigate,
             add_metric=cart.add_metric if cart else None,
             refine=refine if cart else None,
-            invalidate=engine.invalidate,
-            record_scenario=source.record_scenario,
+            **({"invalidate": engine.invalidate} if engine is not None else {}),
+            **({"record_scenario": local.record_scenario} if local is not None else {}),
         )
         incidents.reporter = _reporter(llm, settings, orchestrator).write
-        graph.on_change(lambda view: orchestrator.emit("graph_changed", view))
-        stack.callback(graph.save)
+        if local is not None:
+            graph.on_change(lambda view: orchestrator.emit("graph_changed", view))
+            stack.callback(graph.save)
+        yield create_app(orchestrator, connection, registry, graph, engine, data=client)
+
+
+def main() -> None:
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(message)s",
+        stream=sys.stdout,
+        force=True,
+    )
+    settings = load_settings()
+    with core_app(settings, data_url=os.environ.get("EYE_DATA_URL")) as app:
         uvicorn.run(
-            create_app(orchestrator, connection, registry, graph, engine),
+            app,
             host="127.0.0.1",
             port=settings.ports.core,
             access_log=False,

@@ -15,8 +15,6 @@ from eye.contracts import Anomaly, Dimension, Evidence, Hypothesis, TrailStep
 from eye.llm.client import BudgetExceeded
 from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.loader import Registry
-from eye.tools.context import check_freshness, list_events, planned_effect_check
-from eye.tools.drill import compare_segments
 from eye.tools.models import (
     BaselineCompareInput,
     BaselineCompareOutput,
@@ -29,7 +27,8 @@ from eye.tools.models import (
     PlannedEffectCheckInput,
     PlannedEffectCheckOutput,
 )
-from eye.tools.stats import baseline_compare
+from eye.warehouse import operations as ops
+from eye.warehouse.queries import DataQueries, LocalQueries
 
 _HOUR = timedelta(hours=1)
 _PROMPT = files("eye.llm").joinpath("prompts/skeptic.md")
@@ -96,67 +95,64 @@ class _Window:
 
 @dataclass(frozen=True)
 class _WindowTools:
-    con: duckdb.DuckDBPyConnection
-    registry: Registry
-    settings: SentinelSettings
+    data: DataQueries
     window: _Window
 
     def baseline(self, args: _MetricInput) -> BaselineCompareOutput:
-        return baseline_compare(
+        return self.data.read(
+            ops.BASELINE,
             BaselineCompareInput(
                 name=args.metric, segment=args.segment, **self.window.bounds()
             ),
-            con=self.con,
-            registry=self.registry,
         )
 
     def freshness(self, args: _MetricInput) -> CheckFreshnessOutput:
-        return check_freshness(
+        return self.data.read(
+            ops.FRESHNESS,
             CheckFreshnessInput(**args.model_dump(), **self.window.bounds()),
-            con=self.con,
-            registry=self.registry,
-            settings=self.settings,
         )
 
     def controls(self, args: _ControlInput) -> CompareSegmentsOutput:
         segment = {dim: value for dim, value in args.segment.items() if dim != args.dim}
-        return compare_segments(
+        return self.data.read(
+            ops.COMPARE,
             CompareSegmentsInput(
                 **args.model_dump(exclude={"segment"}),
                 segment=segment,
                 **self.window.bounds(),
             ),
-            con=self.con,
-            registry=self.registry,
         )
 
     def events(
         self, args: _EventsInput, *, planned_only: bool = False
     ) -> ListEventsOutput:
         filters = args.model_dump(exclude={"start", "end", "planned"})
-        return list_events(
+        return self.data.read(
+            ops.EVENTS,
             ListEventsInput(
                 **filters,
                 **self.window.bounded(args.start, args.end),
                 planned=True if planned_only else args.planned,
             ),
-            con=self.con,
         )
 
 
 class Skeptic:
     def __init__(
         self,
-        con: duckdb.DuckDBPyConnection,
-        registry: Registry,
+        con: duckdb.DuckDBPyConnection | None = None,
+        registry: Registry | None = None,
         *,
         freshness: SentinelSettings | None = None,
         llm: LlmSettings | None = None,
+        data: DataQueries | None = None,
     ) -> None:
-        self._con = con
-        self._registry = registry
         self._freshness = freshness or SentinelSettings()
         self._llm = llm or LlmSettings()
+        if data is None:
+            assert con is not None and registry is not None
+            data = LocalQueries(con, registry, settings=self._freshness)
+        self._data = data
 
     async def review(
         self,
@@ -167,7 +163,7 @@ class Skeptic:
         hypothesis: Hypothesis | None = None,
     ) -> SkepticResult:
         window = _Window.from_anomaly(anomaly)
-        tools = _WindowTools(self._con, self._registry, self._freshness, window)
+        tools = _WindowTools(self._data, window)
         entry = _MetricInput(metric=anomaly.metric, segment=anomaly.segment)
         checks: dict[str, PlannedEffectCheckOutput] = {}
         seasonal = False
@@ -198,12 +194,11 @@ class Skeptic:
                 for event in scoped_events.events
             ):
                 raise ValueError("Plan is outside the entry segment or evidence window")
-            result = planned_effect_check(
+            result = self._data.read(
+                ops.PLANNED,
                 PlannedEffectCheckInput(
                     event_id=args.event_id, **entry.model_dump(), **window.bounds()
                 ),
-                con=self._con,
-                registry=self._registry,
             )
             checks[args.event_id] = result
             return result

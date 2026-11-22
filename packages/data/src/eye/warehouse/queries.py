@@ -21,6 +21,7 @@ from eye.tools.drill import (
 )
 from eye.tools.stats import baseline_compare, scan_anomalies, scan_divergent_segments
 from eye.warehouse import operations as ops
+from eye.warehouse.landing import COMPLETE_HOURS
 
 
 class DataQueries(Protocol):
@@ -86,8 +87,7 @@ class LocalQueries:
     def partitions(self) -> ops.PartitionWindow:
         with self.connection.cursor() as cursor:
             row = cursor.execute(
-                "SELECT min(ts), max(ts) FROM (SELECT ts FROM partition_status GROUP BY ts "
-                "HAVING bool_and(coalesce(loaded_rows >= expected_rows, false)))"
+                f"SELECT min(ts), max(ts) FROM ({COMPLETE_HOURS})"
             ).fetchone()
         assert row is not None
         return ops.PartitionWindow(earliest=row[0], latest=row[1])

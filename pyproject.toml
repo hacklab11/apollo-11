@@ -71,6 +71,7 @@ source_modules = [
     "eye.registry",
     "eye.graph",
     "eye.tools",
+    "eye.warehouse",
     "eye.llm",
     "eye.agents",
     "eye.specialists",
@@ -99,6 +100,7 @@ forbidden_modules = [
     "eye.registry",
     "eye.graph",
     "eye.tools",
+    "eye.warehouse",
     "eye.llm",
     "eye.agents",
     "eye.specialists",
@@ -125,6 +127,7 @@ source_modules = [
     "eye.registry",
     "eye.graph",
     "eye.tools",
+    "eye.warehouse",
     "eye.llm",
 ]
 forbidden_modules = [

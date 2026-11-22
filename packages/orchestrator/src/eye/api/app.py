@@ -7,12 +7,11 @@ from pathlib import Path
 from typing import Annotated, Protocol
 
 import duckdb
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import AwareDatetime, BaseModel, TypeAdapter, ValidationError
 
 from eye.api import chat
-from eye.api.data_api import create_router
 from eye.contracts import (
     AddMetricRequest,
     AddMetricResult,
@@ -33,7 +32,10 @@ from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.tools.models import BaselineCompareInput, BaselineCompareOutput
-from eye.tools.stats import baseline_compare
+from eye.warehouse import operations as ops
+from eye.warehouse.client import DataClient, DataUnavailable
+from eye.warehouse.domain import create_router
+from eye.warehouse.queries import LocalQueries
 
 _SEGMENT = TypeAdapter(dict[Dimension, str])
 _PARAMS = TypeAdapter(dict)
@@ -64,12 +66,20 @@ class TruthRow(BaseModel):
 
 def create_app(
     orchestrator: Orchestrator,
-    connection: duckdb.DuckDBPyConnection,
-    registry: Registry,
+    connection: duckdb.DuckDBPyConnection | None,
+    registry: Registry | None,
     graph: Graph,
-    engine: MetricEngine,
+    engine: MetricEngine | None,
     web_dir: Path = Path("web"),
+    *,
+    data: DataClient | None = None,
 ) -> FastAPI:
+    if data is None:
+        assert connection is not None and registry is not None and engine is not None
+        queries = LocalQueries(connection, registry, engine=engine)
+    else:
+        queries = data
+
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         try:
@@ -79,6 +89,11 @@ def create_app(
             await orchestrator.close()
 
     app = FastAPI(lifespan=lifespan)
+
+    @app.exception_handler(DataUnavailable)
+    async def warehouse_unavailable(_: Request, exc: DataUnavailable) -> JSONResponse:
+        return JSONResponse({"detail": str(exc)}, status_code=503)
+
     app.include_router(
         chat.create_router(
             orchestrator.settings.llm,
@@ -89,19 +104,26 @@ def create_app(
     def compare(
         name: str, start: datetime, end: datetime, segment: dict[str, str]
     ) -> BaselineCompareOutput:
-        return baseline_compare(
+        return queries.read(
+            ops.BASELINE,
             BaselineCompareInput(name=name, start=start, end=end, segment=segment),
-            con=connection,
-            registry=registry,
         )
 
     def query_metric(
         name: str, start: datetime, end: datetime, segment: dict[str, str]
     ) -> list[Series]:
-        return engine.query_metric(name, start, end, segment)
+        return queries.read(
+            ops.SERIES,
+            ops.SeriesInput(metric=name, start=start, end=end, segment=segment),
+        )
 
     app.include_router(
-        create_router(connection, query_metric=query_metric, baseline_compare=compare)
+        create_router(
+            connection,
+            query_metric=query_metric,
+            baseline_compare=compare,
+            read=data.domain if data is not None else None,
+        )
     )
 
     @app.get("/api/status")
@@ -109,7 +131,7 @@ def create_app(
         return orchestrator.status()
 
     @app.get("/api/graph")
-    async def graph_view(
+    def graph_view(
         node: str | None = None, depth: Annotated[int | None, Query(ge=0)] = None
     ) -> GraphView:
         if node is not None and not any(
@@ -119,7 +141,7 @@ def create_app(
         return graph.view(node, depth)
 
     @app.get("/api/metrics", response_model_exclude={"__all__": {"sql"}})
-    async def metrics() -> list[MetricDef]:
+    def metrics() -> list[MetricDef]:
         return graph.metrics()
 
     def lookup_metric(name: str) -> MetricDef:
@@ -129,7 +151,7 @@ def create_app(
         raise HTTPException(404, "unknown metric")
 
     @app.get("/api/metrics/{name}/definition")
-    async def definition(name: str) -> MetricDefinition:
+    def definition(name: str) -> MetricDefinition:
         return MetricDefinition(
             **lookup_metric(name).model_dump(),
             in_edges=graph.in_edges(name),
@@ -255,7 +277,11 @@ def create_app(
 
     @app.get("/api/demo/truth")
     def truth() -> list[TruthRow]:
-        if not orchestrator.settings.demo.show_truth or orchestrator.scenarios is None:
+        if (
+            connection is None
+            or not orchestrator.settings.demo.show_truth
+            or orchestrator.scenarios is None
+        ):
             raise HTTPException(404, "not found")
         with connection.cursor() as cursor:
             if not cursor.execute(

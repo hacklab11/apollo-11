@@ -27,6 +27,7 @@ from eye.tools.models import (
     ScanAnomaliesInput,
     ScanDivergentSegmentsInput,
     ScanOutput,
+    WindowInput,
 )
 
 
@@ -92,13 +93,14 @@ METRICS = TypeAdapter(list[MetricDef])
 
 def enforce_query_bounds(args: BaseModel) -> None:
     # Do not change the historical LLM tool schemas (recorded responses depend on them).
-    if (start := getattr(args, "start", None)) and args.end - start > timedelta(
-        days=60
-    ):
+    if isinstance(args, WindowInput) and args.end - args.start > timedelta(days=60):
         raise ValueError("window must not exceed 60 days")
     if (
-        start := getattr(args, "base_start", None)
-    ) and args.base_end - start > timedelta(days=60):
+        isinstance(args, CompareWindowInput)
+        and args.base_start is not None
+        and args.base_end is not None
+        and args.base_end - args.base_start > timedelta(days=60)
+    ):
         raise ValueError("baseline window must not exceed 60 days")
     if isinstance(args, ScanDivergentSegmentsInput) and args.window_hours > 24 * 60:
         raise ValueError("divergence window must not exceed 60 days")

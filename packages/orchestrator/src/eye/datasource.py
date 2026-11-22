@@ -13,6 +13,8 @@ from eye.config import Settings
 from eye.contracts import ScenarioId
 from eye.orchestrator import HOUR, Scenarios
 from eye.schema import validate_schema
+from eye.warehouse import operations as ops
+from eye.warehouse.client import DataClient, DataUnavailable
 
 
 class DataSource(Protocol):
@@ -71,6 +73,22 @@ class DuckDBSource:
 
     def close(self) -> None:
         self._con.close()
+
+
+class ServiceClock:
+    """Consume only completed hours; this clock never advances the producer."""
+
+    def __init__(self, client: DataClient) -> None:
+        self.client = client
+        window = client.partitions()
+        if window.earliest is None or window.latest is None:
+            raise DataUnavailable("Warehouse has no fully loaded hour")
+        self.now = self.live_start = window.latest + HOUR
+        self.history_start = window.earliest
+
+    def step(self) -> None:
+        if self.client.read(ops.COMPLETE_HOUR, ops.CompleteHourInput(ts=self.now)):
+            self.now += HOUR
 
 
 @contextmanager
