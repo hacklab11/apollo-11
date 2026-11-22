@@ -51,6 +51,12 @@ so services can be independently replicated (for example,
 Core and SellerOS currently retain process-local state/file-backed storage;
 multiple replicas are not a distributed-state or multi-writer deployment.
 
+Sentinel, Detective, Skeptic, Reporter, and Cartographer have private A2A
+endpoints at their Compose service names on ports 8210–8250, respectively.
+Discover each at `/.well-known/agent-card.json`. To run multiple replicas,
+use `docker compose up -d --wait --scale detective=3`. Use blocking A2A
+sends: task state stays with the replica that handles a request.
+
 ### S8 demo against the running continuous stack
 
 Start the stack with `docker compose up -d --build --wait` as above, then run

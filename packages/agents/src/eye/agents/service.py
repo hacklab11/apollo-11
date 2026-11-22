@@ -89,6 +89,8 @@ def _investigate(
     graph = RemoteGraph(data)
 
     async def investigate(request: InvestigateRequest, run: Run) -> InvestigateResult:
+        delegation = asyncio.Lock()
+
         async def review(
             anomaly: Anomaly,
             investigation_id: str,
@@ -96,24 +98,27 @@ def _investigate(
             *,
             hypothesis: Hypothesis | None = None,
         ) -> SkepticResult:
-            response = await send_skill(
-                http,
-                skeptic_url,
-                "challenge",
-                ChallengeRequest(
-                    anomaly=anomaly,
-                    investigation_id=investigation_id,
-                    hypothesis=hypothesis,
-                ),
-                run.delegate(),
-                ChallengeResult,
-            )
-            run.add_usage(response.usage)
-            if response.status != "done" or response.result is None:
-                raise ValueError("Skeptic did not complete the challenge")
-            for step in response.result.trail:
-                await on_step(step)
-            return response.result.review
+            # Parallel tool calls must not delegate the same remaining budget twice.
+            async with delegation:
+                response = await send_skill(
+                    http,
+                    skeptic_url,
+                    "challenge",
+                    ChallengeRequest(
+                        anomaly=anomaly,
+                        investigation_id=investigation_id,
+                        hypothesis=hypothesis,
+                    ),
+                    run.delegate(),
+                    ChallengeResult,
+                )
+                run.add_usage(response.usage)
+                run.check_tokens()
+                if response.status != "done" or response.result is None:
+                    raise ValueError("Skeptic did not complete the challenge")
+                for step in response.result.trail:
+                    await on_step(step)
+                return response.result.review
 
         detective = Detective(
             None,
