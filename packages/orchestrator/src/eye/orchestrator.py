@@ -453,7 +453,7 @@ class Orchestrator(DBOSConfiguredInstance):
             self.emit("investigation_finished", result.investigation)
             self.emit(
                 "incident_upserted",
-                self.incidents.as_v2(self.incidents.get(incident.id)),
+                self.incidents.get(incident.id),
             )
 
     @DBOS.step()
@@ -469,7 +469,7 @@ class Orchestrator(DBOSConfiguredInstance):
     @DBOS.step()
     def update_lifecycle(self, ts: datetime) -> None:
         for incident in self.incidents.lifecycle(ts, self.z_lookup):
-            self.emit("incident_upserted", self.incidents.as_v2(incident), ts)
+            self.emit("incident_upserted", incident, ts)
 
     @DBOS.workflow()
     async def map_metric(

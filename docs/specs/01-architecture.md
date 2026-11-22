@@ -71,8 +71,8 @@ Rules:
 - Human mutations use authenticated `request.state.person`, falling back to the
   trusted proxy's `X-Eye-Person` header; without either they return 401. The proxy
   must strip untrusted identity headers. Closed incidents carry the
-  person's identity, note and timestamp. The v2 API projects legacy persisted
-  lifecycle statuses to mitigating/recovered without rewriting incident history.
+  person's identity, note and timestamp. Existing HTTP routes and SSE retain v1
+  incident shapes; A2A payloads project lifecycle statuses to mitigating/recovered.
 - At most `orchestrator.max_concurrent_investigations` investigations run at the same time.
 - If `orchestrator.pause_sim_during_investigation` is true, step 1 waits until no investigation runs. This keeps the demo easy to follow.
 - The Detective's time window is fixed at the anomaly's `ts`. New data after that does not change the investigation.

@@ -19,6 +19,8 @@ from eye.contracts import (
     Dimension,
     Edge,
     GraphView,
+    Incident,
+    IncidentStatus,
     MetricDef,
     SentinelDecision,
     Series,
@@ -29,7 +31,6 @@ from eye.contracts_v2 import (
     DEFAULT_TENANT,
     IncidentCloseRequest,
     IncidentClosure,
-    IncidentStatus,
     IncidentV2,
 )
 from eye.orchestrator import Orchestrator, Status, StepInProgress
@@ -220,20 +221,19 @@ def create_app(
         ]
 
     @app.get("/api/incidents")
-    async def incidents(status: IncidentStatus | None = None) -> list[IncidentV2]:
+    async def incidents(status: IncidentStatus | None = None) -> list[Incident]:
         return [
             item.model_copy(update={"root_cause": None, "hypotheses": []})
-            for raw in orchestrator.incidents.all()
-            for item in [orchestrator.incidents.as_v2(raw)]
+            for item in orchestrator.incidents.all()
             if item.merged_into is None and (status is None or item.status == status)
         ]
 
     @app.get("/api/incidents/{id}")
-    async def incident(id: str) -> IncidentV2:
+    async def incident(id: str) -> Incident:
         item = orchestrator.incidents.get(id)
         if item is None:
             raise HTTPException(404, "unknown incident")
-        return orchestrator.incidents.as_v2(item)
+        return item
 
     @app.post("/api/incidents/{id}/close")
     async def close_incident(
@@ -257,7 +257,7 @@ def create_app(
             incident_id=id,
             detail={"note": request.note},
         )
-        orchestrator.emit("incident_upserted", item)
+        orchestrator.emit("incident_upserted", orchestrator.incidents.get(id))
         return item
 
     @app.get("/api/audit")

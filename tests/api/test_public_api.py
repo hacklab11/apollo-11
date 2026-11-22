@@ -26,13 +26,14 @@ from eye.contracts import (
     Edge,
     Event,
     GraphView,
+    Incident,
     MetricDef,
     SentinelDecision,
     Series,
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import AgentResult, IncidentV2
+from eye.contracts_v2 import AgentResult
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
 from eye.registry.engine import MetricEngine
@@ -192,9 +193,9 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         )
         assert get("/api/anomalies", since="2027-01-01T00:00:00Z") == []
         (item,) = get("/api/incidents", status="open")
-        sample = IncidentV2.model_validate(item)
+        sample = Incident.model_validate(item)
         assert not sample.hypotheses
-        assert IncidentV2.model_validate(get(f"/api/incidents/{sample.id}")).hypotheses
+        assert Incident.model_validate(get(f"/api/incidents/{sample.id}")).hypotheses
         assert all(
             TrailStep.model_validate(step)
             for step in get(f"/api/incidents/{sample.id}/trail")
@@ -325,6 +326,24 @@ async def test_sse_tick_and_heartbeat(
             await task
         async with aclosing(orchestrator.events.stream(0.01)) as stream:
             assert await anext(stream) == ": heartbeat\n\n"
+
+
+@pytest.mark.parametrize(
+    "status", ["open", "persisting", "resolved", "innocent", "deferred"]
+)
+def test_legacy_incident_statuses(
+    service: tuple[FastAPI, Settings, Orchestrator], status: str
+) -> None:
+    app, _, core = service
+    item = core.incidents.all()[0]
+    item.status = status
+    core.incidents._save(item)
+    with TestClient(app) as client:
+        response = client.get("/api/incidents", params={"status": status})
+        assert response.status_code == 200, response.text
+        assert Incident.model_validate(response.json()[0]).status == status
+        detail = client.get(f"/api/incidents/{item.id}")
+        assert Incident.model_validate(detail.json()).status == status
 
 
 @pytest.mark.parametrize(
