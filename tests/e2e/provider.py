@@ -177,7 +177,7 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             return tool("ask_skeptic", {"hypothesis_id": root["id"]})
         if len(outputs) == 4:
             return tool(
-                "submit",
+                "final_result__Submission",
                 {
                     "verdict": "CONFIRMED",
                     "summary": "Scripted price-change investigation completed after deterministic tools and Skeptic review.",

@@ -1,25 +1,23 @@
 import json
-import os
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Iterator
 from contextlib import closing
-from copy import deepcopy
 from datetime import UTC, datetime, timedelta
-from inspect import isawaitable
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import duckdb
-import httpx
 import pytest
-from anthropic.types.beta import BetaMessage
-from fastapi import FastAPI
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from eye.a2a_client import A2AClient
+from agent_runtime import Budget, InMemoryKillSwitch
 from eye.agents.detective import Detective, _Submission
-from eye.agents.skeptic import Skeptic
-from eye.api.data_api import create_router
-from eye.config import A2aSettings, DetectiveSettings, LlmSettings, Settings
+from eye.config import DetectiveSettings, LlmSettings
 from eye.contracts import (
     Anomaly,
     Contribution,
@@ -30,17 +28,23 @@ from eye.contracts import (
     Verdict,
 )
 from eye.graph.store import GraphStore
-from eye.llm.client import BudgetExceeded, LLMClient
-from eye.llm.runtime import AgentSpec
 from eye.registry.loader import Registry, load_registry
 from eye.sim.store import Store
-from eye.specialists.app import create_app
-from eye.specialists.tools import DataClient
+from eye.warehouse.client import DataUnavailable
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/llm"
 START = datetime(2026, 11, 27, 3, tzinfo=UTC)
 HOUR = timedelta(hours=1)
 END = START + 2 * HOUR
+
+
+@pytest.fixture(autouse=True)
+def model_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "eye.agents.detective.LlmSettings",
+        lambda: LlmSettings(
+            prices={"detective": {"input_per_mtok": 0, "output_per_mtok": 0}}
+        ),
+    )
 
 
 @pytest.fixture
@@ -164,133 +168,6 @@ def make_graph(registry: Registry, case: str) -> GraphStore:
     return graph
 
 
-async def scenario(
-    case: str,
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    live: bool,
-    cache_dir: Path = FIXTURES,
-) -> None:
-    seed(world, case)
-    registry = load_registry(world)
-    mode = "record" if live else "replay"
-    sdk = None if live else Mock()
-    if sdk is not None:
-        sdk.beta.messages.create = AsyncMock(
-            side_effect=AssertionError("Replay tried to go live")
-        )
-    clients = {
-        agent: LLMClient(
-            LlmSettings(mode=mode, cache_path=cache_dir / f"{agent}_{case}.jsonl"), sdk
-        )
-        for agent in ("detective", "skeptic")
-    }
-
-    class Transport:
-        async def create(self, request: dict) -> BetaMessage:
-            prompt = request["system"][0]["text"]
-            return await clients[
-                "skeptic" if prompt.startswith("You are the Skeptic") else "detective"
-            ].create(request)
-
-    monkeypatch.setattr("eye.llm.client._client", Transport())
-    core = FastAPI()
-    core.include_router(create_router(world))
-    settings = Settings(
-        a2a=A2aSettings(
-            growth_url="http://specialists/growth",
-            marketplace_url="http://specialists/marketplace",
-            discovery_url="http://specialists/discovery",
-            selleros_url="http://specialists/selleros",
-        )
-    )
-    steps: list[TrailStep] = []
-
-    async def trail(step: TrailStep) -> None:
-        steps.append(step)
-
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=core)) as data:
-        app = create_app(settings, DataClient(data, "http://core/data"))
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
-            detective = Detective(
-                world,
-                registry,
-                make_graph(registry, case),
-                a2a=A2AClient(settings.a2a, http_client=http),
-                review=Skeptic(world, registry).review,
-            )
-            result = await detective.investigate(
-                anomaly(case), trail, investigation_id=f"inv-{case}"
-            )
-
-    root = result.root_cause
-    print(
-        f"{case.upper()}: {result.verdict}, root={root.root_node if root else None}; {result.summary}"
-    )
-    print("Trail:", ", ".join(step.tool or step.action for step in steps))
-    assert result.verdict == "CONFIRMED", (result.summary, result.open_questions)
-    assert root is not None and root.cause_type == "release"
-    assert root.root_node == (
-        "search_relevance" if case == "s3" else "cart_to_checkout_rate"
-    )
-    assert result.trigger is None or result.trigger in {h.id for h in result.hypotheses}
-    assert len({e.group for e in root.evidence_for}) >= 2
-    cited_steps = {step.id: step for step in steps if step.actor == "detective"}
-    assert all(e.step_id in cited_steps for e in root.evidence_for)
-    assert any(
-        evidence.group == "change_log"
-        and cited_steps[evidence.step_id].tool == "list_events"
-        for evidence in root.evidence_for
-    )
-    assert sum(row.share for row in result.contributions) == pytest.approx(1, abs=0.02)
-    assert [step.n for step in steps] == list(range(1, len(steps) + 1))
-    assert any(step.actor == "skeptic" for step in steps)
-    if case == "s7":
-        assert any(
-            step.actor == "skeptic"
-            and step.tool == "planned_effect_check"
-            and step.output is not None
-            and step.output["verdict"] == "opposite"
-            for step in steps
-        )
-    assert any(
-        step.action == "a2a_call" and step.output and step.output["answered"]
-        for step in steps
-    )
-    if sdk is not None:
-        sdk.beta.messages.create.assert_not_awaited()
-
-
-@pytest.mark.live
-@pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["s3", "s7"])
-async def test_record_fixture(
-    case: str,
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        pytest.fail("ANTHROPIC_API_KEY is required to record live fixtures")
-    await scenario(case, world, monkeypatch, live=True, cache_dir=tmp_path)
-    for agent in ("detective", "skeptic"):
-        filename = f"{agent}_{case}.jsonl"
-        (FIXTURES / filename).write_bytes((tmp_path / filename).read_bytes())
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["s3", "s7"])
-async def test_scenario_replay(
-    case: str,
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    await scenario(case, world, monkeypatch, live=False)
-    assert "replay_miss" not in capsys.readouterr().out
-
-
 def hypothesis() -> Hypothesis:
     return Hypothesis(
         id="H1",
@@ -332,198 +209,346 @@ def submission(root: Hypothesis, verdict: Verdict = "CONFIRMED") -> _Submission:
     )
 
 
+def scripted(
+    monkeypatch: pytest.MonkeyPatch, calls: list[tuple[str, dict]]
+) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        index = sum(isinstance(m, ModelResponse) for m in messages)
+        name, args = calls[min(index, len(calls) - 1)]
+        if name == "submit":
+            name = next(
+                t.name for t in info.output_tools if t.name.endswith("_Submission")
+            )
+        return ModelResponse(parts=[ToolCallPart(name, args)])
+
+    model = FunctionModel(respond, model_name="detective")
+    monkeypatch.setattr("eye.agents.detective.build_model", lambda *_: model)
+    return model
+
+
 @pytest.mark.asyncio
-async def test_unavailable_specialist_and_weak_confirmation(
+async def test_data_unavailable_retries_and_preserves_board(
     world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seed(world, "s3")
     registry = load_registry(world)
+
+    def unavailable(*args: object) -> None:
+        raise DataUnavailable("Warehouse request failed")
+
+    monkeypatch.setattr("eye.agents.detective._WindowTools.baseline", unavailable)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        turn = sum(isinstance(message, ModelResponse) for message in messages)
+        if turn == 0:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "update_hypotheses",
+                        {"hypotheses": [hypothesis().model_dump(mode="json")]},
+                    )
+                ]
+            )
+        if turn == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("baseline_compare", {"metric": "search_conversion"})
+                ]
+            )
+        assert any(
+            isinstance(part, ToolReturnPart)
+            and part.outcome == "retried"
+            and part.content == "Warehouse request failed"
+            for message in messages
+            for part in message.parts
+        )
+        name = next(t.name for t in info.output_tools if t.name.endswith("GaveUp"))
+        return ModelResponse(parts=[ToolCallPart(name, {"reason": "Data unavailable"})])
+
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(respond, model_name="detective"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "budget"
+    assert result.verdict == "HYPOTHESIS"
+    assert result.hypotheses[0].statement == hypothesis().statement
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ValueError, KeyError, DataUnavailable])
+async def test_failed_tool_calls_are_recorded(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[Exception],
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    def fail(*args: object) -> None:
+        raise error("Tool failed")
+
+    monkeypatch.setattr("eye.agents.detective._WindowTools.baseline", fail)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("baseline_compare", {"metric": "search_conversion"})
+                ]
+            )
+        name = next(t.name for t in info.output_tools if t.name.endswith("GaveUp"))
+        return ModelResponse(parts=[ToolCallPart(name, {"reason": "Tool failed"})])
+
+    trail = AsyncMock()
+    await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(respond, model_name="detective"),
+    ).investigate(anomaly("s3"), trail)
+    steps = [call.args[0] for call in trail.await_args_list]
+    failed = [step for step in steps if step.tool == "baseline_compare"]
+    assert len(failed) == 1
+    assert failed[0].action == "tool_call"
+    assert failed[0].input == {"metric": "search_conversion"}
+    assert failed[0].output is None
+    assert failed[0].output_summary == f"{error.__name__}: tool baseline_compare failed"
+    assert [step.n for step in steps] == list(range(1, len(steps) + 1))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ending,expected", [("gave_up", "budget"), ("needs_input", "error")]
+)
+async def test_explicit_end_states_preserve_board(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    ending: str,
+    expected: str,
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "update_hypotheses",
+                        {"hypotheses": [hypothesis().model_dump(mode="json")]},
+                    )
+                ]
+            )
+        suffix = "GaveUp" if ending == "gave_up" else "NeedsInput"
+        name = next(t.name for t in info.output_tools if t.name.endswith(suffix))
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    name,
+                    {"reason": "Insufficient evidence"}
+                    if ending == "gave_up"
+                    else {"question": "Which release?"},
+                )
+            ]
+        )
+
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(respond, model_name="detective"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == expected
+    assert result.verdict == "HYPOTHESIS"
+    assert result.hypotheses[0].statement == hypothesis().statement
+    assert result.steps_used == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop", ["loop", "steps", "budget", "killed", "invalid", "empty"]
+)
+async def test_guarded_stops(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch, stop: str
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if stop == "empty":
+            return ModelResponse(parts=[])
+        if stop == "invalid":
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        next(
+                            t.name
+                            for t in info.output_tools
+                            if t.name.endswith("_Submission")
+                        ),
+                        {"summary": "missing fields"},
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "update_hypotheses",
+                    {
+                        "hypotheses": []
+                        if stop == "loop"
+                        else [
+                            hypothesis()
+                            .model_copy(update={"id": str(calls)})
+                            .model_dump(mode="json")
+                        ]
+                    },
+                )
+            ]
+        )
+
+    kill = InMemoryKillSwitch()
+    if stop == "killed":
+        kill.kill_system("test shutdown")
+    budget = (
+        Budget(tokens=0, cost_usd=1, deadline=datetime.now(UTC) + HOUR)
+        if stop == "budget"
+        else None
+    )
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        settings=DetectiveSettings(max_steps=5),
+        model=FunctionModel(respond, model_name="detective"),
+        kill_switch=kill,
+    ).investigate(anomaly("s3"), AsyncMock(), budget=budget)
+    assert result.verdict == "HYPOTHESIS"
+    assert result.stop_reason == (
+        "error" if stop in {"killed", "invalid", "empty"} else "budget"
+    )
+    assert calls <= 5
+
+
+@pytest.mark.asyncio
+async def test_tools_cite_exact_calls(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    answer = submission(hypothesis(), "HYPOTHESIS")
+    answer.root_cause.evidence_for = [
+        Evidence(
+            group="change_log",
+            source="list_events",
+            step_id=ref,
+            summary="Release observed",
+        )
+        for ref in ("ref-1", "ref-2", "list_events")
+    ]
+    scripted(
+        monkeypatch,
+        [
+            ("list_events", {"planned": False}),
+            ("list_events", {"planned": True}),
+            ("submit", answer.model_dump(mode="json")),
+        ],
+    )
     steps: list[TrailStep] = []
 
     async def trail(step: TrailStep) -> None:
         steps.append(step)
 
-    async def run(spec: AgentSpec, *_: object) -> _Submission:
-        ask = next(t for t in spec.tools if t.name == "ask_specialist")
-        response = await ask.fn(
-            ask.input_model(
-                agent="discovery",
-                question="What changed?",
-                metric="search_relevance",
-                segment={"country": "DE"},
-            )
-        )
-        assert response.answered is False
-        return submission(hypothesis())
-
-    def unavailable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("no connection", request=request)
-
-    monkeypatch.setattr("eye.agents.detective.run_agent", run)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable)) as http:
-        detective = Detective(
-            world, registry, make_graph(registry, "s3"), a2a=A2AClient(http_client=http)
-        )
-        result = await detective.investigate(anomaly("s3"), trail)
-    assert result.verdict == "HYPOTHESIS"
-    assert "found 1" in " ".join(result.open_questions)
-    assert result.contributions[-1].kind == "residual"
-    assert result.contributions[-1].delta == pytest.approx(-0.0125)
-    assert any(
-        s.action == "note" and "agent unavailable" in s.output_summary for s in steps
+    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
+        anomaly("s3"), trail
     )
-    assert steps[-1].action == "decision"
+    tool_steps = [s for s in steps if s.action == "tool_call"]
+    assert result.root_cause is not None
+    assert [e.step_id for e in result.root_cause.evidence_for] == [
+        tool_steps[0].id,
+        tool_steps[1].id,
+        "",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_budget_preserves_current_board(
+async def test_validated_output_and_tool_repair(
     world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seed(world, "s3")
     registry = load_registry(world)
     root = hypothesis()
-
-    async def run(spec: AgentSpec, *_: object) -> _Submission:
-        update = next(t for t in spec.tools if t.name == "update_hypotheses")
-        update.fn(update.input_model(hypotheses=[root]))
-        raise BudgetExceeded("agent turn budget exhausted")
-
-    monkeypatch.setattr("eye.agents.detective.run_agent", run)
-    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
-        anomaly("s3"), AsyncMock()
+    root.evidence_for[1].group = "change_log"
+    root.evidence_for[0].step_id = "ref-1"
+    root.evidence_for[1].step_id = "ref-2"
+    answer = submission(root)
+    scripted(
+        monkeypatch,
+        [
+            ("baseline_compare", {"metric": "nonexistent"}),
+            (
+                "baseline_compare",
+                {"metric": "search_conversion", "segment": {"country": "DE"}},
+            ),
+            ("list_events", {}),
+            ("submit", {"summary": "incomplete"}),
+            ("submit", answer.model_dump(mode="json")),
+        ],
     )
-    assert result.verdict == "HYPOTHESIS"
-    assert result.stop_reason == "budget"
-    assert len(result.hypotheses) == 1
-    assert result.hypotheses[0].id == f"{result.investigation_id}:{root.id}"
-    assert result.hypotheses[0].statement == root.statement
+    usage = []
+    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
+        anomaly("s3"), AsyncMock(), on_usage=usage.append
+    )
+    assert result.verdict == "CONFIRMED"
+    assert result.stop_reason == "confirmed"
+    assert result.steps_used == 5
+    assert result.root_cause and all(e.step_id for e in result.root_cause.evidence_for)
+    assert usage[0].requests == 5
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("final_action", ["submit", "ignore", "invalid"])
-async def test_final_turn_requires_detective_submit(
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    final_action: str,
-) -> None:
+async def test_provider_failure_becomes_error(world: duckdb.DuckDBPyConnection) -> None:
     seed(world, "s3")
     registry = load_registry(world)
-    requests = []
 
-    async def create(request: dict) -> BetaMessage:
-        requests.append(deepcopy(request))
-        content = [
-            {
-                "type": "tool_use",
-                "id": f"board-{len(requests)}",
-                "name": "update_hypotheses",
-                "input": {"hypotheses": [hypothesis().model_dump(mode="json")]},
-            }
-        ]
-        if request["tool_choice"] == {"type": "tool", "name": "submit"}:
-            answer = submission(hypothesis(), "HYPOTHESIS")
-            answer.summary = "Submitted available evidence."
-            content = [
-                {
-                    "type": "tool_use",
-                    "id": "final",
-                    "name": "submit",
-                    "input": answer.model_dump(mode="json"),
-                }
-            ]
-            if final_action == "ignore":
-                content = [{"type": "text", "text": "More exploration needed."}]
-            elif final_action == "invalid":
-                content[0]["input"] = {"summary": "Incomplete submission."}
-        return BetaMessage.model_validate(
-            {
-                "id": "msg",
-                "type": "message",
-                "role": "assistant",
-                "model": request["model"],
-                "content": content,
-                "stop_reason": "tool_use"
-                if content[0]["type"] == "tool_use"
-                else "end_turn",
-                "usage": {"input_tokens": 10, "output_tokens": 10},
-            }
-        )
+    def unavailable(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(503, "detective")
 
-    monkeypatch.setattr("eye.llm.client._client", SimpleNamespace(create=create))
-    detective = Detective(
+    result = await Detective(
         world,
         registry,
         make_graph(registry, "s3"),
-        settings=DetectiveSettings(max_steps=5),
-    )
-    result = await detective.investigate(anomaly("s3"), AsyncMock())
-    if final_action == "submit":
-        assert result.summary == "Submitted available evidence."
-        assert result.stop_reason != "budget"
-    else:
-        assert result.stop_reason == "budget"
-        assert result.verdict == "HYPOTHESIS"
-        assert result.hypotheses[0].statement == hypothesis().statement
-    assert result.steps_used == 5
-    assert requests[0]["tool_choice"] == {"type": "auto"}
-    assert requests[-1]["tool_choice"] == {"type": "tool", "name": "submit"}
-    assert "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
+        model=FunctionModel(unavailable, model_name="detective"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "error"
+    assert result.verdict == "HYPOTHESIS"
+    assert "503" in result.open_questions[0]
 
 
 @pytest.mark.asyncio
-async def test_evidence_resolves_to_exact_call_not_latest_tool_name(
+async def test_missing_credentials_become_error(
     world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     seed(world, "s3")
     registry = load_registry(world)
-
-    async def run(
-        spec: AgentSpec,
-        _: str,
-        investigation_id: str,
-        emit: Callable[[TrailStep], Awaitable[None]],
-    ) -> _Submission:
-        events = next(tool for tool in spec.tools if tool.name == "list_events")
-        for i, actor in enumerate(("detective", "detective", "skeptic")):
-            args = events.input_model(planned=bool(i))
-            invocation = events.fn(args)
-            output = await invocation if isawaitable(invocation) else invocation
-            await emit(
-                TrailStep(
-                    id=f"call-{i}",
-                    investigation_id=investigation_id,
-                    n=i,
-                    real_ts=START,
-                    actor=actor,
-                    action="tool_call",
-                    tool="list_events",
-                    input=args.model_dump(),
-                    output=output.model_dump(),
-                    output_summary=output.summary,
-                )
-            )
-        root = hypothesis()
-        root.evidence_for = [
-            Evidence(
-                group="change_log",
-                source="list_events",
-                step_id=ref,
-                summary="The ranker release matched the change.",
-            )
-            for ref in ("ref-1", "ref-2", "list_events")
-        ]
-        return submission(root, "HYPOTHESIS")
-
-    monkeypatch.setattr("eye.agents.detective.run_agent", run)
-    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
-        anomaly("s3"), AsyncMock()
-    )
-    assert result.root_cause is not None
-    assert [e.step_id for e in result.root_cause.evidence_for] == [
-        "call-0",
-        "call-1",
-        "",
-    ]
+    monkeypatch.delenv("DETECTIVE_TEST_KEY", raising=False)
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        llm=LlmSettings(provider="openai_compatible", api_key_env="DETECTIVE_TEST_KEY"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "error"
+    assert result.verdict == "HYPOTHESIS"
+    assert "DETECTIVE_TEST_KEY" in result.open_questions[0]
 
 
 @pytest.mark.asyncio
@@ -533,13 +558,10 @@ async def test_local_hypothesis_ids_do_not_collide_across_investigations(
     seed(world, "s3")
     registry = load_registry(world)
 
-    async def run(*_: object) -> _Submission:
-        answer = submission(hypothesis(), "HYPOTHESIS")
-        answer.trigger = "H1"
-        answer.contributions[0].factor = "H1"
-        return answer
-
-    monkeypatch.setattr("eye.agents.detective.run_agent", run)
+    answer = submission(hypothesis(), "HYPOTHESIS")
+    answer.trigger = "H1"
+    answer.contributions[0].factor = "H1"
+    scripted(monkeypatch, [("submit", answer.model_dump(mode="json"))])
     detective = Detective(world, registry, make_graph(registry, "s3"))
     first = await detective.investigate(
         anomaly("s3"), AsyncMock(), investigation_id="a"
@@ -582,9 +604,7 @@ async def test_loop_fills_missing_fields_from_measured_change_points(
     )
     answer = submission(hypothesis(), "HYPOTHESIS")
     answer.trigger = trigger
-    monkeypatch.setattr(
-        "eye.agents.detective.run_agent", AsyncMock(return_value=answer)
-    )
+    scripted(monkeypatch, [("submit", answer.model_dump(mode="json"))])
     result = await Detective(world, registry, graph).investigate(
         anomaly("s3"), AsyncMock()
     )
@@ -605,9 +625,9 @@ async def test_other_unsubstantiated_verdicts_are_downgraded(
 ) -> None:
     seed(world, "s3")
     registry = load_registry(world)
-    monkeypatch.setattr(
-        "eye.agents.detective.run_agent",
-        AsyncMock(return_value=submission(hypothesis(), verdict)),
+    scripted(
+        monkeypatch,
+        [("submit", submission(hypothesis(), verdict).model_dump(mode="json"))],
     )
     result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
         anomaly("s3"), AsyncMock()
@@ -627,9 +647,9 @@ async def test_data_issue_requires_stale_entry_window(
         [START, START + HOUR],
     )
     registry = load_registry(world)
-    monkeypatch.setattr(
-        "eye.agents.detective.run_agent",
-        AsyncMock(return_value=submission(hypothesis(), "DATA_ISSUE")),
+    scripted(
+        monkeypatch,
+        [("submit", submission(hypothesis(), "DATA_ISSUE").model_dump(mode="json"))],
     )
     result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
         anomaly("s3"), AsyncMock()
@@ -685,9 +705,7 @@ async def test_downstream_symptoms(
     if cause_mode in {"trigger", "none"}:
         answer.root_cause = None
         answer.trigger = "H1" if cause_mode == "trigger" else None
-    monkeypatch.setattr(
-        "eye.agents.detective.run_agent", AsyncMock(return_value=answer)
-    )
+    scripted(monkeypatch, [("submit", answer.model_dump(mode="json"))])
     steps: list[TrailStep] = []
 
     async def trail(step: TrailStep) -> None:

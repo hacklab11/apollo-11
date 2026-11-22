@@ -88,7 +88,12 @@ def _investigate(
     graph = RemoteGraph(data)
 
     async def investigate(request: InvestigateRequest, run: Run) -> InvestigateResult:
+        from agent_runtime import Budget, RunScope, RunUsageSummary
+
         delegation = asyncio.Lock()
+
+        def account_usage(usage: RunUsageSummary) -> None:
+            run.usage.cost_usd += usage.cost_usd
 
         async def review(
             anomaly: Anomaly,
@@ -134,6 +139,11 @@ def _investigate(
             run.record,
             investigation_id=request.investigation_id,
             open_incidents=request.open_incidents,
+            budget=Budget.model_validate(run.metadata.budget.model_dump()),
+            scope=RunScope(
+                run_id=run.metadata.context_id, tenant_id=run.metadata.tenant_id
+            ),
+            on_usage=account_usage,
         )
         return InvestigateResult(investigation=result, trail=run.trail)
 

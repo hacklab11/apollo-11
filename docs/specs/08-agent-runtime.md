@@ -17,6 +17,27 @@ any graph mutation. All non-done outcomes raise execution errors; the existing
 A2A executor reports failed tasks. Startup no longer invokes refinement in v2;
 direct refinement callers still receive failures without caching partial work.
 
+### Wave 4: Detective
+
+The Detective instead uses a PydanticAI `Agent`, with the existing prompt and tools,
+through `agent_runtime.run_agent`. Its schema-validated output is
+`end_state_outputs(_Submission)`; PydanticAI names the result tool
+`final_result__Submission`. There is no forced-submit final turn or custom message
+loop. `RunLimits` caps requests at `detective.max_steps` and tightens token, cost
+and wall-clock caps to the incoming A2A budget. `RunGuard` checks repeated tool
+calls and an optional kill switch. `gave_up` maps to a HYPOTHESIS/budget stop;
+`needs_input` and `failed` map to HYPOTHESIS/error, retaining the hypothesis board.
+Deterministic evidence checks still downgrade unsupported verdicts.
+
+`eye.agents.models.build_model` constructs the configured Anthropic or OpenAI-compatible
+model and uses `model_chain` with the agent's explicit `llm.fallback_models` list.
+Anthropic effort comes from `llm.effort.detective`. `price_table(settings)` reads
+`llm.prices` in USD per million tokens; unknown response model names fail closed.
+OpenRouter free routes and any routed response IDs need explicit zero-cost prices.
+The offline gate configures the `detective` model name at zero cost.
+Legacy record/replay and process-local `LLMClient` counters do not apply to the
+Detective. Offline tests inject PydanticAI `FunctionModel` rather than credentials.
+
 ## 1. API
 
 ```python

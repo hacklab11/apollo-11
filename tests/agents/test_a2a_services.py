@@ -13,6 +13,7 @@ from factories import make_anomaly, make_incident_s7
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 
 from agent_runtime import ModelPrice, PriceTable
 from eye.agents.a2a_service import send_skill
@@ -71,6 +72,30 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
             )
 
     monkeypatch.setattr("eye.llm.client._client", Scripted())
+
+    def detective_response(messages: list, info: AgentInfo) -> ModelResponse:
+        content = turns.popleft()
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    next(
+                        t.name
+                        for t in info.output_tools
+                        if t.name.endswith("_Submission")
+                    )
+                    if part["name"] == "submit"
+                    else part["name"],
+                    part["input"],
+                )
+                for part in content
+            ],
+            usage=RequestUsage(input_tokens=7, output_tokens=5),
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.detective.build_model",
+        lambda *_: FunctionModel(detective_response, model_name="detective"),
+    )
     return turns
 
 
@@ -181,6 +206,9 @@ async def test_detective_delegates_and_reports(
     skeptic_url = "http://skeptic:8230/"
     monkeypatch.setenv("EYE_SKEPTIC_URL", skeptic_url)
     settings = Settings()
+    settings.llm.prices["detective"] = settings.llm.prices[
+        "claude-opus-5-5"
+    ].model_copy(update={"input_per_mtok": 0, "output_per_mtok": 0})
     skeptic = create_app("skeptic", skeptic_url, settings, data=warehouse)
     hypothesis = make_incident_s7().root_cause
     assert hypothesis is not None

@@ -7,6 +7,7 @@ from e2e import provider
 from fastapi.testclient import TestClient
 from httpx import Response
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletion
 from pydantic_ai import Agent, models
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -53,6 +54,36 @@ def test_empty_candidates_submit_no_decisions(client: TestClient) -> None:
     assert call["function"]["name"] == "submit"
     assert json.loads(call["function"]["arguments"]) == {"decisions": []}
     assert client.get("/stats").json() == {"calls": {"sentinel": 1}, "errors": []}
+    ChatCompletion.model_validate(response.json())
+
+
+def test_detective_pydanticai_output_tool(client: TestClient) -> None:
+    body = completion(
+        "detective",
+        {
+            "entry": {
+                "metric": "aov",
+                "segment": {"category": "electronics"},
+                "ts": "2026-11-27T12:00:00Z",
+            }
+        },
+        [
+            {"summary": "Measured delta"},
+            {"summary": "Fresh data"},
+            {"summary": "Board updated"},
+            {"summary": "Skeptic reviewed"},
+        ],
+    )
+    body["tools"] = [
+        {"type": "function", "function": {"name": "final_result__Submission"}}
+    ]
+    response = post(client, body)
+    assert response.status_code == 200
+    parsed = ChatCompletion.model_validate(response.json())
+    assert (
+        parsed.choices[0].message.tool_calls[0].function.name
+        == "final_result__Submission"
+    )
 
 
 def test_reporter_returns_narrative_output_tool(client: TestClient) -> None:
