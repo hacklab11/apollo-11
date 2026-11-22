@@ -21,6 +21,49 @@ three measurements, SellerOS exchange and human actions. The full causal graph
 lives on a separate Graph tab. The header shows the consumer's sim clock and
 latest complete warehouse hour; updates use SSE invalidation with polling fallback.
 
+## Agent evals
+
+The fast CI gate uses **pydantic-evals 2.66.0** (matching PydanticAI), invoking
+the production Sentinel, Detective, Skeptic, Reporter, Cartographer and SellerOS
+agents. S8's finite scripted-model submissions and bounded data reads live in
+`tests/evals/cases/s8.yaml`. They are small deterministic S8 contract captures,
+not a claim of live-model accuracy or a replacement for the Compose S8 gate.
+Every configured primary/fallback in `config/settings.yaml`, plus SellerOS's
+pinned model chain, gets its own score. Offline model labels identify the route
+being exercised; they do not simulate that provider's intelligence.
+
+```sh
+uv run python scripts/agent_evals.py --report data/eval/offline.json
+```
+
+Each agent/model must score **1.000**; missing cases, malformed recordings,
+replay exhaustion and lower scores fail closed. Reports include model ID,
+prompt SHA-256, actual model-facing tool-schema SHA-256 and library versions.
+Drop captured failures as Dataset YAML/JSON files into
+`tests/evals/cases/regressions/`; discovery is recursive, with no registry edits.
+Expected outputs select stable decision fields; unrelated narrative wording is
+not scored. Do not put credentials or private customer data in recordings.
+
+Nightly and manually dispatched `.github/workflows/nightly-eval.yml` run the
+same per-model cases against **OpenRouter**, requiring the repository secret
+`OPENROUTER_API_KEY`. The explicit opt-in command is:
+
+```sh
+uv run python scripts/agent_evals.py --live --report data/eval/nightly.json
+```
+
+The live runner enforces a shared PydanticAI `UsageLimits(request_limit=30,
+total_tokens_limit=100_000)` across all agents/models/cases, sequentially, with
+provider output capped at 1,024 tokens per request and SDK retries disabled.
+Failed requests consume the request allowance. This is a **hard request-based
+spend cap**, not a dollar credit limit: at most 30 paid requests / 30,720 output
+tokens; the cumulative token check can stop a run after the current response.
+The workflow also has a 15-minute timeout and uploads its JSON report. No key
+is needed by unit tests or the offline command; neither can contact a provider.
+Production remains on Claude by default; eval routing does not edit config.
+The older `scripts/eval_scenarios.py` and its tests remain: they check complete
+scenario/world lifecycle behavior rather than individual agent regressions.
+
 ## Run it
 
 Core is now a deterministic DBOS workflow worker, not an agent host. It queues

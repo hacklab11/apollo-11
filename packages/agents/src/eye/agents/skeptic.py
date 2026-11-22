@@ -272,6 +272,7 @@ class Skeptic:
         llm: LlmSettings | None = None,
         data: DataQueries | None = None,
         kill_switch: KillSwitch | None = None,
+        model: Model | None = None,
     ) -> None:
         self._freshness = freshness or SentinelSettings()
         self._llm = llm or LlmSettings()
@@ -283,7 +284,7 @@ class Skeptic:
         outputs = end_state_outputs(SkepticResult)
         outputs[0] = ToolOutput(SkepticResult, name="submit")
         self._agent = Agent(
-            _model(self._llm),
+            model or _model(self._llm),
             name="skeptic",
             deps_type=_Deps,
             instructions=_PROMPT.read_text(),

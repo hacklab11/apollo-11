@@ -8,6 +8,8 @@ Tasks: every task has its own tests (listed in its card). T23 builds the scenari
 |---|---|---|---|
 | Unit | pytest | none (fake client) | every PR (`uv run pytest -m "not live"`) |
 | Replay | pytest + recorded `tests/fixtures/llm/*.jsonl` | replay | every PR |
+| Agent eval | pydantic-evals + `tests/evals/cases/` | offline FunctionModel | every PR, score 1.000 per agent/model |
+| Nightly agent eval | `scripts/agent_evals.py --live` | OpenRouter, capped | schedule / workflow_dispatch, opt-in only |
 | Live eval | `scripts/eval_scenarios.py` | live | by hand at checkpoints (costs money) |
 | Manual | checklist in PR | live | UI, MCP in Claude Code, deployment |
 
@@ -16,6 +18,7 @@ Commands (defined in T00, written in `AGENTS.md`):
 ```bash
 uv run ruff check . && uv run ruff format --check .
 uv run pytest -m "not live" -q
+uv run python scripts/agent_evals.py --report data/eval/offline.json
 uv run python scripts/eval_scenarios.py --scenario S3 --mode live --record tests/fixtures/llm/s3.jsonl
 uv run python scripts/eval_scenarios.py --all --mode replay
 ```
@@ -58,7 +61,9 @@ Use the results at checkpoint 2 (`../plan/implementation-plan.md`). A failing sc
 ## 4. Fixtures
 
 - LLM fixtures are recorded from live runs (`--record`). Commit them (they contain no secrets; check before commit).
-- If a prompt changes, the replay keys change and replay falls back to live. Re-record the affected fixtures in the same PR.
+- Legacy scenario fixtures use prompt-derived replay keys. Missing recordings fail offline replay; never silently fall back to live.
+- Wave 6 agent evals use Dataset cases under `tests/evals/cases/`, including recursive `regressions/` discovery. Expected stable decision fields are independent of recorded submissions. Version pins include the current prompt and actual model-facing tool schema hashes, route ID, and matching PydanticAI/pydantic-evals versions. S8 cases capture the finite integration script's responses on small deterministic boundary inputs, not live-model quality measurements.
+- `scripts/agent_evals.py --live` is the separate opt-in path used by `nightly-eval.yml`. A shared PydanticAI UsageLimits caps the whole sequential run to 30 provider requests and 100,000 cumulative tokens, with max_tokens=1,024 per request and no SDK retries. This is request-bounded spend, not a USD credit limit. Unit tests never enable real providers. See the root README for commands and secret setup.
 
 ## 5. Test data rules
 
