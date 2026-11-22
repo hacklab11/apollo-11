@@ -1,5 +1,6 @@
 """Check whether a measured anomaly is explained by a plan or normal seasonality."""
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -241,6 +242,8 @@ class Skeptic:
             max_steps=_MAX_STEPS,
             max_tokens=self._llm.max_tokens,
         )
+        if not isinstance(self._data, LocalQueries):
+            spec.tools = [tool.offloaded() for tool in spec.tools]
         payload = {
             "entry": anomaly.model_dump(mode="json"),
             "hypothesis": hypothesis.model_dump(mode="json") if hypothesis else None,
@@ -269,7 +272,7 @@ class Skeptic:
             if check.verdict == "matches"
         ]
         if result.verdict in {"innocent", "data_issue"}:
-            freshness = tools.freshness(entry)
+            freshness = await asyncio.to_thread(tools.freshness, entry)
             if freshness.verdict != "ok":
                 return result.model_copy(
                     update={

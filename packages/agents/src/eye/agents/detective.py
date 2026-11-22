@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
-from inspect import isawaitable, iscoroutinefunction
+from inspect import isawaitable
 from itertools import count
 from math import fsum
 from typing import Literal, Protocol, cast
@@ -451,13 +451,12 @@ class Detective:
             await on_step(step.model_copy(update={"n": trail_n}))
 
         def cite(tool: ToolSpec) -> ToolSpec:
+            if not isinstance(self._data, LocalQueries):
+                tool = tool.offloaded()
+
             async def invoke(args: BaseModel) -> BaseModel:
                 reference = f"ref-{next(references)}"
-                result = (
-                    tool.fn(args)
-                    if iscoroutinefunction(tool.fn)
-                    else await asyncio.to_thread(tool.fn, args)
-                )
+                result = tool.fn(args)
                 output = await result if isawaitable(result) else result
                 summary = (
                     f"{reference}: {output.model_dump(include={'summary'})['summary']}"
@@ -700,7 +699,7 @@ class Detective:
             cite(tool) if tool.name != "update_hypotheses" else tool
             for tool in spec.tools
         ]
-        graph = get_graph(_GraphInput())
+        graph = await asyncio.to_thread(get_graph, _GraphInput())
         cards = await self._a2a.fetch_cards() if self._a2a is not None else {}
         active_incidents = [
             incident
@@ -756,8 +755,11 @@ class Detective:
             innocent = any(review.verdict == "innocent" for review in reviews.values())
             stale = (
                 answer.verdict == "DATA_ISSUE"
-                and common.freshness(
-                    _MetricInput(metric=anomaly.metric, segment=anomaly.segment)
+                and (
+                    await asyncio.to_thread(
+                        common.freshness,
+                        _MetricInput(metric=anomaly.metric, segment=anomaly.segment),
+                    )
                 ).verdict
                 != "ok"
             )

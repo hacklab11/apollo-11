@@ -111,7 +111,7 @@ class Sentinel:
         )
 
     def _spec(self) -> AgentSpec:
-        return AgentSpec(
+        spec = AgentSpec(
             name="sentinel",
             system_prompt_file=str(_PROMPT),
             tools=[
@@ -146,6 +146,9 @@ class Sentinel:
             max_steps=4,
             max_tokens=self._llm.max_tokens,
         )
+        if not isinstance(self._data, LocalQueries):
+            spec.tools = [tool.offloaded() for tool in spec.tools]
+        return spec
 
     def _candidates(self, ts: datetime) -> list[_Candidate]:
         point = self._data.read(ops.SCAN, ScanAnomaliesInput(ts=ts))

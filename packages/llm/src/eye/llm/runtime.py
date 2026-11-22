@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +28,13 @@ class ToolSpec:
     input_model: type[BaseModel]
     fn: Callable[[BaseModel], BaseModel | Awaitable[BaseModel]]
     strict: bool = True
+
+    def offloaded(self) -> "ToolSpec":
+        async def run(args: BaseModel) -> BaseModel:
+            output = await asyncio.to_thread(self.fn, args)
+            return await output if inspect.isawaitable(output) else output
+
+        return self if inspect.iscoroutinefunction(self.fn) else replace(self, fn=run)
 
 
 @dataclass
@@ -146,11 +153,7 @@ async def run_agent(
             else:
                 tool = tools[block.name]
                 args = tool.input_model.model_validate(block.input, extra="forbid")
-                output = (
-                    tool.fn(args)
-                    if inspect.iscoroutinefunction(tool.fn)
-                    else await asyncio.to_thread(tool.fn, args)
-                )
+                output = tool.fn(args)
                 if inspect.isawaitable(output):
                     output = await output
                 if not isinstance(output, BaseModel):
