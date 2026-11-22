@@ -93,6 +93,15 @@ def seller_revert_actor(
     return None
 
 
+def kill_actor(request: Request, credentials: Bearer) -> str:
+    if not os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN"):
+        return human_actor(request)
+    actor = seller_revert_actor(request, credentials)
+    if actor is None:
+        raise HTTPException(401, "Operator credential required")
+    return actor
+
+
 class Graph(Protocol):
     def view(self, node: str | None = None, depth: int | None = None) -> GraphView: ...
 
@@ -374,32 +383,32 @@ def create_app(
         return {"id": id, "approved": decision.approve}
 
     @app.post("/api/runs/{id}/kill")
-    async def kill_run(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def kill_run(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("run", id, True, actor)
         return {"active": True}
 
     @app.delete("/api/runs/{id}/kill")
-    async def clear_run(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def clear_run(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("run", id, False, actor)
         return {"active": False}
 
     @app.post("/api/tenants/{id}/kill")
-    async def kill_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def kill_tenant(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("tenant", id, True, actor)
         return {"active": True}
 
     @app.delete("/api/tenants/{id}/kill")
-    async def clear_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def clear_tenant(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("tenant", id, False, actor)
         return {"active": False}
 
     @app.post("/api/kill")
-    async def kill_system(actor: str = Depends(human_actor)) -> dict:
+    async def kill_system(actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("system", DEFAULT_TENANT, True, actor)
         return {"active": True}
 
     @app.delete("/api/kill")
-    async def clear_system(actor: str = Depends(human_actor)) -> dict:
+    async def clear_system(actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("system", DEFAULT_TENANT, False, actor)
         return {"active": False}
 

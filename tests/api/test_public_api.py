@@ -38,7 +38,7 @@ from eye.contracts import (
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import DEFAULT_TENANT, AgentResult
+from eye.contracts_v2 import AgentResult
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
@@ -209,15 +209,22 @@ async def test_seller_revert_requires_exact_human_approval(
                 headers=operator,
             )
         ).raise_for_status()
-        for scope in ("tenant", "system"):
-            core.control.set_kill(scope, DEFAULT_TENANT, True, "emergency-operator")
+        for stop_url in (
+            "/api/kill",
+            "/api/tenants/default/kill",
+            f"/api/runs/selleros:{alert.incident_id}/kill",
+        ):
+            spoofed = {"X-Eye-Person": "reviewer"}
+            assert (await client.post(stop_url, headers=spoofed)).status_code == 401
+            (await client.post(stop_url, headers=operator)).raise_for_status()
+            assert (await client.delete(stop_url, headers=spoofed)).status_code == 401
             assert (
                 await client.post(approve_url, json={"approve": True}, headers=operator)
             ).status_code == 409
             assert core.control.approval(by_sku["E02"])["status"] == "pending"
             assert not (await core.directory.notify_seller_os(alert)).received
             assert not journal.exists()
-            core.control.set_kill(scope, DEFAULT_TENANT, False, "emergency-operator")
+            (await client.delete(stop_url, headers=operator)).raise_for_status()
         if stale:
             snapshot = store.read()
             latest = next(
