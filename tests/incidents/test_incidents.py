@@ -632,7 +632,7 @@ async def test_persistence_and_trail(tmp_path):
 @pytest.mark.parametrize(
     "bad_first,persistent", [(False, False), (True, False), (True, True)]
 )
-async def test_reporter_grounding(bad_first, persistent):
+async def test_reporter_grounding(bad_first, persistent, caplog):
     calls = 0
 
     def reply(messages, info):
@@ -652,14 +652,16 @@ async def test_reporter_grounding(bad_first, persistent):
         prices={model.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
     )
     reporter = Reporter(model, settings=settings)
-    title, summary = await reporter.write(result())
+    written = await reporter.write(result())
+    title, summary = written.title, written.summary
+    assert written.usage.requests == (2 if bad_first else 1)
     if persistent:
         assert (title, summary) == reporter.template(result())
-        assert reporter.outcome.result.status in {"failed", "gave_up"}
+        assert "end_state=failed reason=" in caplog.text
     else:
         assert title == "Orders below forecast"
         assert "97,200" in summary
-        assert reporter.outcome.result.status == "done"
+        assert not caplog.records
     assert calls == (2 if bad_first else 1)
 
 
@@ -686,12 +688,13 @@ async def test_reporter_model_fallback():
         prices={fallback.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
     )
     reporter = Reporter(model_chain(FunctionModel(broken), fallback), settings=settings)
-    assert await reporter.write(result()) == ("Orders", "Measured decline.")
-    assert reporter.outcome.result.status == "done"
+    written = await reporter.write(result())
+    assert (written.title, written.summary) == ("Orders", "Measured decline.")
+    assert written.usage.requests == 1
 
 
 @pytest.mark.asyncio
-async def test_reporter_empty_output_falls_back():
+async def test_reporter_empty_output_falls_back(caplog):
     def reply(messages, info):
         return ModelResponse(
             parts=[
@@ -710,5 +713,46 @@ async def test_reporter_empty_output_falls_back():
         prices={model.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
     )
     reporter = Reporter(model, settings=settings)
-    assert await reporter.write(result()) == reporter.template(result())
-    assert reporter.outcome.result.status == "failed"
+    written = await reporter.write(result())
+    assert (written.title, written.summary) == reporter.template(result())
+    assert len(caplog.records) == 1
+    assert "end_state=failed reason=" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_reporter_reuses_agent_with_per_run_grounding(caplog):
+    def reply(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "title": "Orders",
+                        "summary": "Impact EUR 987654321 per hour.",
+                    },
+                )
+            ]
+        )
+
+    model = FunctionModel(reply)
+    settings = LlmSettings(
+        prices={model.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
+    )
+    reporter = Reporter(model, settings=settings)
+    agent = reporter.agent
+    original = result()
+    supplied = original.model_copy(
+        update={
+            "entry": original.entry.model_copy(
+                update={"impact_eur_per_hour": 987654321.0}
+            )
+        }
+    )
+    first = await reporter.write(supplied)
+    assert first.summary == "Impact EUR 987654321 per hour."
+    second = await reporter.write(original)
+    assert (second.title, second.summary) == reporter.template(original)
+    assert first.usage.requests == 1
+    assert second.usage.requests == 2
+    assert reporter.agent is agent
+    assert len(caplog.records) == 1

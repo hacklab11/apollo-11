@@ -33,6 +33,10 @@ llm:
   models:
     default: claude-opus-5-5
     # For openai_compatible: default: nvidia/nemotron-3-ultra-550b-a55b:free
+  # prices:
+  #   nvidia/nemotron-3-ultra-550b-a55b:free:
+  #     input_per_mtok: 0.0
+  #     output_per_mtok: 0.0
   effort:
     sentinel: low
     detective: high

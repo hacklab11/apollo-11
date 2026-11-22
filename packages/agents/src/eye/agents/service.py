@@ -176,17 +176,16 @@ def _report(settings: Settings) -> Skill[ReportRequest, ReportResult]:
 
     async def report(request: ReportRequest, run: Run) -> ReportResult:
         reporter = Reporter(settings=settings.llm)
-        title, summary = await reporter.write(
+        narrative = await reporter.write(
             request.investigation,
             scope=RunScope(
                 run_id=run.metadata.context_id, tenant_id=run.metadata.tenant_id
             ),
             budget=Budget.model_validate(run.metadata.budget.model_dump()),
         )
-        if reporter.outcome is not None:
-            run.add_usage(reporter.outcome.result.usage)
+        run.add_usage(narrative.usage)
         run.check_tokens()
-        return ReportResult(title=title, summary=summary)
+        return ReportResult(title=narrative.title, summary=narrative.summary)
 
     return Skill(
         "report",
