@@ -24,7 +24,7 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
-from eye.agents.models import configured_model, configured_prices
+from eye.agents.models import build_model, price_table
 from eye.config import LlmSettings
 from eye.contracts import (
     AddMetricRequest,
@@ -126,7 +126,7 @@ class Cartographer:
         self.llm = llm or LlmSettings()
         self.excluded_hours = excluded_hours
         self.model = model
-        self.prices = prices or configured_prices(self.llm)
+        self.prices = prices or price_table(self.llm)
         self.limits = limits or RunLimits(
             max_steps=8, max_tokens=self.llm.max_tokens * 8, max_cost_usd=1.0
         )
@@ -190,7 +190,7 @@ class Cartographer:
     ) -> T:
         prompt = files("eye.llm").joinpath("prompts/cartographer.md").read_text()
         agent = Agent(
-            self.model or configured_model(self.llm, "cartographer"),
+            self.model or build_model(self.llm, "cartographer"),
             name="cartographer",
             deps_type=CartographerDeps,
             output_type=end_state_outputs(output),

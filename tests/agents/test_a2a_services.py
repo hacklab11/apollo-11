@@ -341,11 +341,11 @@ async def test_cartographer_reads_lake_and_returns_validated_proposal(
         )
 
     monkeypatch.setattr(
-        "eye.agents.cartographer.configured_model",
+        "eye.agents.cartographer.build_model",
         lambda *args: FunctionModel(respond, model_name="scripted"),
     )
     monkeypatch.setattr(
-        "eye.agents.cartographer.configured_prices",
+        "eye.agents.cartographer.price_table",
         lambda *args: PriceTable(
             prices={"scripted": ModelPrice(input_per_mtok=0, output_per_mtok=0)}
         ),

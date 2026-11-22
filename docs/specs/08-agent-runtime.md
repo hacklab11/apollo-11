@@ -8,8 +8,9 @@ Cartographer instead uses PydanticAI `Agent` with `end_state_outputs` and typed
 dependency-injected tools, run exclusively through `agent_runtime.run_agent`.
 It applies `RunLimits`, pinned `PriceTable` pricing, `RunScope`, kill switch,
 and the A2A request budget. Provider construction lives in `eye.agents.models`;
-an agent-specific model falls back to the configured default when different.
-Free `:free` models cost zero; unknown paid models fail closed as unpriced.
+`build_model(settings, agent)` uses explicit `llm.fallback_models[agent]` in order.
+`price_table(settings)` uses `llm.prices`, including explicit zero prices for free
+models; unpriced models fail closed.
 The Opus default is pinned at $5/$25 per million input/output tokens.
 Seed submission model validation retries incomplete/duplicate decisions before
 any graph mutation. All non-done outcomes raise execution errors; the existing

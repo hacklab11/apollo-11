@@ -68,6 +68,19 @@ def test_reporter_returns_narrative_output_tool(client: TestClient) -> None:
     assert message["tool_calls"][0]["function"]["name"] == "final_result_Narrative"
 
 
+def test_reporter_returns_narrative_without_tools(client: TestClient) -> None:
+    body = completion("reporter", {})
+    del body["tools"]
+    response = post(client, body)
+    assert response.status_code == 200
+    message = response.json()["choices"][0]["message"]
+    assert (
+        json.loads(message["content"])["title"]
+        == "Electronics price-change investigation"
+    )
+    assert "tool_calls" not in message
+
+
 @pytest.mark.parametrize("refine", [False, True])
 def test_cartographer_pydanticai_output_tools(client: TestClient, refine: bool) -> None:
     name = (

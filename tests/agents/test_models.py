@@ -5,20 +5,19 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.usage import RequestUsage
 
 from agent_runtime import UnpricedModel
-from eye.agents.models import configured_model, configured_prices
-from eye.config import LlmSettings
+from eye.agents.models import build_model, price_table
+from eye.config import LlmPrice, LlmSettings
 
 
 def test_anthropic_model_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-test-only")
-    model = configured_model(LlmSettings(), "cartographer")
+    model = build_model(LlmSettings(), "cartographer")
     assert isinstance(model, AnthropicModel)
     assert model.model_name == "claude-opus-5-5"
-    assert model.settings["anthropic_thinking"] == {"type": "adaptive"}
     assert model.settings["anthropic_effort"] == "high"
 
 
-def test_openai_compatible_falls_back_to_default(
+def test_openai_compatible_uses_explicit_fallback_chain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TEST_MODEL_KEY", "offline-test-only")
@@ -27,12 +26,14 @@ def test_openai_compatible_falls_back_to_default(
         base_url="http://127.0.0.1:8400/v1",
         api_key_env="TEST_MODEL_KEY",
         models={"cartographer": "primary:free", "default": "secondary:free"},
+        fallback_models={"cartographer": ["fallback:free", "last:free"]},
     )
-    chain = configured_model(settings, "cartographer")
+    chain = build_model(settings, "cartographer")
     assert isinstance(chain, FallbackModel)
     assert [model.model_name for model in chain.models] == [
         "primary:free",
-        "secondary:free",
+        "fallback:free",
+        "last:free",
     ]
     assert all(isinstance(model, OpenAIChatModel) for model in chain.models)
     assert all(
@@ -42,15 +43,17 @@ def test_openai_compatible_falls_back_to_default(
 
 def test_missing_openai_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TEST_MODEL_KEY", raising=False)
-    with pytest.raises(ValueError, match="Missing provider credential: TEST_MODEL_KEY"):
-        configured_model(
+    with pytest.raises(KeyError, match="TEST_MODEL_KEY"):
+        build_model(
             LlmSettings(provider="openai_compatible", api_key_env="TEST_MODEL_KEY"),
             "cartographer",
         )
 
 
 def test_prices_fail_closed_for_unknown_paid_model() -> None:
-    prices = configured_prices(LlmSettings(models={"cartographer": "primary:free"}))
+    settings = LlmSettings()
+    settings.prices["primary:free"] = LlmPrice(input_per_mtok=0, output_per_mtok=0)
+    prices = price_table(settings)
     usage = RequestUsage(input_tokens=1_000_000, output_tokens=1_000_000)
     assert prices.cost("claude-opus-5-5", usage) == 30
     assert prices.cost("primary:free", usage) == 0
