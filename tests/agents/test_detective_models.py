@@ -15,6 +15,8 @@ from eye.config import LlmSettings
 def test_anthropic_effort_and_explicit_fallbacks(
     monkeypatch: pytest.MonkeyPatch, effort: str
 ) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-test-only")
+
     def model(name: str, **kwargs: object) -> FunctionModel:
         return FunctionModel(
             lambda *_: ModelResponse(parts=[TextPart("offline")]), model_name=name

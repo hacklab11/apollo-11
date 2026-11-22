@@ -16,7 +16,6 @@ import duckdb
 from pydantic import AwareDatetime, BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext
 
@@ -866,7 +865,7 @@ class Detective:
                     output_summary=answer.summary[:500],
                 )
             )
-        except (BudgetExceeded, LLMUnavailable, KeyError, UserError) as exc:
+        except (BudgetExceeded, LLMUnavailable) as exc:
             stop = "budget" if isinstance(exc, BudgetExceeded) else "error"
             answer = _Submission(
                 verdict="HYPOTHESIS",
