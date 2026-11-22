@@ -279,3 +279,36 @@ async def test_lifecycle_retries_the_same_hour_after_unavailable_data(workflow) 
     await core.step_once()
     assert attempts == [ts, ts]
     assert core.incidents.get(item.id).normal_ticks == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["open", "investigating", "resolved", "missing"])
+async def test_sentinel_attach_updates_only_active_incidents(
+    workflow, status: str
+) -> None:
+    core, scripted = workflow
+    item = make_incident_s7()
+    item.status = "open" if status == "missing" else status
+    item.last_seen_ts = core.sim.now - HOUR
+    if status != "missing":
+        core.incidents._save(item)
+    decision = SentinelDecision(
+        anomaly=make_anomaly().model_copy(update={"ts": core.sim.now}),
+        action="attach",
+        attach_to_incident=item.id,
+        reason="Related symptom",
+    )
+    scripted.executors["detect"].result = AgentResult(
+        status="done", result=DetectResult(decisions=[decision])
+    )
+    await core.step_once()
+    saved = core.incidents.get(item.id)
+    if status == "missing":
+        assert saved is None
+    elif status in {"open", "investigating"}:
+        assert saved.occurrences == item.occurrences + 1
+        assert saved.last_seen_ts == decision.anomaly.ts
+    else:
+        assert saved.occurrences == item.occurrences
+        assert saved.last_seen_ts == item.last_seen_ts
+    assert len(scripted.requests) == 1

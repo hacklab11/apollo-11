@@ -384,6 +384,17 @@ class Orchestrator(DBOSConfiguredInstance):
             self.incidents._save(incident)
         return incident
 
+    @DBOS.step()
+    def attach_decision(self, decision: SentinelDecision) -> None:
+        if decision.attach_to_incident is None:
+            return
+        incident = self.incidents.get(decision.attach_to_incident)
+        if incident is not None and self.incidents._active(incident):
+            incident.occurrences += 1
+            incident.last_seen_ts = incident.updated_ts = decision.anomaly.ts
+            self.incidents._save(incident)
+            self.emit("incident_upserted", incident)
+
     @DBOS.workflow()
     async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
         try:
@@ -410,6 +421,8 @@ class Orchestrator(DBOSConfiguredInstance):
     ) -> None:
         self.save_trail(detected.trail)
         for decision in detected.decisions:
+            if decision.action == "attach":
+                self.attach_decision(decision)
             if decision.action != "investigate":
                 continue
             incident = self.prepare_investigation(decision)
