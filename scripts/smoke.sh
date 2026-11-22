@@ -21,11 +21,23 @@ check "$core/api/metrics"
 check "$core/api/metrics/sessions"
 check "$core/api/graph"
 check "$core/"
+docker compose exec -T eye-data python - <<'PY'
+import urllib.request
+
+with urllib.request.urlopen("http://127.0.0.1:8150/healthz", timeout=10) as response:
+    assert response.status == 200
+    print("OK eye-data /healthz")
+PY
 docker compose exec -T eye-core python - <<'PY'
 import asyncio
 import os
+import urllib.request
 
 from mcp import Client
+
+with urllib.request.urlopen("http://eye-data:8150/v1/metrics", timeout=10) as response:
+    assert response.status == 200
+    print("OK Core -> eye-data /v1/metrics")
 
 
 async def main():

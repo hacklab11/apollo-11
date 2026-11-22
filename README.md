@@ -33,9 +33,9 @@ provider/model settings shown below to `config/compose.yaml`, set
 `OPENROUTER_API_KEY` in `.env`, and add SellerOS's provider/model variables there
 too. Never commit keys.
 
-CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
-model requests. Missing credentials produce the existing `refinement_unavailable`
-warning without preventing startup; this is not an agent-quality eval.
+With empty keys, the startup/API smoke makes no model requests. Missing credentials
+produce the existing `refinement_unavailable` warning without preventing startup.
+CI uses the fail-closed offline S8 variant below to exercise the agents as well.
 The simulator runs independently of Core's clock controls. Core only advances
 when the warehouse has another complete hour, and keeps its existing incident
 volume. Do not scale `sim` against the same world and lake volumes.
@@ -80,6 +80,54 @@ By default it exits successfully when an incident observed as non-terminal becom
 resolved/closed, and fails on timeout. Existing resolved incidents do not satisfy
 that condition. Use `--until timeout` to observe for the full duration and exit
 successfully, or Ctrl+C to stop. It does not promise the scripted D6 timeline.
+
+### Play S8 with Compose
+
+**Live (funded model calls):** set `ANTHROPIC_API_KEY` in `.env` first, then:
+
+```sh
+docker compose up -d --build --wait
+SIM_URL="http://$(docker compose port sim 8100)"
+CORE_URL="http://$(docker compose port eye-core 8000)"
+curl -fsS -X POST "$SIM_URL/scenarios/s8"
+curl -fsS -X POST "$CORE_URL/api/clock/resume"
+curl -fsS "$SIM_URL/status"
+curl -fsS "$CORE_URL/api/incidents"
+# Follow the investigation in the UI at $CORE_URL; clear the scenario when done:
+curl -fsS -X DELETE "$SIM_URL/scenarios/s8"
+docker compose down
+```
+
+**Offline wave gate (no keys, Docker Compose ≥2.24.4):**
+
+```sh
+export COMPOSE_FILE=compose.yaml:compose.e2e.yaml
+export COMPOSE_PROJECT_NAME=eye-s8-e2e
+export COMPOSE_DISABLE_ENV_FILE=1
+docker compose down -v
+docker compose up -d --build --wait
+./scripts/smoke.sh
+./scripts/e2e-s8.sh
+docker compose down -v
+unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_DISABLE_ENV_FILE
+```
+
+The S8 gate uses the continuous simulator's live Parquet lake through `eye-data`;
+Core has no scenario-injection or in-process simulator override.
+
+The override removes `.env` injection, clears real provider credentials, and points
+all model configuration at a test-only, non-forwarding OpenAI-compatible server in
+`tests/e2e/`. Unknown models/turns and failed tools fail closed; no replay miss can
+reach a real provider. The existing `s8.jsonl` recording contains triage/specialist
+responses but no completed Detective submission, so it cannot cover this gate.
+The driver injects S8 through the simulator API, steps Core's consumer clock,
+and polls Core's public APIs for an open, investigated incident with real
+tool outputs, Skeptic review and a Reporter narrative. Failures print Compose logs.
+This is an integration/transport gate with scripted verdicts, **not an evaluation
+of model reasoning or the full D6 SellerOS correction/resolution oracle**. It runs
+separately from normal `pytest -m "not live"`; the latter tests the scripted
+provider without starting containers. CI's `compose-smoke` job runs both the
+startup smoke and this S8 gate, then always removes its volumes.
 
 ### Local provider configuration
 
