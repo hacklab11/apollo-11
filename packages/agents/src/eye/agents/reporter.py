@@ -1,7 +1,6 @@
 """Grounded narrative generation through the shared agent runtime."""
 
 import json
-import logging
 import re
 from dataclasses import dataclass
 from decimal import Decimal
@@ -38,7 +37,6 @@ class ReporterResult:
     usage: RunUsageSummary
 
 
-_LOG = logging.getLogger(__name__)
 _NUMBER = re.compile(r"(?<![\w])[-+]?\d+(?:,\d{3})*(?:\.\d+)?(?:[eE][-+]?\d+)?")
 
 
@@ -114,10 +112,5 @@ class Reporter:
             return ReporterResult(
                 narrative.title, narrative.summary, outcome.result.usage
             )
-        _LOG.warning(
-            "agent=reporter end_state=%s reason=%s",
-            outcome.result.status,
-            outcome.result.reason,
-        )
         title, summary = self.template(result)
         return ReporterResult(title, summary, outcome.result.usage)
