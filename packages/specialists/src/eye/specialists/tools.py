@@ -104,6 +104,8 @@ class DataClient:
 
     async def get(self, endpoint: str, params: dict[str, Any]) -> DataResult:
         response = await self.http.get(f"{self.base_url}/{endpoint}", params=params)
+        if response.status_code == 422:
+            raise ModelRetry(f"/data/{endpoint} returned 422: {response.text}")
         if response.status_code >= 400:
             raise ValueError(
                 f"/data/{endpoint} returned {response.status_code}: "

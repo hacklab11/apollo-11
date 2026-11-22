@@ -1,5 +1,6 @@
 import asyncio
 import time
+from datetime import datetime
 
 import httpx
 import pytest
@@ -16,7 +17,8 @@ from pydantic_ai.models.function import FunctionModel
 
 from eye.a2a_client import A2AClient
 from eye.contracts_v2 import SpecialistResponse
-from eye.specialists.app import create_app
+from eye.specialists import discovery
+from eye.specialists.app import answer, create_app
 from eye.specialists.tools import DataClient
 
 SKILLS = {
@@ -192,6 +194,82 @@ async def test_invalid_tool_arguments_are_retried(
     )
     assert calls == 3
     assert MessageToDict(task.artifacts[0].metadata)["steps"][0]["tool"] == "marketing"
+
+
+@pytest.mark.asyncio
+async def test_warehouse_validation_error_is_retried() -> None:
+    request = s7_request()
+    valid = {
+        "start": request.window_start_ts.isoformat(),
+        "end": request.window_end_ts.isoformat(),
+    }
+    invalid = {"start": valid["end"], "end": valid["start"]}
+    queries = []
+    calls = 0
+    detail = "start must be before end"
+
+    def data(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/payments"):
+            queries.append(dict(request.url.params))
+            if len(queries) == 1:
+                return httpx.Response(422, json={"detail": detail})
+        return httpx.Response(200, json={"rows": []})
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart("payments", invalid)])
+        if calls == 2:
+            assert any(
+                isinstance(part, ToolReturnPart)
+                and part.outcome != "success"
+                and "/data/payments returned 422" in str(part.content)
+                and detail in str(part.content)
+                for part in messages[-1].parts
+            )
+            return ModelResponse(parts=[ToolCallPart("payments", valid)])
+        assert any(
+            isinstance(part, ToolReturnPart)
+            and part.outcome == "success"
+            and part.content.rows == []
+            for part in messages[-1].parts
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit", {"agent": "discovery", "answered": False, "findings": []}
+                )
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(data)) as http:
+        response, steps = await answer(
+            discovery,
+            DataClient(http, "http://core/data"),
+            request,
+            settings(),
+            frozenset({"discovery:checkout_funnel"}),
+            model=FunctionModel(respond, model_name="claude-opus-5-5"),
+        )
+    assert calls == 3
+    assert len(queries) == 2
+    assert datetime.fromisoformat(queries[1]["start"]) == request.window_start_ts
+    assert datetime.fromisoformat(queries[1]["end"]) == request.window_end_ts
+    assert response.data_used == ["payments"]
+    assert [step["tool"] for step in steps] == ["payments"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 403, 500])
+async def test_non_validation_warehouse_errors_do_not_retry(status: int) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(status, json={"detail": "unavailable"})
+        )
+    ) as http:
+        with pytest.raises(ValueError, match=f"returned {status}"):
+            await DataClient(http, "http://core/data").get("payments", {})
 
 
 @pytest.mark.asyncio
