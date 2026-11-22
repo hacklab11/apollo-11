@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import SentinelSettings, load_settings
-from eye.contracts import GraphView, MetricDef
+from eye.contracts_v2 import GraphView, MetricDef
 from eye.graph.bootstrap import load_or_bootstrap
 from eye.graph.store import GraphStore
 from eye.registry.loader import CONFIG_DIR, load_registry

@@ -119,7 +119,6 @@ name = "Agent runtime does not import application packages"
 type = "forbidden"
 source_modules = ["agent_runtime"]
 forbidden_modules = [
-    "eye.contracts",
     "eye.config",
     "eye.schema",
     "eye.registry",
@@ -138,12 +137,11 @@ forbidden_modules = [
     "eye.sim",
     "selleros",
 ]
-ignore_imports = ["eye.contracts_v2 -> eye.contracts"]
 
 [[tool.importlinter.contracts]]
 name = "Contracts import nothing in the workspace"
 type = "forbidden"
-source_modules = ["eye.contracts", "eye.contracts_v2"]
+source_modules = ["eye.contracts_v2"]
 forbidden_modules = [
     "eye_auth",
     "eye.config",
@@ -170,7 +168,6 @@ forbidden_modules = [
 name = "Production does not import simulator"
 type = "forbidden"
 source_modules = [
-    "eye.contracts",
     "eye.contracts_v2",
     "eye.config",
     "eye.schema",
@@ -198,7 +195,6 @@ forbidden_modules = [
 name = "Contracts and config are foundational"
 type = "forbidden"
 source_modules = [
-    "eye.contracts",
     "eye.contracts_v2",
     "eye.config",
 ]
@@ -223,11 +219,6 @@ forbidden_modules = [
 
 [[tool.importlinter.contracts]]
 name = "Contracts and config do not import one another"
-type = "independence"
-modules = ["eye.contracts", "eye.config"]
-
-[[tool.importlinter.contracts]]
-name = "Contracts v2 and config do not import one another"
 type = "independence"
 modules = ["eye.contracts_v2", "eye.config"]
 

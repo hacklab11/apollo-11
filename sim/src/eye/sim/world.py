@@ -7,7 +7,7 @@ from typing import Literal
 import numpy as np
 from numpy.random import Generator
 
-from eye.contracts import Category, Platform, SellerTier
+from eye.contracts_v2 import Category, Platform, SellerTier
 from eye.sim.store import Batches
 
 _CATEGORIES: dict[Category, tuple[str, int, float, float, float]] = {

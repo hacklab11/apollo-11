@@ -21,20 +21,18 @@ from factories import (
 from scripted_agents import ScriptedAgents
 
 from eye.config import Settings
-from eye.contracts import (
-    AddMetricRequest,
-    InvestigationResult,
-    SellerAlertAck,
-    SentinelDecision,
-)
 from eye.contracts_v2 import (
+    AddMetricRequest,
     AgentResult,
     DetectRequest,
     DetectResult,
     IncidentClosure,
     InvestigateResult,
+    InvestigationResult,
     ReportResult,
     RunUsageSummary,
+    SellerAlertAck,
+    SentinelDecision,
     TaskMetadata,
 )
 from eye.control import audit_hash

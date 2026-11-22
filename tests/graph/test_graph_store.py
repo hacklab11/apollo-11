@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from eye.contracts import Edge, GraphView, MetricDef
+from eye.contracts_v2 import Edge, GraphView, MetricDef
 from eye.graph.store import GraphStore
 
 

@@ -18,7 +18,7 @@ from pydantic_ai import models
 from starlette.applications import Starlette
 
 from eye.config import A2aSettings, Settings
-from eye.contracts import SpecialistRequest
+from eye.contracts_v2 import SpecialistRequest
 from eye.sim.store import Store
 from eye.specialists.app import create_app
 from eye.specialists.tools import DataClient

@@ -28,18 +28,21 @@ from agent_runtime import Budget, RunScope, RunUsageSummary
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
-from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
 from eye.contracts_v2 import (
+    AddMetricResult,
+    Anomaly,
     ChallengeRequest,
     ChallengeResult,
     DetectRequest,
     DetectResult,
+    Hypothesis,
     InvestigateRequest,
     InvestigateResult,
     MapRequest,
     ReportRequest,
     ReportResult,
     SkepticResult,
+    TrailStep,
 )
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine

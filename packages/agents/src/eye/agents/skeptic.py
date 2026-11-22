@@ -42,8 +42,7 @@ from eye.agents.investigation_tools import (
     _WindowTools,
 )
 from eye.config import LlmSettings, SentinelSettings
-from eye.contracts import Anomaly, Hypothesis, TrailStep
-from eye.contracts_v2 import SkepticResult
+from eye.contracts_v2 import Anomaly, Hypothesis, SkepticResult, TrailStep
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareOutput,

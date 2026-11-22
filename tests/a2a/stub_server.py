@@ -23,7 +23,7 @@ from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Value
 from starlette.applications import Starlette
 
-from eye.contracts import (
+from eye.contracts_v2 import (
     SellerAlert,
     SellerAlertAck,
     SpecialistRequest,

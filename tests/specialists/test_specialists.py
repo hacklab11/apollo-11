@@ -11,7 +11,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import FunctionModel
 
 from eye.a2a_client import A2AClient
-from eye.contracts import SpecialistResponse
+from eye.contracts_v2 import SpecialistResponse
 from eye.specialists.app import create_app
 from eye.specialists.tools import DataClient
 

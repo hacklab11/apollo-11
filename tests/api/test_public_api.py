@@ -31,19 +31,20 @@ from eye.api.app import (
     human_actor,
 )
 from eye.config import Settings
-from eye.contracts import (
+from eye.contracts_v2 import (
     AddMetricResult,
+    AgentResult,
     Edge,
     Event,
     GraphView,
     Incident,
+    IncidentV2,
     MetricDef,
     SellerAlert,
     Series,
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import AgentResult, IncidentV2
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status, TenantBackpressure

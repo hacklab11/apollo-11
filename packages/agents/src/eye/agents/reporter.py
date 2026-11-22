@@ -22,7 +22,7 @@ from agent_runtime import (
 )
 from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings
-from eye.contracts import InvestigationResult
+from eye.contracts_v2 import InvestigationResult
 
 
 class Narrative(BaseModel):

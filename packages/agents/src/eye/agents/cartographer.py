@@ -26,7 +26,8 @@ from agent_runtime import (
 )
 from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
     AddMetricRequest,
     AddMetricResult,
     Dimension,
@@ -35,7 +36,6 @@ from eye.contracts import (
     MetricDef,
     TrailStep,
 )
-from eye.contracts_v2 import DEFAULT_TENANT
 from eye.graph.bootstrap import _mean_shares
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine

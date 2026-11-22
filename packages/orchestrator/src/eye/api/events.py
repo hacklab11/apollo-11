@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import AsyncIterator
 
-from eye.contracts import Event
+from eye.contracts_v2 import Event
 
 
 class EventBus:

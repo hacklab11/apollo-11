@@ -30,8 +30,13 @@ from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, ValidationError
 from pydantic_ai.exceptions import UsageLimitExceeded
 
-from eye.contracts import TrailStep
-from eye.contracts_v2 import DEFAULT_TENANT, AgentResult, RunUsageSummary, TaskMetadata
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    AgentResult,
+    RunUsageSummary,
+    TaskMetadata,
+    TrailStep,
+)
 from eye_auth.client import oauth_client
 from eye_auth.trust import verify_card
 

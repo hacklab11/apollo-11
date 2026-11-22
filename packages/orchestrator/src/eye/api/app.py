@@ -13,28 +13,28 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
-from eye.contracts import (
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    SELLER_REVERT_TOOL,
     AddMetricRequest,
     AddMetricResult,
     Dimension,
     Edge,
     GraphView,
     Incident,
-    IncidentStatus,
+    IncidentCloseRequest,
+    IncidentClosure,
+    IncidentV2,
     MetricDef,
     SellerAlert,
+    SellerPriceRevert,
+    SellerRevertApproval,
     Series,
     SeriesPoint,
     TrailStep,
 )
 from eye.contracts_v2 import (
-    DEFAULT_TENANT,
-    SELLER_REVERT_TOOL,
-    IncidentCloseRequest,
-    IncidentClosure,
-    IncidentV2,
-    SellerPriceRevert,
-    SellerRevertApproval,
+    PublicIncidentStatus as IncidentStatus,
 )
 from eye.control import RunKilled
 from eye.orchestrator import Orchestrator, Status, StepInProgress, TenantBackpressure

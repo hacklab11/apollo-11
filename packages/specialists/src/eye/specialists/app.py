@@ -36,7 +36,7 @@ from agent_runtime import RunLimits, RunScope, end_state_outputs, run_agent
 from agent_runtime.configured_models import build_model, price_table
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import Settings, load_settings
-from eye.contracts import SpecialistRequest, SpecialistResponse
+from eye.contracts_v2 import SpecialistRequest, SpecialistResponse
 from eye.specialists import discovery, growth, marketplace
 from eye.specialists.tools import DataApiUnavailable, DataClient, DataResult, Evidence
 

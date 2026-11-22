@@ -18,13 +18,9 @@ from agent_runtime import ModelPrice, PriceTable
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import PORTS, create_app
 from eye.config import LlmPrice, Settings
-from eye.contracts import (
+from eye.contracts_v2 import (
     AddMetricRequest,
     AddMetricResult,
-    SentinelDecision,
-    SpecialistResponse,
-)
-from eye.contracts_v2 import (
     Budget,
     DetectRequest,
     DetectResult,
@@ -33,6 +29,8 @@ from eye.contracts_v2 import (
     MapRequest,
     ReportRequest,
     ReportResult,
+    SentinelDecision,
+    SpecialistResponse,
     TaskMetadata,
 )
 from eye.sim.lake import LakeWriter

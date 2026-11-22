@@ -19,28 +19,26 @@ from pydantic import BaseModel
 from agent_runtime.tracing import inject_trace_context
 from eye.api.events import EventBus
 from eye.config import Settings
-from eye.contracts import (
-    AddMetricRequest,
-    AddMetricResult,
-    Event,
-    Incident,
-    InvestigationResult,
-    SellerAlert,
-    SellerAlertAck,
-    SentinelDecision,
-    TrailStep,
-)
 from eye.contracts_v2 import (
     DEFAULT_TENANT,
+    AddMetricRequest,
+    AddMetricResult,
     Budget,
     DetectRequest,
     DetectResult,
+    Event,
+    Incident,
     InvestigateRequest,
     InvestigateResult,
+    InvestigationResult,
     MapRequest,
     ReportRequest,
     ReportResult,
+    SellerAlert,
+    SellerAlertAck,
+    SentinelDecision,
     TaskMetadata,
+    TrailStep,
 )
 from eye.control import ControlPlane, RunKilled
 from eye.directory import AgentDirectory

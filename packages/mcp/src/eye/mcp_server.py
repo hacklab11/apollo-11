@@ -18,17 +18,19 @@ from starlette.responses import JSONResponse
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.api.app import MetricDefinition
 from eye.config import load_settings
-from eye.contracts import (
+from eye.contracts_v2 import (
     AddMetricRequest,
     AddMetricResult,
     Dimension,
     Edge,
     GraphView,
     Incident,
-    IncidentStatus,
     Series,
     TrailStep,
     Verdict,
+)
+from eye.contracts_v2 import (
+    PublicIncidentStatus as IncidentStatus,
 )
 from eye.orchestrator import Status
 

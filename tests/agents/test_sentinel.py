@@ -12,7 +12,7 @@ from agent_runtime import Budget, InMemoryKillSwitch, ModelPrice, PriceTable
 from agent_runtime.configured_models import build_model
 from eye.agents.sentinel import Sentinel, _Candidate
 from eye.config import LlmSettings
-from eye.contracts import TrailStep
+from eye.contracts_v2 import TrailStep
 
 TICK = datetime(2026, 11, 27, 12, tzinfo=UTC)
 HOUR = timedelta(hours=1)

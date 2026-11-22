@@ -36,8 +36,8 @@ from eye.agents.reporter import Reporter
 from eye.agents.sentinel import Sentinel
 from eye.agents.skeptic import Skeptic
 from eye.config import LlmSettings, Settings
-from eye.contracts import Anomaly, Hypothesis, InvestigationResult, MetricDef
-from eye.contracts import SpecialistRequest as EyeSpecialistRequest
+from eye.contracts_v2 import Anomaly, Hypothesis, InvestigationResult, MetricDef
+from eye.contracts_v2 import SpecialistRequest as EyeSpecialistRequest
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry

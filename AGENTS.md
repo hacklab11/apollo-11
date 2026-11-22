@@ -6,7 +6,7 @@ Read [README.md](README.md), the [documentation index](docs/README.md), and the 
 
 | Directory | Owns |
 |---|---|
-| `packages/contracts` | `eye.contracts` v1, `contracts_v2`, shared configuration |
+| `packages/contracts` | `eye.contracts_v2` shared wire shapes and shared configuration |
 | `packages/data` | schema, registry, graph, deterministic tools, warehouse HTTP API/client |
 | `packages/agent_runtime` | shared PydanticAI execution guards, budgets, resilience and tracing |
 | `packages/llm` | shared core-agent and specialist prompt resources only |
@@ -25,7 +25,7 @@ Current specifications are in `docs/specs/`; archived cards are reference materi
 ## Boundaries and code rules
 
 - Tools compute; agents decide. Never invent numerical evidence in model text.
-- Reuse shared contracts. v1 remains live; v2 imports shared v1 shapes.
+- Reuse shared wire contracts from `eye.contracts_v2`; do not redefine service shapes locally.
 - Import-linter in root `pyproject.toml` is authoritative: contracts/config are foundational;
   data cannot import agents or orchestration; agents/specialists cannot import orchestration.
 - Core agents are independent. Orchestrator calls them over A2A, never by importing implementations.

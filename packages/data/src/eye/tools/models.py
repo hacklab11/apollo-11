@@ -5,7 +5,7 @@ from typing import Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, Field, model_validator
 
-from eye.contracts import Anomaly, Dimension
+from eye.contracts_v2 import Anomaly, Dimension
 
 
 class WindowInput(BaseModel):

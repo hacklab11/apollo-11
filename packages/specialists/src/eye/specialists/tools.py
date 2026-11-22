@@ -9,7 +9,7 @@ import httpx
 from pydantic import AwareDatetime, BaseModel, Field
 from pydantic_ai import RunContext, Tool
 
-from eye.contracts import Category, Channel, Country, Platform, SellerTier
+from eye.contracts_v2 import Category, Channel, Country, Platform, SellerTier
 
 # The data API returns up to 5 000 rows; the model only needs enough to reason.
 MAX_ROWS = 200

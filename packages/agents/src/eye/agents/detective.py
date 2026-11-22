@@ -39,7 +39,7 @@ from eye.agents.investigation_tools import (
     _WindowTools,
 )
 from eye.config import DetectiveSettings, LlmSettings, SentinelSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     Anomaly,
     Contribution,
     Dimension,
@@ -47,16 +47,17 @@ from eye.contracts import (
     GraphView,
     Hypothesis,
     Incident,
+    IncidentV2,
     InvestigationResult,
     MetricDef,
     Series,
+    SkepticResult,
     SpecialistRequest,
     SpecialistResponse,
     Symptom,
     TrailStep,
     Verdict,
 )
-from eye.contracts_v2 import IncidentV2, SkepticResult
 from eye.registry.loader import Registry
 from eye.tools.drill import AttributionResult
 from eye.tools.models import (

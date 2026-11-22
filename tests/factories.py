@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 
-from eye.contracts import (
+from eye.contracts_v2 import (
     Actor,
     AddMetricResult,
     Anomaly,

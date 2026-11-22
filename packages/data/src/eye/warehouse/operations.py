@@ -5,7 +5,7 @@ from datetime import timedelta
 
 from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter
 
-from eye.contracts import Dimension, GraphView, MetricDef, Series
+from eye.contracts_v2 import Dimension, GraphView, MetricDef, Series
 from eye.tools.drill import AttributionResult
 from eye.tools.models import (
     BaselineCompareInput,

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from eye.config import Settings
-from eye.contracts import MetricDef, Series, SeriesPoint
+from eye.contracts_v2 import MetricDef, Series, SeriesPoint
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry, load_registry
 from eye.sim.engine import Simulator

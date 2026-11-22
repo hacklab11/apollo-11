@@ -1,10 +1,13 @@
 # Contracts and configuration
 
-Implementation: `packages/contracts/src/eye/{contracts.py,contracts_v2.py,config.py}`.
+Implementation: `packages/contracts/src/eye/{contracts_v2.py,config.py}`.
 
-- v1 owns shared metric, graph, anomaly, evidence, investigation and trail shapes and remains in use.
-- v2 adds tenant-scoped requests/results, metadata, budgets, explicit agent end states,
-  incident lifecycle and approval contracts; it imports shared v1 shapes.
+- `eye.contracts_v2` owns all shared metric, graph, anomaly, evidence, investigation,
+  trail, specialist and simulator shapes, alongside tenant-scoped requests/results,
+  metadata, budgets, explicit agent end states, incident lifecycle and approval contracts.
+- `Incident` and `PublicIncidentStatus` preserve the existing API/MCP/persisted lifecycle;
+  `IncidentV2` and `IncidentStatus` describe the tenant-scoped lifecycle. Consolidating
+  their module does not change either wire shape or migrate stored incidents.
 - `AgentResult[T]` distinguishes `done`, `needs_input`, `failed`, `gave_up`, with usage,
   result/question/reason as appropriate. A2A maps these to completed, input-required or failed.
 - `TaskMetadata` carries tenant, incident context, budget, trace context and delegation controls.

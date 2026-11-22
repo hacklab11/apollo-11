@@ -28,15 +28,15 @@ from agent_runtime import (
 )
 from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings, SentinelSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     Anomaly,
     AnomalyKind,
     GraphView,
     Incident,
+    IncidentV2,
     SentinelDecision,
     TrailStep,
 )
-from eye.contracts_v2 import IncidentV2
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareInput,

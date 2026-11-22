@@ -7,7 +7,7 @@ from stub_server import EchoExecutor, stub_server
 
 from eye.a2a_client import A2AClient
 from eye.config import A2aSettings
-from eye.contracts import SellerAlert, SpecialistRequest
+from eye.contracts_v2 import SellerAlert, SpecialistRequest
 from eye.directory import AgentDirectory
 
 

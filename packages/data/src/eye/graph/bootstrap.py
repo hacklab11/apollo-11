@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from eye.contracts import Edge
+from eye.contracts_v2 import Edge
 from eye.graph.store import GRAPH_PATH, GraphStore
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import CONFIG_DIR, CausalSeed, Identity, Registry
