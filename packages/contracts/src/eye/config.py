@@ -107,7 +107,18 @@ class ReporterSettings(_Section):
     resolve_z: float = Field(2.0, ge=0.5, le=3.0)
 
 
+class LlmPrice(_Section):
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
+
+
 class LlmSettings(_Section):
+    fallback_models: dict[str, list[ModelId]] = Field(default_factory=dict)
+    prices: dict[str, LlmPrice] = Field(
+        default_factory=lambda: {
+            _DEFAULT_MODEL: LlmPrice(input_per_mtok=5.0, output_per_mtok=25.0)
+        }
+    )
     provider: Literal["anthropic", "openai_compatible"] = "anthropic"
     base_url: AgentUrl = "https://openrouter.ai/api/v1"
     api_key_env: Annotated[

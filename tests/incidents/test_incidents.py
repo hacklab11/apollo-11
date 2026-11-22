@@ -4,8 +4,13 @@ from datetime import timedelta
 
 import pytest
 from factories import make_anomaly, make_incident_s7, make_metrics, make_trail_s7
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 
+from agent_runtime import model_chain
 from eye.agents.reporter import Reporter
+from eye.config import LlmSettings
 from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision, Symptom
 from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure
 from eye.graph.store import GraphStore
@@ -624,44 +629,86 @@ async def test_persistence_and_trail(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_reporter_retry_then_fallback():
-    calls = []
-
-    async def wrong(**kwargs):
-        calls.append(kwargs)
-        return {"title": "Orders", "summary": "Loss EUR 987654321 per hour."}
-
-    reporter = Reporter(wrong)
-    assert await reporter.write(result()) == reporter.template(result())
-    assert len(calls) == 2
-    assert calls[0]["output_config"]["effort"] == "medium"
-    assert "tools" not in calls[0]
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("bad", [None, {}, {"title": "", "summary": ""}])
-async def test_reporter_invalid_output(bad):
-    async def invalid(**kwargs):
-        return bad
-
-    assert await Reporter(invalid).write(result()) == Reporter.template(result())
-
-
-@pytest.mark.asyncio
-async def test_reporter_valid_retry_and_exception():
+@pytest.mark.parametrize(
+    "bad_first,persistent", [(False, False), (True, False), (True, True)]
+)
+async def test_reporter_grounding(bad_first, persistent):
     calls = 0
 
-    async def llm(**kwargs):
+    def reply(messages, info):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            raise RuntimeError("unavailable")
-        return {
+        assert not info.function_tools
+        narrative = {
             "title": "Orders below forecast",
             "summary": "Impact EUR 97,200 per hour; orders fell 40%.",
         }
+        if persistent or (bad_first and calls == 1):
+            narrative["summary"] = "Loss EUR 987654321 per hour."
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, narrative)])
 
-    title, summary = await Reporter(llm).write(result())
-    assert title == "Orders below forecast"
-    assert "97,200" in summary
-    assert calls == 2
+    model = FunctionModel(reply)
+    settings = LlmSettings(
+        prices={model.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
+    )
+    reporter = Reporter(model, settings=settings)
+    title, summary = await reporter.write(result())
+    if persistent:
+        assert (title, summary) == reporter.template(result())
+        assert reporter.outcome.result.status in {"failed", "gave_up"}
+    else:
+        assert title == "Orders below forecast"
+        assert "97,200" in summary
+        assert reporter.outcome.result.status == "done"
+    assert calls == (2 if bad_first else 1)
+
+
+@pytest.mark.asyncio
+async def test_reporter_model_fallback():
+    def broken(messages, info):
+        raise ModelAPIError("primary", "offline")
+
+    def reply(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "title": "Orders",
+                        "summary": "Measured decline.",
+                    },
+                )
+            ]
+        )
+
+    fallback = FunctionModel(reply)
+    settings = LlmSettings(
+        prices={fallback.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
+    )
+    reporter = Reporter(model_chain(FunctionModel(broken), fallback), settings=settings)
+    assert await reporter.write(result()) == ("Orders", "Measured decline.")
+    assert reporter.outcome.result.status == "done"
+
+
+@pytest.mark.asyncio
+async def test_reporter_empty_output_falls_back():
+    def reply(messages, info):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {
+                        "title": "",
+                        "summary": "",
+                    },
+                )
+            ]
+        )
+
+    model = FunctionModel(reply)
+    settings = LlmSettings(
+        prices={model.model_name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}}
+    )
+    reporter = Reporter(model, settings=settings)
+    assert await reporter.write(result()) == reporter.template(result())
+    assert reporter.outcome.result.status == "failed"
