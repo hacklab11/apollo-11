@@ -52,6 +52,9 @@ on port 8080, not the former port 8000. nginx strips incoming identity and beare
 headers and sets `X-Eye-Person: local-operator`; this local-only demo has one
 operator, not a login system. A caller-supplied `X-Eye-Person: gleb` is replaced,
 not trusted. For a shared deployment, replace this with an authenticated proxy.
+Cross-origin browser requests and unexpected Host names are rejected before
+granting that identity. Monitoring starts paused; use **Resume monitoring** in
+the workspace when you are ready to consume new hours.
 Each Python service has
 its own container and HTTP health check. The continuous simulator backfills or
 resumes its private `sim-world` volume and publishes hourly Parquet to
@@ -92,8 +95,9 @@ endpoints at their Compose service names on ports 8210–8250, respectively.
 Discover each at `/.well-known/agent-card.json`. To run multiple replicas,
 use `docker compose up -d --wait --scale detective=3`. Use blocking A2A
 sends: task state stays with the replica that handles a request.
-The A2A Detective delegates only to Skeptic: legacy specialists and SellerOS
-do not accept budgets or report usage yet. The legacy Core path is unchanged.
+The A2A Detective delegates to Skeptic with budget/usage metadata and can query
+the legacy specialists and SellerOS through the existing specialist boundary.
+Those specialist queries do not accept budgets or report usage yet.
 
 ### S8 demo against the running continuous stack
 
