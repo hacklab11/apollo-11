@@ -107,22 +107,27 @@ class AgentDirectory:
                 ),
                 metadata=ParseDict(metadata.model_dump(mode="json"), Struct()),
             )
-            async with (
-                httpx.AsyncClient(
-                    transport=self.transport,
-                    timeout=self.settings.timeout_s,
-                    headers=headers,
-                ) as raw,
-                oauth_client(
-                    {f"{self.cards[skill].name}:{skill}"},
-                    client_id="eye-core",
-                    http=raw,
-                ) as client,
-            ):
-                await verify_card(self.cards[skill])
-                response = await JsonRpcTransport(
-                    client, self.cards[skill], self.urls[skill], is_shared_httpx=True
-                ).send_message(request)
+            async with httpx.AsyncClient(
+                transport=self.transport,
+                timeout=self.settings.timeout_s,
+                headers=headers,
+            ) as raw:
+                card, url = self.cards[skill], self.urls[skill]
+                name = card.name
+                try:
+                    await verify_card(card, name)
+                except ValueError:
+                    card = await A2ACardResolver(raw, url).get_agent_card()
+                    await verify_card(card, name)
+                    if skill not in {item.id for item in card.skills}:
+                        raise ValueError(f"unknown A2A skill: {skill}")
+                    self.cards[skill] = card
+                async with oauth_client(
+                    {f"{name}:{skill}"}, client_id="eye-core", http=raw
+                ) as client:
+                    response = await JsonRpcTransport(
+                        client, card, url, is_shared_httpx=True
+                    ).send_message(request)
             if not response.HasField("task"):
                 raise ValueError("expected blocking A2A task")
             task = response.task

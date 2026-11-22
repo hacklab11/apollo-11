@@ -421,6 +421,42 @@ async def test_directory_unknown_skill() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fresh_valid", [True, False])
+async def test_directory_refreshes_rejected_cached_card_once(fresh_valid: bool) -> None:
+    scripted = ScriptedAgents()
+    settings = Settings()
+    directory = scripted.directory(settings.a2a)
+    await directory.resolve()
+    directory.cards["detect"].description = "Stale cached signature"
+    gets = []
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        response = await scripted.handle(request)
+        if request.method == "GET":
+            gets.append(request.url.host)
+            if not fresh_valid:
+                body = response.json()
+                body.pop("signatures", None)
+                return httpx.Response(200, json=body)
+        return response
+
+    directory.transport = httpx.MockTransport(handle)
+    metadata = TaskMetadata(
+        tenant_id="default", context_id="refresh",
+        traceparent="00-" + "1" * 32 + "-" + "2" * 16 + "-01",
+        budget={"tokens": 100, "cost_usd": 0.5, "deadline": "2099-01-01T00:00:00Z"},
+    )
+    if fresh_valid:
+        await directory.call("detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult)
+        assert len(scripted.requests) == 1
+    else:
+        with pytest.raises(ValueError, match="Untrusted agent card"):
+            await directory.call("detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult)
+        assert not scripted.requests
+    assert gets == ["sentinel"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["needs_input", "failed", "gave_up", "empty"])
 async def test_non_success_and_empty_detection(tmp_path: Path, state: str) -> None:
     clock = Clock()
