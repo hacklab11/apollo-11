@@ -1,8 +1,10 @@
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from dbos import DBOS, SetEnqueueOptions
 from factories import make_anomaly, make_incident_s7, make_trail_s7
 from scripted_agents import ScriptedAgents
 
@@ -20,7 +22,7 @@ from eye.contracts_v2 import (
 )
 from eye.control import audit_hash
 from eye.incidents.store import IncidentStore
-from eye.orchestrator import HOUR, Orchestrator
+from eye.orchestrator import HOUR, Orchestrator, TenantBackpressure
 from eye.warehouse.client import DataUnavailable
 
 
@@ -31,6 +33,41 @@ class Clock:
 
     def step(self) -> None:
         self.now += HOUR
+
+
+@pytest.mark.asyncio
+async def test_tenant_limits_and_backpressure(workflow) -> None:
+    core, scripted = workflow
+    await core.queue.set_partition_limiter_async({"limit": 1, "period": 3600})
+    core.settings.orchestrator.max_queued_per_tenant = 1
+    await core.step_once()
+    with SetEnqueueOptions(queue_partition_key="default"):
+        handle = await core.queue.enqueue_async(
+            core.run_hour, "limited", core.sim.now, core._metadata("limited")
+        )
+    try:
+        await asyncio.sleep(1.2)
+        status = await DBOS.get_workflow_status_async(handle.workflow_id)
+        assert status.status == "ENQUEUED"
+        assert len(scripted.requests) == 1
+        with pytest.raises(TenantBackpressure, match="default.*backlog is full"):
+            await core.register_metric(None)
+        now, tick = core.sim.now, core.tick
+        await core.step_once()
+        assert (core.sim.now, core.tick) == (now, tick)
+        await core._check_backlog("other-tenant")
+    finally:
+        await DBOS.cancel_workflow_async(handle.workflow_id)
+
+
+@pytest.mark.asyncio
+async def test_configured_delegation_budget(workflow) -> None:
+    core, _ = workflow
+    core.settings.orchestrator.max_depth = 0
+    core.settings.orchestrator.max_fan_out = 7
+    budget = core._metadata("configured").budget
+    assert budget.max_depth == 0
+    assert budget.max_fan_out == 7
 
 
 @pytest.mark.asyncio

@@ -32,3 +32,4 @@ assert httpx.get("http://scripted-model:8400/healthz", timeout=5).status_code ==
 print("OK agent reaches scripted-model through proxy")
 PY
 docker compose exec -T eye-core python /e2e/run_s8.py
+docker compose exec -T eye-core python /e2e/queued.py

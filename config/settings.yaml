@@ -6,6 +6,12 @@ sim:
   autostart: true
 
 orchestrator:
+  tenant_concurrency: 1
+  tenant_rate_limit: 60
+  tenant_rate_period_s: 60
+  max_queued_per_tenant: 100
+  max_depth: 2
+  max_fan_out: 3
   max_concurrent_investigations: 2
   pause_sim_during_investigation: true
 

@@ -46,7 +46,12 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
 def test_agents_have_only_internal_networks(repo_root: Path) -> None:
     compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
     for name in (
-        "sentinel", "detective", "skeptic", "reporter", "cartographer", "eye-specialists"
+        "sentinel",
+        "detective",
+        "skeptic",
+        "reporter",
+        "cartographer",
+        "eye-specialists",
     ):
         service = compose["services"][name]
         assert all(compose["networks"][n]["internal"] for n in service["networks"])

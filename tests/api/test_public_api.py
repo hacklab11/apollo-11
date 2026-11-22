@@ -46,7 +46,7 @@ from eye.contracts import (
 from eye.contracts_v2 import AgentResult, IncidentV2
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
-from eye.orchestrator import HOUR, Orchestrator, Status
+from eye.orchestrator import HOUR, Orchestrator, Status, TenantBackpressure
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.sim.store import Store
@@ -62,6 +62,26 @@ class World:
 
     def step(self) -> None:
         self.now += HOUR
+
+
+def test_metric_backpressure_returns_429(service, monkeypatch) -> None:
+    app, _, core = service
+
+    async def full(request):
+        raise TenantBackpressure("Tenant default queued backlog is full")
+
+    monkeypatch.setattr(core, "register_metric", full)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/metrics",
+            json={
+                "name": "orders_per_session",
+                "description": "Orders per session",
+                "expression": "orders / sessions",
+            },
+        )
+    assert response.status_code == 429
+    assert "backlog is full" in response.json()["detail"]
 
 
 class Graph:

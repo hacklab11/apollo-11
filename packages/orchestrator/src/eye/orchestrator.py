@@ -96,6 +96,10 @@ class StepInProgress(Exception):
     pass
 
 
+class TenantBackpressure(Exception):
+    pass
+
+
 @DBOS.dbos_class()
 class Orchestrator(DBOSConfiguredInstance):
     def __init__(
@@ -145,6 +149,7 @@ class Orchestrator(DBOSConfiguredInstance):
         self._stepping = False
         self._loop: asyncio.AbstractEventLoop | None = None
         self._usage = {"calls": 0, "tokens_in": 0, "tokens_out": 0}
+        self._enqueue_lock = asyncio.Lock()
 
     def emit(
         self, kind: str, payload: BaseModel | dict, ts: datetime | None = None
@@ -168,7 +173,11 @@ class Orchestrator(DBOSConfiguredInstance):
             DBOS.register_queue,
             "data-hours",
             global_concurrency=self.settings.orchestrator.max_concurrent_investigations,
-            partition_concurrency=1,
+            partition_concurrency=self.settings.orchestrator.tenant_concurrency,
+            partition_limiter={
+                "limit": self.settings.orchestrator.tenant_rate_limit,
+                "period": self.settings.orchestrator.tenant_rate_period_s,
+            },
         )
         await self.directory.resolve()
         if self.settings.sim.autostart:
@@ -247,29 +256,48 @@ class Orchestrator(DBOSConfiguredInstance):
                 tokens=settings.run_tokens,
                 cost_usd=settings.run_cost_usd,
                 deadline=datetime.now(UTC) + timedelta(seconds=settings.run_deadline_s),
+                max_depth=settings.max_depth,
+                max_fan_out=settings.max_fan_out,
             ),
         )
+
+    async def _check_backlog(self, tenant_id: str) -> None:
+        queued = await DBOS.list_workflows_async(
+            queue_name="data-hours",
+            status="ENQUEUED",
+            load_input=False,
+            load_output=False,
+        )
+        if sum(w.queue_partition_key == tenant_id for w in queued) >= (
+            self.settings.orchestrator.max_queued_per_tenant
+        ):
+            raise TenantBackpressure(f"Tenant {tenant_id} queued backlog is full")
 
     async def step_once(self, *, wait_for_analysis: bool = True) -> Status:
         if self._stepping or self._pending:
             raise StepInProgress("The previous clock step is still processing.")
         self._stepping = True
         try:
-            ts = self.sim.now
-            await asyncio.to_thread(self.sim.step)
-            if self.sim.now == ts:
-                return self.status()
-            self.invalidate()
-            self.sim_ts, self.tick = ts, self.tick + 1
-            self.emit("tick", {"tick": self.tick})
-            run_id = f"hour-{DEFAULT_TENANT}-{ts.isoformat()}"
-            with (
-                SetWorkflowID(run_id),
-                SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
-            ):
-                handle = await self.queue.enqueue_async(
-                    self.run_hour, run_id, ts, self._metadata(run_id)
-                )
+            async with self._enqueue_lock:
+                try:
+                    await self._check_backlog(DEFAULT_TENANT)
+                except TenantBackpressure:
+                    return self.status()
+                ts = self.sim.now
+                await asyncio.to_thread(self.sim.step)
+                if self.sim.now == ts:
+                    return self.status()
+                self.invalidate()
+                self.sim_ts, self.tick = ts, self.tick + 1
+                self.emit("tick", {"tick": self.tick})
+                run_id = f"hour-{DEFAULT_TENANT}-{ts.isoformat()}"
+                with (
+                    SetWorkflowID(run_id),
+                    SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
+                ):
+                    handle = await self.queue.enqueue_async(
+                        self.run_hour, run_id, ts, self._metadata(run_id)
+                    )
             task = asyncio.create_task(handle.get_result())
             self._pending.add(task)
             task.add_done_callback(self._pending.discard)
@@ -577,11 +605,13 @@ class Orchestrator(DBOSConfiguredInstance):
 
     async def register_metric(self, request: AddMetricRequest) -> AddMetricResult:
         run_id = f"map-{uuid4().hex}"
-        with (
-            SetWorkflowID(run_id),
-            SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
-        ):
-            handle = await self.queue.enqueue_async(
-                self.map_metric, run_id, request, self._metadata(run_id)
-            )
+        async with self._enqueue_lock:
+            await self._check_backlog(DEFAULT_TENANT)
+            with (
+                SetWorkflowID(run_id),
+                SetEnqueueOptions(queue_partition_key=DEFAULT_TENANT),
+            ):
+                handle = await self.queue.enqueue_async(
+                    self.map_metric, run_id, request, self._metadata(run_id)
+                )
         return await handle.get_result()

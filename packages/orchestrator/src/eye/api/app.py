@@ -37,7 +37,7 @@ from eye.contracts_v2 import (
     SellerRevertApproval,
 )
 from eye.control import RunKilled
-from eye.orchestrator import Orchestrator, Status, StepInProgress
+from eye.orchestrator import Orchestrator, Status, StepInProgress, TenantBackpressure
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.tools.models import BaselineCompareInput, BaselineCompareOutput
@@ -296,6 +296,8 @@ def create_app(
     async def add_metric(request: AddMetricRequest) -> AddMetricResult:
         try:
             return await orchestrator.register_metric(request)
+        except TenantBackpressure as exc:
+            raise HTTPException(429, str(exc)) from exc
         except NotImplementedError as exc:
             raise HTTPException(503, "Cartographer is not available") from exc
         except ValueError as exc:
