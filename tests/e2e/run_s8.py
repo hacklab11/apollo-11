@@ -53,6 +53,7 @@ def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
             request(client, "GET", f"/api/incidents/{item.id}").content
         )
         assert detail.verdict == "CONFIRMED", detail
+        assert detail.entry.segment == {"category": "electronics"}, detail.entry
         assert detail.root_cause and detail.root_cause.cause_type == "price_change"
         assert detail.investigation_ids and not detail.open_questions, detail
         trail = TRAIL.validate_json(
@@ -122,7 +123,8 @@ def run() -> None:
             status = step(core, status.tick)
         print(
             f"OK S8 incident {incident.id}: status={incident.status}, "
-            f"verdict={incident.verdict}, report={incident.title!r}",
+            f"verdict={incident.verdict}, metric={incident.entry.metric}, "
+            f"segment={incident.entry.segment}, report={incident.title!r}",
             flush=True,
         )
         close_path = f"/api/incidents/{incident.id}/close"
