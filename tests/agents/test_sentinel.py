@@ -11,6 +11,7 @@ from pydantic_ai.models.function import FunctionModel
 from agent_runtime import InMemoryKillSwitch, ModelPrice, PriceTable, model_chain
 from eye.agents.sentinel import Sentinel, _Candidate
 from eye.contracts import TrailStep
+from eye.llm.client import BudgetExceeded
 
 TICK = datetime(2026, 11, 27, 12, tzinfo=UTC)
 HOUR = timedelta(hours=1)
@@ -127,7 +128,7 @@ async def test_loop_surfaces_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = sentinel(monkeypatch, repeat)
     monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
     agent._data.read.return_value.events = []
-    with pytest.raises(RuntimeError, match="gave_up: loop detected"):
+    with pytest.raises(BudgetExceeded, match="gave_up: loop detected"):
         await agent.run(TICK)
 
 

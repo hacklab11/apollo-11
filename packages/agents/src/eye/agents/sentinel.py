@@ -34,6 +34,7 @@ from eye.contracts import (
     TrailStep,
 )
 from eye.contracts_v2 import IncidentV2
+from eye.llm.client import BudgetExceeded
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareInput,
@@ -339,11 +340,6 @@ class Sentinel:
             prices=self._prices,
             kill_switch=self._kill_switch,
         )
-        if outcome.result.status != "done":
-            raise RuntimeError(
-                f"Sentinel {outcome.result.status}: {outcome.result.reason or outcome.result.question}"
-            )
-        submitted = cast(SentinelSubmission, outcome.result.result)
         await on_step(
             TrailStep(
                 id=str(uuid4()),
@@ -357,6 +353,14 @@ class Sentinel:
                 tokens_out=outcome.result.usage.output_tokens,
             )
         )
+        if outcome.result.status != "done":
+            error = (
+                BudgetExceeded if outcome.result.status == "gave_up" else RuntimeError
+            )
+            raise error(
+                f"Sentinel {outcome.result.status}: {outcome.result.reason or outcome.result.question}"
+            )
+        submitted = cast(SentinelSubmission, outcome.result.result)
         for message in outcome.messages:
             if isinstance(message, ModelResponse):
                 for part in message.parts:

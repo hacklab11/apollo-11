@@ -40,8 +40,9 @@ four tool turns plus a final submission request (five requests maximum), 16 tool
 calls, 64,000 total tokens, a $1 cost cap and a 60-second deadline. The harness
 checks repeated calls and an optional kill switch. Provider errors fall back to
 the configured default model when different. Schema-validated `submit` output
-is post-processed deterministically; non-done states raise an error and the A2A
-executor returns its existing failed result, never a successful empty triage.
+is post-processed deterministically; gave-up states raise `BudgetExceeded` and
+other non-done states raise an error. The A2A executor returns its existing
+gave-up or failed result, never a successful empty triage.
 Sentinel no longer uses the legacy record/replay loop.
 
 ## 3. Lead Detective (T14)
