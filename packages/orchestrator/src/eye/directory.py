@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack
 from uuid import uuid4
 
 import httpx
+from authlib.integrations.base_client.errors import OAuthError
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.errors import AgentCardResolutionError
 from a2a.client.transports.jsonrpc import JsonRpcTransport
@@ -206,5 +207,5 @@ class AgentDirectory:
                 return SellerAlertAck.model_validate(
                     MessageToDict(task.artifacts[0].parts[0].data)
                 )
-        except (A2AError, httpx.HTTPError, ValueError):
+        except (A2AError, httpx.HTTPError, ValueError, KeyError, OAuthError):
             return SellerAlertAck(received=False, actions_taken=[])

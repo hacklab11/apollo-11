@@ -182,3 +182,20 @@ async def test_directory_skips_invalid_card_and_keeps_healthy_agent(caplog) -> N
     assert set(directory.cards) == {"echo"}
     assert directory.cards["echo"].name == "sentinel"
     assert "Skipping untrusted A2A card for detective" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "rejected"])
+async def test_seller_delivery_returns_failure_on_oauth_error(failure, monkeypatch) -> None:
+    app, executor = stub_server(name="selleros")
+    if failure == "missing":
+        monkeypatch.delenv("EYE_AUTH_EYE_CORE_SECRET", raising=False)
+        monkeypatch.delenv("EYE_AUTH_CLIENT_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("EYE_AUTH_EYE_CORE_SECRET", "invalid-test-only")
+    directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
+    ack = await directory.notify_seller_os(SellerAlert(
+        incident_id="inc_1", seller_ids=[], skus=[], summary="Check", recommended_action="Review",
+    ))
+    assert not ack.received and not ack.actions_taken
+    assert not executor.requests
