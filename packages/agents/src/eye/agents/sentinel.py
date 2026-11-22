@@ -21,6 +21,7 @@ from eye.contracts import (
     SentinelDecision,
     TrailStep,
 )
+from eye.contracts_v2 import IncidentV2
 from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.loader import Registry
 from eye.tools.models import (
@@ -37,7 +38,7 @@ _HOUR = timedelta(hours=1)
 _PROMPT = files("eye.llm").joinpath("prompts/sentinel.md")
 # Compact ASCII JSON at roughly 3 characters per token; counting via the API costs a call.
 _MAX_CONTEXT_CHARS = 18_000
-_OPEN = {"investigating", "open", "persisting"}
+_OPEN = {"investigating", "open", "persisting", "mitigating"}
 type _WatchKey = tuple[str, tuple[tuple[str, str], ...], AnomalyKind]
 
 
@@ -66,11 +67,11 @@ class _Candidate:
 
     @property
     def watch_key(self) -> _WatchKey:
-        return (
-            self.anomaly.metric,
-            tuple(sorted(self.anomaly.segment.items())),
-            self.anomaly.kind,
-        )
+        return _watch_key(self.anomaly)
+
+
+def _watch_key(anomaly: Anomaly) -> _WatchKey:
+    return (anomaly.metric, tuple(sorted(anomaly.segment.items())), anomaly.kind)
 
 
 async def _discard_step(step: TrailStep) -> None:
@@ -174,7 +175,10 @@ class Sentinel:
         return candidates
 
     def _prefetch(
-        self, ts: datetime, incidents: Sequence[Incident], previous: set[_WatchKey]
+        self,
+        ts: datetime,
+        incidents: Sequence[Incident | IncidentV2],
+        previous: set[_WatchKey],
     ) -> tuple[str, list[_Candidate]]:
         candidates = self._candidates(ts)
         if not candidates:
@@ -252,10 +256,18 @@ class Sentinel:
         self,
         ts: datetime,
         *,
-        open_incidents: Sequence[Incident] = (),
+        open_incidents: Sequence[Incident | IncidentV2] = (),
         on_step: Callable[[TrailStep], Awaitable[None]] = _discard_step,
+        previous_decisions: Sequence[SentinelDecision] | None = None,
     ) -> list[SentinelDecision]:
-        previous = self._watched if self._watch_tick == ts - _HOUR else set()
+        if previous_decisions is None:
+            previous = self._watched if self._watch_tick == ts - _HOUR else set()
+        else:
+            previous = {
+                _watch_key(decision.anomaly)
+                for decision in previous_decisions
+                if decision.action == "watch" and decision.anomaly.ts == ts - _HOUR
+            }
         content, candidates = await asyncio.to_thread(
             self._prefetch, ts, open_incidents, previous
         )

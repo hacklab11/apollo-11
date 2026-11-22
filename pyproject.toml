@@ -233,9 +233,6 @@ modules = [
     "eye.agents.reporter",
     "eye.agents.cartographer",
 ]
-ignore_imports = [
-    "eye.agents.detective -> eye.agents.skeptic", # wave 3 removes this existing edge
-]
 
 [[tool.importlinter.contracts]]
 name = "SellerOS is independent"
