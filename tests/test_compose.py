@@ -10,6 +10,7 @@ def test_compose_auth_credentials_are_isolated(repo_root: Path) -> None:
     policy = yaml.safe_load((repo_root / "config/auth.yaml").read_text())
     secret_names = {client["secret_env"] for client in policy["clients"].values()}
     assert auth["command"] == ["eye-auth"]
+    assert set(auth["networks"]) == {"eye", "agents"}
     assert "auth-keys:/app/data/auth" in auth["volumes"]
     assert auth["environment"]["EYE_AUTH_KEY_PATH"] == "/app/data/auth/key.pem"
     assert "/healthz" in auth["healthcheck"]["test"][-1]
@@ -35,6 +36,8 @@ def test_compose_auth_credentials_are_isolated(repo_root: Path) -> None:
         if "EYE_AUTH_CLIENT_ID" in environment or name == "eye-specialists":
             assert environment["EYE_AUTH_URL"] == auth["environment"]["EYE_AUTH_URL"]
             assert service["depends_on"]["auth"] == {"condition": "service_healthy"}
+        if environment.get("HTTPS_PROXY"):
+            assert "auth" in environment["NO_PROXY"].split(",")
         assert not any(v.startswith("auth-keys:") for v in service.get("volumes", []))
 
 

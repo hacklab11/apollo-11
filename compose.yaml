@@ -167,9 +167,6 @@ services:
       EYE_AUTH_GROWTH_SECRET: ${EYE_AUTH_GROWTH_SECRET:-}
       EYE_AUTH_MARKETPLACE_SECRET: ${EYE_AUTH_MARKETPLACE_SECRET:-}
       EYE_AUTH_DISCOVERY_SECRET: ${EYE_AUTH_DISCOVERY_SECRET:-}
-    depends_on:
-      auth:
-        condition: service_healthy
     command: [eye-specialists]
     networks: [agents, warehouse]
     depends_on: *agent-dependencies
