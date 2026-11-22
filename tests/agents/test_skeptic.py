@@ -3,9 +3,15 @@ from contextlib import closing
 from unittest.mock import AsyncMock, Mock
 
 import duckdb
+import httpx
 import pytest
 from pydantic_ai import Tool, models
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from test_detective import START, anomaly, seed
@@ -25,6 +31,7 @@ from eye.agents.skeptic import (
 from eye.config import LlmSettings
 from eye.registry.loader import load_registry
 from eye.sim.store import Store
+from eye.warehouse.client import DataClient
 
 
 @pytest.fixture(autouse=True)
@@ -49,6 +56,72 @@ def test_configured_prices() -> None:
         prices.cost("skeptic", RequestUsage())
     with pytest.raises(UnpricedModel):
         prices.cost("unconfigured:free", RequestUsage())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("list_events", {}),
+        ("planned_effect_check", {"event_id": "black-friday"}),
+        ("check_freshness", {"metric": "gmv"}),
+        ("baseline_compare", {"metric": "gmv"}),
+        (
+            "compare_segments",
+            {"metric": "gmv", "dim": "country", "value_a": "DE", "value_b": "FR"},
+        ),
+    ],
+)
+async def test_warehouse_failure_is_recoverable(
+    monkeypatch: pytest.MonkeyPatch, tool: str, args: dict
+) -> None:
+    requested = False
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requested
+        if not requested:
+            requested = True
+            return ModelResponse(parts=[ToolCallPart(tool, args)])
+        retries = [
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.outcome == "retried"
+        ]
+        assert retries and "Warehouse request failed" in str(retries[-1].content)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit",
+                    {
+                        "verdict": "not_innocent",
+                        "explained_share": 0,
+                        "reasons": ["Warehouse unavailable"],
+                        "evidence": [],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.skeptic._model",
+        lambda _: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
+    callback = AsyncMock()
+    with closing(
+        DataClient(
+            "http://warehouse",
+            transport=httpx.MockTransport(lambda _: httpx.Response(503)),
+        )
+    ) as data:
+        result = await Skeptic(data=data).review(anomaly("s7"), "inv", callback)
+    assert result.reasons == ["Warehouse unavailable"]
+    steps = [
+        call.args[0] for call in callback.call_args_list if call.args[0].tool == tool
+    ]
+    assert len(steps) == 1
+    assert steps[0].output is None
+    assert "failed" in steps[0].output_summary
 
 
 @pytest.mark.parametrize(

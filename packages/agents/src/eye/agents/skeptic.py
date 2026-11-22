@@ -54,6 +54,7 @@ from eye.tools.models import (
     PlannedEffectCheckOutput,
 )
 from eye.warehouse import operations as ops
+from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
 _PROMPT = files("eye.llm").joinpath("prompts/skeptic.md")
@@ -193,7 +194,7 @@ class _PlanInput(BaseModel):
 def list_events(ctx: RunContext[_Deps], args: _EventsInput) -> ListEventsOutput:
     try:
         return ctx.deps.tools.events(args, planned_only=True)
-    except ValueError as exc:
+    except (ValueError, DataUnavailable) as exc:
         raise ModelRetry(str(exc)) from exc
 
 
@@ -226,14 +227,14 @@ def planned_effect_check(
         )
         deps.checks[args.event_id] = result
         return result
-    except ValueError as exc:
+    except (ValueError, DataUnavailable) as exc:
         raise ModelRetry(str(exc)) from exc
 
 
 def check_freshness(ctx: RunContext[_Deps], args: _MetricInput) -> CheckFreshnessOutput:
     try:
         return ctx.deps.tools.freshness(args)
-    except ValueError as exc:
+    except (ValueError, DataUnavailable) as exc:
         raise ModelRetry(str(exc)) from exc
 
 
@@ -248,7 +249,7 @@ def baseline_compare(
                 for point in result.points
             )
         return result
-    except ValueError as exc:
+    except (ValueError, DataUnavailable) as exc:
         raise ModelRetry(str(exc)) from exc
 
 
@@ -257,7 +258,7 @@ def compare_segments(
 ) -> CompareSegmentsOutput:
     try:
         return ctx.deps.tools.controls(args)
-    except ValueError as exc:
+    except (ValueError, DataUnavailable) as exc:
         raise ModelRetry(str(exc)) from exc
 
 
