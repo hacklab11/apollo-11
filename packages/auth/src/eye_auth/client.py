@@ -63,6 +63,7 @@ async def oauth_client(
 ) -> AsyncIterator[AsyncOAuth2Client]:
     client_id, secret = credentials(client_id)
     if http is not None:
+        kwargs.setdefault("timeout", http.timeout)
         kwargs["transport"] = _CallerTransport(http)
         kwargs["headers"] = {**http.headers, **kwargs.get("headers", {})}
     async with _OAuth2Client(

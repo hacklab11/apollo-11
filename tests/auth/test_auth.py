@@ -49,6 +49,23 @@ def agent_card(name: str) -> AgentCard:
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("override", [None, 12])
+async def test_oauth_preserves_caller_timeout(authority, override: int | None) -> None:
+    timeouts = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        timeouts.append(request.extensions["timeout"])
+        return httpx.Response(200)
+
+    async with httpx.AsyncClient(timeout=60, transport=httpx.MockTransport(handle)) as raw:
+        options = {} if override is None else {"timeout": override}
+        async with oauth_client({"sentinel:detect"}, http=raw, **options) as client:
+            await client.get("http://agent/")
+        assert not raw.is_closed
+    assert timeouts == [dict.fromkeys(("connect", "read", "write", "pool"), override or 60)]
+
+
 @pytest.fixture
 def authority(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
