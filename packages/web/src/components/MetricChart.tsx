@@ -26,7 +26,8 @@ export function MetricChart({
     ),
   );
   const params = new URLSearchParams({
-    end,
+    // API windows are half-open; include the latest processed hourly measurement.
+    end: new Date(new Date(end).getTime() + 3600_000).toISOString(),
     start: new Date(
       new Date(incident.opened_ts).getTime() - 24 * 3600_000,
     ).toISOString(),
