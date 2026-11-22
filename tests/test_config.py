@@ -21,7 +21,6 @@ def test_checked_in_settings_equal_defaults(repo_root: Path) -> None:
     assert settings.llm.model_for("detective") == "claude-opus-5-5"
     assert settings.llm.effort["detective"] == "high"
     assert settings.llm.cache_path == Path("data/llm_cache.jsonl")
-    assert not settings.demo.show_truth
 
 
 def test_partial_settings_preserve_defaults(tmp_path: Path) -> None:

@@ -1,4 +1,4 @@
-# Causal candidates for graph bootstrap (docs/specs/05-metric-registry.md §6).
+# Causal candidates for graph bootstrap (docs/specs/data.md).
 # src is upstream, dst downstream. The Cartographer validates, keeps or rejects each one.
 - {src: search_relevance, dst: search_ctr, lag_hours: 0, rationale: Irrelevant results get fewer clicks.}
 - {src: search_relevance, dst: search_conversion, lag_hours: 0, rationale: Irrelevant results lead to fewer purchases.}

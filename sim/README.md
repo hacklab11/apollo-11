@@ -10,11 +10,11 @@ Startup lands all historical hours before accepting requests. Do not run two
 writers against the same world or lake.
 
 Compose runs this as `sim`, binding `0.0.0.0:8100` inside the container and
-`127.0.0.1:8100` on the host. It runs alongside `sim-generate` and uses a private
+`127.0.0.1:8100` on the host. It uses a private
 `sim-world` volume plus the shared `sim-lake` volume (`/app/data/lake`). Mount
 `sim-lake` read-only in data consumers; never open the private world database
-from another service. Core reads the data service, which currently uses the
-one-shot `sim-generate` snapshot; neither mounts this live lake yet. Only one `sim` writer may use these
+from another service. The data service consumes the live lake through `ParquetLanding`;
+Core reads the data service over HTTP. Only one `sim` writer may use these
 volumes. MCP's Compose host port starts at 8110, leaving 8100 for this service.
 
 ## Environment

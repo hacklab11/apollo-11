@@ -1,4 +1,4 @@
-# Seed metric registry (docs/specs/05-metric-registry.md).
+# Seed metric registry (docs/specs/data.md).
 # kind: sql returns ts, <dimensions...>, num[, den]; the engine adds the time filter.
 # Descriptions come from docs/domain-notes/metric-descriptions.md.
 

@@ -320,8 +320,7 @@ async def test_seller_revert_requires_exact_human_approval(
 def test_scenario_controls_are_not_public(
     service: tuple[FastAPI, Settings, Orchestrator],
 ) -> None:
-    app, settings, _orchestrator = service
-    settings.demo.show_truth = True
+    app, _settings, _orchestrator = service
     with TestClient(app) as client:
         assert client.get("/api/demo/truth").status_code == 404
         assert client.get("/api/scenarios").status_code == 404
@@ -389,8 +388,6 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
         )
         assert post("/api/clock/pause", Status).paused
         assert post("/api/clock/resume", Status).running
-        assert client.get("/api/demo/truth").status_code == 404
-        settings.demo.show_truth = True
         assert client.get("/api/demo/truth").status_code == 404
         assert client.get("/").status_code == 404
         assert client.get("/web/app.js").status_code == 404

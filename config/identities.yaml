@@ -1,4 +1,4 @@
-# Seed identities (docs/specs/05-metric-registry.md §5). Checked by validate_identity (T08).
+# Seed identities (docs/specs/data.md). Checked by validate_identity.
 - id: F1
   text: "contribution_margin = fee_revenue + ad_revenue + first_party_margin - platform_discounts - fulfillment_cost - marketing_cost - refund_cost"
 - id: F2

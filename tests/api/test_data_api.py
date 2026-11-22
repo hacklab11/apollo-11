@@ -7,8 +7,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from eye.api.data_api import DataResponse, create_router
 from eye.sim.store import Store
+from eye.warehouse.domain import DataResponse, create_router
 
 START = "2026-11-27T00:00:00Z"
 END = "2026-11-27T01:00:00Z"

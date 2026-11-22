@@ -57,7 +57,6 @@ _DEFAULT_EFFORT: dict[str, Effort] = {
     "reporter": "medium",
     "cartographer": "high",
     "specialists": "medium",
-    "chat": "medium",
 }
 
 
@@ -154,10 +153,6 @@ class LlmSettings(_Section):
         return self.models.get(agent, self.models["default"])
 
 
-class DemoSettings(_Section):
-    show_truth: bool = False
-
-
 class A2aSettings(_Section):
     sentinel_url: AgentUrl = "http://sentinel:8210/"
     detective_url: AgentUrl = "http://detective:8220/"
@@ -186,7 +181,6 @@ class Settings(_Section):
     detective: DetectiveSettings = Field(default_factory=DetectiveSettings)
     reporter: ReporterSettings = Field(default_factory=ReporterSettings)
     llm: LlmSettings = Field(default_factory=LlmSettings)
-    demo: DemoSettings = Field(default_factory=DemoSettings)
     a2a: A2aSettings = Field(default_factory=A2aSettings)
     ports: PortsSettings = Field(default_factory=PortsSettings)
 
