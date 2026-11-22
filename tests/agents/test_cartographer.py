@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from datetime import datetime
+from datetime import UTC, datetime, timedelta, tzinfo
 from unittest.mock import AsyncMock
 
 import duckdb
@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agent_runtime import (
+    Budget,
     InMemoryKillSwitch,
     ModelPrice,
     PriceTable,
@@ -147,6 +148,64 @@ def scripted(cartographer: Cartographer, respond: object) -> None:
 def finish(info: AgentInfo, data: dict, name: str = "Submission") -> ModelResponse:
     tool = next(t.name for t in info.output_tools if t.name.endswith("_" + name))
     return ModelResponse(parts=[ToolCallPart(tool, data)], model_name="scripted")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_budget", [False, True])
+async def test_reused_instance_budget_deadline(
+    cartographer: Cartographer,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit_budget: bool,
+) -> None:
+    clock = datetime.now(UTC)
+    limits = RunLimits()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return clock
+
+    monkeypatch.setattr("eye.agents.cartographer.datetime", Clock)
+    monkeypatch.setattr("agent_runtime.budget.datetime", Clock)
+    instance = Cartographer(
+        cartographer.engine,
+        cartographer.graph,
+        limits=limits,
+        budget=Budget(
+            tokens=limits.max_tokens,
+            cost_usd=limits.max_cost_usd,
+            deadline=clock + timedelta(seconds=limits.max_wall_clock_s),
+        )
+        if explicit_budget
+        else None,
+    )
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return finish(info, {"edges": [], "notes": "0 proposals", "unit": "count"})
+
+    scripted(instance, respond)
+    await instance.add_metric(
+        AddMetricRequest(
+            name="first_metric", description="orders", expression="orders + refunds"
+        )
+    )
+    clock += timedelta(seconds=limits.max_wall_clock_s + 1)
+    request = AddMetricRequest(
+        name="second_metric", description="orders", expression="orders + refunds"
+    )
+    if explicit_budget:
+        with pytest.raises(
+            RuntimeError, match="Cartographer gave_up: budget exhausted"
+        ):
+            await instance.add_metric(request)
+        assert calls == 1
+    else:
+        result = await instance.add_metric(request)
+        assert result.metric.name == "second_metric"
+        assert calls == 2
 
 
 @pytest.mark.asyncio

@@ -131,12 +131,7 @@ class Cartographer:
             max_steps=8, max_tokens=self.llm.max_tokens * 8, max_cost_usd=1.0
         )
         self.kill_switch = kill_switch or InMemoryKillSwitch()
-        self.budget = budget or Budget(
-            tokens=self.limits.max_tokens,
-            cost_usd=self.limits.max_cost_usd,
-            deadline=datetime.now(UTC)
-            + timedelta(seconds=self.limits.max_wall_clock_s),
-        )
+        self.budget = budget
         self.scope = scope
         self.usage = RunUsageSummary()
         self._allowed_tables = frozenset(
@@ -284,7 +279,13 @@ class Cartographer:
             or RunScope(run_id=investigation, tenant_id=DEFAULT_TENANT),
             limits=self.limits,
             prices=self.prices,
-            budget=self.budget,
+            budget=self.budget
+            or Budget(
+                tokens=self.limits.max_tokens,
+                cost_usd=self.limits.max_cost_usd,
+                deadline=datetime.now(UTC)
+                + timedelta(seconds=self.limits.max_wall_clock_s),
+            ),
             kill_switch=self.kill_switch,
             deps=CartographerDeps(engine, self.graph, on_step, investigation, end),
         )
