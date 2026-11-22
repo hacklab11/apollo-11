@@ -245,7 +245,8 @@ async def test_tools_and_validation_retry(cartographer: Cartographer) -> None:
         ),
         on_step=record,
     )
-    assert not result.accepted
+    assert all(edge.type == "breakdown" for edge in result.accepted)
+    assert result.notes == "0 proposals"
     assert calls == 3
     assert len([step for step in trail if step.action == "tool_call"]) == 3
     assert all(step.output_summary for step in trail)
