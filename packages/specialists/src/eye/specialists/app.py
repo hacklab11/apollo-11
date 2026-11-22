@@ -25,6 +25,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from google.protobuf.json_format import MessageToDict
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
+from pydantic_ai.capabilities import Hooks
 from pydantic_ai.models import Model
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -38,7 +39,13 @@ from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import Settings, load_settings
 from eye.contracts_v2 import SpecialistRequest, SpecialistResponse
 from eye.specialists import discovery, growth, marketplace
-from eye.specialists.tools import DataApiUnavailable, DataClient, DataResult, Evidence
+from eye.specialists.tools import (
+    DataApiUnavailable,
+    DataClient,
+    DataResult,
+    Evidence,
+    object_arguments,
+)
 from eye_auth.client import sign_card
 from eye_auth.trust import A2AAuthMiddleware, SkillGuard, granted_scopes
 
@@ -127,6 +134,7 @@ async def answer(
         instructions=(PROMPTS / f"{specialist.NAME}.md").read_text(),
         deps_type=Evidence,
         tools=authorized_tools(specialist, client, guard),
+        capabilities=[Hooks(before_tool_validate=object_arguments)],
         output_type=end_state_outputs(ToolOutput(SpecialistResponse, name="submit")),
         model_settings={"max_tokens": settings.llm.max_tokens},
     )

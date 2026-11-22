@@ -6,13 +6,24 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+)
 from pydantic_ai import ModelRetry, RunContext, Tool
+from pydantic_ai.capabilities import RawToolArgs
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import ToolDefinition
 
 from eye.contracts_v2 import Category, Channel, Country, Platform, SellerTier
 
 # The data API returns up to 5 000 rows; the model only needs enough to reason.
 MAX_ROWS = 200
+_OBJECT_ARGS = TypeAdapter(dict[str, Any])
 
 
 Psp = Literal["PSP-1", "PSP-2"]
@@ -154,6 +165,21 @@ def _params(args: BaseModel) -> dict[str, Any]:
 class Evidence:
     steps: list[dict[str, str]] = field(default_factory=list)
     used: set[str] = field(default_factory=set)
+
+
+def object_arguments(
+    ctx: RunContext[Evidence],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: RawToolArgs,
+) -> RawToolArgs:
+    try:
+        if isinstance(args, str):
+            return _OBJECT_ARGS.validate_json(args)
+        return _OBJECT_ARGS.validate_python({} if args is None else args)
+    except ValidationError as exc:
+        raise ModelRetry(str(exc)) from exc
 
 
 def _tool(

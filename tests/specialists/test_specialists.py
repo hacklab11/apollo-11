@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from datetime import datetime
 
@@ -157,6 +158,13 @@ async def test_growth_answers_s1(specialists, monkeypatch) -> None:
         ("growth", "marketing", {"country": "XX"}),
         ("discovery", "payments", {"platform": "web"}),
         ("discovery", "payments", {"country": "DE"}),
+        ("discovery", "payments", "[]"),
+        ("discovery", "payments", '"web"'),
+        ("discovery", "payments", "42"),
+        ("discovery", "payments", "null"),
+        ("discovery", "payments", "["),
+        ("discovery", "payments", ""),
+        ("discovery", "payments", None),
     ],
 )
 async def test_invalid_tool_arguments_are_retried(
@@ -175,7 +183,11 @@ async def test_invalid_tool_arguments_are_retried(
         if calls == 1:
             schema = next(t for t in info.function_tools if t.name == tool)
             assert schema.parameters_json_schema["additionalProperties"] is False
-            args = {} if not invalid else {**valid, **invalid}
+            args = (
+                invalid
+                if invalid is None or isinstance(invalid, str)
+                else ({} if not invalid else {**valid, **invalid})
+            )
             return ModelResponse(parts=[ToolCallPart(tool, args)])
         if calls == 2:
             assert any(
@@ -184,7 +196,8 @@ async def test_invalid_tool_arguments_are_retried(
                 and "validation error" in str(part.content)
                 for part in messages[-1].parts
             )
-            return ModelResponse(parts=[ToolCallPart(tool, valid)])
+            corrected = json.dumps(valid) if isinstance(invalid, str) else valid
+            return ModelResponse(parts=[ToolCallPart(tool, corrected)])
         assert any(isinstance(part, ToolReturnPart) for part in messages[-1].parts)
         return ModelResponse(
             parts=[
