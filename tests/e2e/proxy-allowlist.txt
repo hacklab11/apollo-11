@@ -1,0 +1,3 @@
+api.anthropic.com
+openrouter.ai
+scripted-model

@@ -10,6 +10,10 @@ x-offline: &offline
     - ./tests/e2e/settings.yaml:/app/config/settings.yaml:ro
 
 services:
+  egress-proxy:
+    volumes:
+      - ./tests/e2e/proxy-allowlist.txt:/etc/squid/allowlist.txt:ro
+
   scripted-model:
     image: eye-system:local
     build: .

@@ -27,10 +27,18 @@ x-agent: &agent
     <<: *environment
     EYE_BIND_HOST: 0.0.0.0
     EYE_DATA_URL: http://eye-data:8150
+    HTTP_PROXY: http://egress-proxy:3128
+    HTTPS_PROXY: http://egress-proxy:3128
+    http_proxy: http://egress-proxy:3128
+    https_proxy: http://egress-proxy:3128
+    NO_PROXY: &no-proxy localhost,127.0.0.1,eye-data,eye-core,eye-mcp,sentinel,detective,skeptic,reporter,cartographer,eye-specialists,selleros
+    no_proxy: *no-proxy
   depends_on: &agent-dependencies
+    egress-proxy:
+      condition: service_started
     eye-data:
       condition: service_healthy
-  networks: [eye, warehouse]
+  networks: [agents, warehouse]
   healthcheck:
     <<: *health
     test:
@@ -55,6 +63,14 @@ services:
     healthcheck:
       <<: *health
       test: [CMD-SHELL, "curl -fsS http://localhost:3000/api/health && curl -fsS http://localhost:13133/ready"]
+
+  egress-proxy:
+    image: ubuntu/squid:6.6-24.04_beta
+    volumes:
+      - ./config/squid/squid.conf:/etc/squid/squid.conf:ro
+      - ./config/squid/allowlist.txt:/etc/squid/allowlist.txt:ro
+    networks: [agents, eye]
+
   postgres:
     image: postgres:17
     environment:
@@ -116,7 +132,9 @@ services:
       <<: *environment
       OTEL_SERVICE_NAME: eye-specialists
     command: [eye-specialists]
-    ports: ["127.0.0.1:${SPECIALISTS_PORT:-8200-8209}:8200"]
+    environment: *agent-environment
+    networks: [agents, warehouse]
+    depends_on: *agent-dependencies
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=2)"]
@@ -154,12 +172,11 @@ services:
     <<: *agent
     command: [eye-agent, reporter]
     environment:
-      <<: *environment
+      <<: *agent-environment
       OTEL_SERVICE_NAME: reporter
-      EYE_BIND_HOST: 0.0.0.0
       EYE_AGENT_URL: http://reporter:8240/
     depends_on: {}
-    networks: [eye]
+    networks: [agents]
 
   cartographer:
     <<: *agent
@@ -175,6 +192,7 @@ services:
 
   selleros:
     <<: *service
+    networks: [eye, agents]
     command: [selleros]
     environment:
       <<: *environment
@@ -226,7 +244,7 @@ services:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       # Keep the original mount for existing incident and investigation history.
       - eye-data:/app/data
-    networks: [eye, warehouse]
+    networks: [eye, warehouse, agents]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=2)"]
@@ -267,5 +285,7 @@ volumes:
 
 networks:
   eye: {}
+  agents:
+    internal: true
   warehouse:
     internal: true
