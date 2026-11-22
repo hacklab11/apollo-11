@@ -1,5 +1,6 @@
 """Typed, skill-routed A2A calls across the process boundary."""
 
+import logging
 from contextlib import AsyncExitStack
 from uuid import uuid4
 
@@ -30,6 +31,8 @@ from eye.contracts_v2 import (
 )
 from eye_auth.client import oauth_client
 from eye_auth.trust import verify_card
+
+logger = logging.getLogger(__name__)
 
 
 class AgentDirectory:
@@ -63,6 +66,9 @@ class AgentDirectory:
                     card = await A2ACardResolver(client, url).get_agent_card()
                     await verify_card(card, name)
                 except (httpx.HTTPError, AgentCardResolutionError):
+                    continue
+                except ValueError:
+                    logger.warning("Skipping untrusted A2A card for %s", name)
                     continue
                 for skill in card.skills:
                     if skill.id in cards:

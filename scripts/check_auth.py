@@ -60,12 +60,7 @@ async def reject_card(card: dict[str, Any], damage: str) -> None:
             directory = AgentDirectory(
                 A2aSettings(sentinel_url=f"http://127.0.0.1:{server.server_port}/")
             )
-            try:
-                await directory.resolve()
-            except ValueError as exc:
-                assert str(exc) == "Untrusted agent card", str(exc)
-            else:
-                raise AssertionError(f"Directory accepted a {damage} card")
+            await directory.resolve()
             assert not directory.cards
         finally:
             await asyncio.to_thread(server.shutdown)

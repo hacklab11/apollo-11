@@ -308,8 +308,9 @@ async def test_callers_refuse_untrusted_cards(
             )
             assert not ack.received
         elif caller == "directory":
-            with pytest.raises(ValueError, match="Untrusted agent card"):
-                await AgentDirectory(settings, transport=transport).resolve()
+            directory = AgentDirectory(settings, transport=transport)
+            await directory.resolve()
+            assert not directory.cards
         else:
             now = datetime.now(UTC)
             metadata = TaskMetadata(

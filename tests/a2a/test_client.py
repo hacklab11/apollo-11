@@ -158,3 +158,27 @@ async def test_directory_delivers_seller_alerts(failed: bool) -> None:
     ack = await directory.notify_seller_os(alert)
     assert ack.received == (not failed)
     assert executor.requests == [alert]
+
+
+@pytest.mark.asyncio
+async def test_directory_skips_invalid_card_and_keeps_healthy_agent(caplog) -> None:
+    apps = {name: stub_server(name=name)[0] for name in ("sentinel", "detective")}
+
+    async def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.host not in apps:
+            return httpx.Response(404)
+        response = await httpx.ASGITransport(app=apps[req.url.host]).handle_async_request(req)
+        if req.url.host == "detective":
+            body = response.json()
+            body.pop("signatures", None)
+            return httpx.Response(200, json=body)
+        return response
+
+    directory = AgentDirectory(
+        A2aSettings(**{f"{name}_url": f"http://{name}" for name in ("sentinel", "detective", "skeptic", "reporter", "cartographer")}),
+        transport=httpx.MockTransport(handle),
+    )
+    await directory.resolve()
+    assert set(directory.cards) == {"echo"}
+    assert directory.cards["echo"].name == "sentinel"
+    assert "Skipping untrusted A2A card for detective" in caplog.text
