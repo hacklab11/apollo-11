@@ -112,6 +112,57 @@ def test_rejects_invalid_scenario_schedule(client: TestClient) -> None:
     assert provider.investigate_after is None
 
 
+@pytest.mark.parametrize("include_target", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_sentinel_ignores_unrelated_margin_signals(
+    client: TestClient, include_target: bool, reverse: bool
+) -> None:
+    client.post(
+        "/scenario", json={"investigate_after": "2026-11-27T10:00:00Z"}
+    ).raise_for_status()
+    anomalies = [
+        {
+            "metric": "contribution_margin",
+            "segment": {"country": "DE"},
+            "delta": -15968.9,
+        },
+        {
+            "metric": "first_party_margin",
+            "segment": {"category": "fashion"},
+            "delta": -100,
+        },
+        {
+            "metric": "aov",
+            "segment": {"category": "electronics", "country": "DE"},
+            "delta": -50,
+        },
+    ]
+    target = {"metric": "aov", "segment": {"category": "electronics"}, "delta": -10}
+    if include_target:
+        anomalies.append(target)
+    if reverse:
+        anomalies.reverse()
+    response = post(
+        client,
+        completion(
+            "sentinel",
+            {
+                "ts": "2026-11-27T10:00:00Z",
+                "min_completeness": 0.9,
+                "open_incidents": [],
+                "candidates": [{"anomaly": a, "completeness": 1} for a in anomalies],
+            },
+        ),
+    )
+    assert response.status_code == 200
+    call = response.json()["choices"][0]["message"]["tool_calls"][0]
+    decisions = json.loads(call["function"]["arguments"])["decisions"]
+    assert [d["anomaly"] for d in decisions if d["action"] == "investigate"] == (
+        [target] if include_target else []
+    )
+    assert all(d["action"] == "ignore" for d in decisions if d["anomaly"] != target)
+
+
 @pytest.mark.parametrize(
     "body",
     [

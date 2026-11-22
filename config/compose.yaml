@@ -2,6 +2,11 @@
 sim:
   autostart: false
 a2a:
+  sentinel_url: http://sentinel:8210/
+  detective_url: http://detective:8220/
+  skeptic_url: http://skeptic:8230/
+  reporter_url: http://reporter:8240/
+  cartographer_url: http://cartographer:8250/
   growth_url: http://eye-specialists:8200/growth
   marketplace_url: http://eye-specialists:8200/marketplace
   discovery_url: http://eye-specialists:8200/discovery

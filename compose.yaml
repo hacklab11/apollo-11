@@ -37,6 +37,19 @@ x-agent: &agent
       - "import os, urllib.parse, urllib.request; port = urllib.parse.urlsplit(os.environ['EYE_AGENT_URL']).port; urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2)"
 
 services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: eye
+      POSTGRES_PASSWORD: eye
+      POSTGRES_DB: eye
+    volumes: [control-data:/var/lib/postgresql/data]
+    networks: [eye]
+    healthcheck:
+      test: [CMD-SHELL, pg_isready -U eye -d eye]
+      interval: 5s
+      timeout: 3s
+      retries: 30
   sim:
     <<: *service
     command: [eye-sim, serve]
@@ -152,7 +165,20 @@ services:
     environment:
       <<: *environment
       EYE_DATA_URL: http://eye-data:8150
+      EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
     depends_on:
+      postgres:
+        condition: service_healthy
+      sentinel:
+        condition: service_healthy
+      detective:
+        condition: service_healthy
+      skeptic:
+        condition: service_healthy
+      reporter:
+        condition: service_healthy
+      cartographer:
+        condition: service_healthy
       eye-data:
         condition: service_healthy
       eye-specialists:
@@ -184,6 +210,7 @@ services:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)"]
 
 volumes:
+  control-data:
   eye-data:
   warehouse-data:
   sim-world:

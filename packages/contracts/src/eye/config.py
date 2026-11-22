@@ -82,6 +82,9 @@ class SimSettings(_Section):
 
 
 class OrchestratorSettings(_Section):
+    run_cost_usd: float = Field(0.50, gt=0)
+    run_tokens: int = Field(100000, gt=0)
+    run_deadline_s: float = Field(600, gt=0)
     max_concurrent_investigations: int = Field(2, ge=1, le=4)
     pause_sim_during_investigation: bool = True
 
@@ -139,6 +142,11 @@ class DemoSettings(_Section):
 
 
 class A2aSettings(_Section):
+    sentinel_url: AgentUrl = "http://sentinel:8210/"
+    detective_url: AgentUrl = "http://detective:8220/"
+    skeptic_url: AgentUrl = "http://skeptic:8230/"
+    reporter_url: AgentUrl = "http://reporter:8240/"
+    cartographer_url: AgentUrl = "http://cartographer:8250/"
     growth_url: AgentUrl = "http://localhost:8200/growth"
     marketplace_url: AgentUrl = "http://localhost:8200/marketplace"
     discovery_url: AgentUrl = "http://localhost:8200/discovery"

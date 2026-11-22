@@ -8,6 +8,25 @@ The [live observatory](web/README.md) is served by Core. [Earlier API preview](d
 
 ## Run it
 
+Core is now a deterministic DBOS workflow worker, not an agent host. It queues
+completed data hours and calls Sentinel (`detect`), Detective (`investigate`),
+Reporter (`report`), and Cartographer (`map`) over JSON-RPC A2A. Agent services
+are delivered separately by W3-9; configure their URLs under `a2a` in settings.
+There is no startup Cartographer refinement. Without reachable agents Core
+still serves the public API, but cannot produce new investigations.
+
+Compose persists workflows, approvals, kill switches, and the hash-chained audit
+ledger in Postgres 17 (`EYE_DATABASE_URL`). Local development defaults to
+`sqlite:///data/control.sqlite`; offline workflow tests need no Postgres service.
+Incident history remains compatible with the existing DuckDB operations store.
+The `map` skill returns a validated metric proposal only: the read-only data
+service currently has no registry write endpoint, so Core does not persist it.
+Human mutations (kill/clear, approval decisions, recovered incident close) use
+`request.state.person`, falling back to the trusted `X-Eye-Person` header.
+The reverse proxy must strip untrusted values and supply the verified identity;
+requests without either identity return 401. Closing requires a note and a
+recovered incident; agents cannot close incidents.
+
 ### Docker Compose (live stack or credential-free wave gate)
 
 ```sh
@@ -33,8 +52,8 @@ provider/model settings shown below to `config/compose.yaml`, set
 `OPENROUTER_API_KEY` in `.env`, and add SellerOS's provider/model variables there
 too. Never commit keys.
 
-With empty keys, the startup/API smoke makes no model requests. Missing credentials
-produce the existing `refinement_unavailable` warning without preventing startup.
+With empty keys, the startup/API smoke makes no model requests. Core never
+constructs a model client or runs seed refinement.
 CI uses the fail-closed offline S8 variant below to exercise the agents as well.
 The simulator runs independently of Core's clock controls. Core only advances
 when the warehouse has another complete hour, and keeps its existing incident

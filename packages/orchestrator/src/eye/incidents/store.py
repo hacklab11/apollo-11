@@ -3,11 +3,12 @@
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock, local
 from uuid import uuid4
 
 import duckdb
+from pydantic import TypeAdapter
 
-from eye.agents.reporter import Reporter
 from eye.config import ReporterSettings
 from eye.contracts import (
     Anomaly,
@@ -18,6 +19,7 @@ from eye.contracts import (
     SentinelDecision,
     TrailStep,
 )
+from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure, IncidentV2
 
 OPS_DB = Path("data/ops.duckdb")
 
@@ -49,7 +51,10 @@ class IncidentStore:
     ) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = duckdb.connect(str(path))
+        self._connection = duckdb.connect(str(path))
+        self._thread = local()
+        self._cursor_lock = Lock()
+        self._cursors: list[duckdb.DuckDBPyConnection] = []
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS incidents (id VARCHAR PRIMARY KEY, incident JSON, trigger_id VARCHAR, ticks INTEGER DEFAULT 0)"
         )
@@ -59,13 +64,77 @@ class IncidentStore:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS trail_steps (id VARCHAR PRIMARY KEY, investigation_id VARCHAR, step JSON)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS incident_closures (id VARCHAR PRIMARY KEY, closure JSON)"
+        )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS tick_decisions (ts TIMESTAMPTZ PRIMARY KEY, decisions JSON)"
+        )
         self.path_exists = path_exists
         self.reporter = reporter
         self.notify = notify
         self.settings = settings or ReporterSettings()
 
     def close(self) -> None:
-        self.db.close()
+        for cursor in self._cursors:
+            cursor.close()
+        self._connection.close()
+
+    @property
+    def db(self) -> duckdb.DuckDBPyConnection:
+        if not hasattr(self._thread, "cursor"):
+            with self._cursor_lock:
+                self._thread.cursor = self._connection.cursor()
+                self._cursors.append(self._thread.cursor)
+        return self._thread.cursor
+
+    def as_v2(self, incident: Incident) -> IncidentV2:
+        data = incident.model_dump(exclude={"normal_ticks", "resolved_ts"})
+        data.update(
+            tenant_id=DEFAULT_TENANT,
+            context_id=incident.id,
+            recovered_ts=incident.resolved_ts
+            or (incident.updated_ts if incident.status == "innocent" else None),
+        )
+        data["status"] = {
+            "persisting": "mitigating",
+            "resolved": "recovered",
+            "deferred": "open",
+            "innocent": "recovered",
+        }.get(incident.status, incident.status)
+        closure = self.db.execute(
+            "SELECT closure FROM incident_closures WHERE id = ?", [incident.id]
+        ).fetchone()
+        if closure:
+            data.update(
+                status="closed", closure=IncidentClosure.model_validate_json(closure[0])
+            )
+        return IncidentV2.model_validate(data)
+
+    def human_close(self, incident_id: str, closure: IncidentClosure) -> IncidentV2:
+        incident = self.get(incident_id)
+        if incident is None:
+            raise ValueError("unknown incident")
+        current = self.as_v2(incident)
+        if current.tenant_id != closure.tenant_id or current.status != "recovered":
+            raise ValueError("only a recovered incident in this tenant can be closed")
+        self.db.execute(
+            "INSERT INTO incident_closures VALUES (?, ?)",
+            [incident_id, closure.model_dump_json()],
+        )
+        return self.as_v2(incident)
+
+    def save_decisions(self, ts: datetime, decisions: list[SentinelDecision]) -> None:
+        self.db.execute(
+            "INSERT INTO tick_decisions VALUES (?, ?) ON CONFLICT (ts) DO UPDATE SET decisions = excluded.decisions",
+            [ts, TypeAdapter(list[SentinelDecision]).dump_json(decisions).decode()],
+        )
+
+    def decisions_at(self, ts: datetime) -> list[SentinelDecision]:
+        row = self.db.execute(
+            "SELECT decisions FROM tick_decisions WHERE ts = ?", [ts]
+        ).fetchone()
+        return TypeAdapter(list[SentinelDecision]).validate_json(row[0]) if row else []
 
     def all(self) -> list[Incident]:
         return [
@@ -299,6 +368,7 @@ class IncidentStore:
                 for i in items
                 if i.merged_into is None
                 and i.status == "resolved"
+                and self.as_v2(i).status != "closed"
                 and i.fingerprint == final
                 and i.resolved_ts is not None
                 and timedelta(0)
@@ -316,7 +386,11 @@ class IncidentStore:
         if item is None:
             item = self._new(result.entry)
         assert item is not None
-        title, summary = await (self.reporter or Reporter().write)(result)
+        title, summary = (
+            await self.reporter(result)
+            if self.reporter
+            else (f"{result.entry.metric}: {result.verdict}"[:89], result.summary)
+        )
         item.fingerprint = final
         item.title, item.summary = title, summary
         item.status = {"INNOCENT": "innocent", "DATA_ISSUE": "deferred"}.get(

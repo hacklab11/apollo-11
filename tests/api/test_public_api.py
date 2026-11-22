@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from collections.abc import Iterator
 from contextlib import aclosing, closing
 from datetime import datetime
@@ -8,20 +9,19 @@ import httpx
 import pytest
 from factories import (
     make_add_metric_result,
-    make_decisions,
     make_graph,
     make_incident_s7,
     make_metrics,
     make_trail_s7,
 )
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
+from scripted_agents import ScriptedAgents
 
-from eye.api.app import MetricDefinition, create_app
+from eye.api.app import MetricDefinition, create_app, human_actor
 from eye.config import Settings
 from eye.contracts import (
-    AddMetricRequest,
     AddMetricResult,
     Edge,
     Event,
@@ -33,9 +33,9 @@ from eye.contracts import (
     Symptom,
     TrailStep,
 )
+from eye.contracts_v2 import AgentResult
 from eye.incidents.store import IncidentStore
-from eye.llm.client import LLMClient
-from eye.orchestrator import HOUR, Orchestrator, Status, StepSink
+from eye.orchestrator import HOUR, Orchestrator, Status
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.sim.store import Store
@@ -49,11 +49,6 @@ class World:
 
     def step(self) -> None:
         self.now += HOUR
-
-    async def run(
-        self, ts: datetime, *, open_incidents: list[Incident], on_step: StepSink
-    ) -> list[SentinelDecision]:
-        return make_decisions()
 
 
 class Graph:
@@ -77,6 +72,7 @@ class Graph:
 @pytest.fixture
 def service(
     request: pytest.FixtureRequest,
+    tmp_path,
 ) -> Iterator[tuple[FastAPI, Settings, Orchestrator]]:
     settings = Settings(sim={"autostart": False, "seconds_per_sim_hour": 0.5})
     sim = World(settings.sim.start_ts)
@@ -93,13 +89,9 @@ def service(
         [],
     )
 
-    async def add(
-        request: AddMetricRequest, clean_hours: list[datetime], on_step: StepSink
-    ) -> AddMetricResult:
-        result = make_add_metric_result()
-        assert request.name == result.metric.name
-        assert sim.now not in clean_hours and sim.now - HOUR in clean_hours
-        return result
+    scripted = ScriptedAgents(
+        {"map": AgentResult(status="done", result=make_add_metric_result())}
+    )
 
     with (
         closing(Store(":memory:")) as db,
@@ -117,11 +109,10 @@ def service(
         orchestrator = Orchestrator(
             settings,
             sim,
-            sim,
             incidents,
-            LLMClient(settings.llm),
             lambda *_: 9,
-            add_metric=add,
+            directory=scripted.directory(settings.a2a),
+            database_url=f"sqlite:///{tmp_path}/control.sqlite",
         )
         yield (
             create_app(
@@ -255,15 +246,16 @@ async def test_live_clock_step_returns_before_analysis(
     service: tuple[FastAPI, Settings, Orchestrator], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     app, settings, orchestrator = service
-    scanning = asyncio.Event()
-    finish_scan = asyncio.Event()
+    scanning = threading.Event()
+    finish_scan = threading.Event()
+    original = orchestrator.directory.call
 
-    async def run(ts: datetime, **kwargs: Any) -> list[SentinelDecision]:
+    async def run(*args: Any, **kwargs: Any):
         scanning.set()
-        await finish_scan.wait()
-        return []
+        await asyncio.to_thread(finish_scan.wait)
+        return await original(*args, **kwargs)
 
-    monkeypatch.setattr(orchestrator.sentinel, "run", run)
+    monkeypatch.setattr(orchestrator.directory, "call", run)
     async with (
         app.router.lifespan_context(app),
         httpx.AsyncClient(
@@ -273,7 +265,7 @@ async def test_live_clock_step_returns_before_analysis(
         url = "/api/clock/step?wait_for_analysis=false"
         request = asyncio.create_task(client.post(url))
         try:
-            await asyncio.wait_for(scanning.wait(), 2)
+            await asyncio.wait_for(asyncio.to_thread(scanning.wait), 10)
             current = Status.model_validate((await client.get("/api/status")).json())
             assert current.tick == 1
             response = await asyncio.wait_for(asyncio.shield(request), 2)
@@ -334,3 +326,97 @@ async def test_sse_tick_and_heartbeat(
             await task
         async with aclosing(orchestrator.events.stream(0.01)) as stream:
             assert await anext(stream) == ": heartbeat\n\n"
+
+
+@pytest.mark.parametrize(
+    "status", ["open", "persisting", "resolved", "innocent", "deferred"]
+)
+def test_legacy_incident_statuses(
+    service: tuple[FastAPI, Settings, Orchestrator], status: str
+) -> None:
+    app, _, core = service
+    item = core.incidents.all()[0]
+    item.status = status
+    core.incidents._save(item)
+    with TestClient(app) as client:
+        response = client.get("/api/incidents", params={"status": status})
+        assert response.status_code == 200, response.text
+        assert Incident.model_validate(response.json()[0]).status == status
+        detail = client.get(f"/api/incidents/{item.id}")
+        assert Incident.model_validate(detail.json()).status == status
+
+
+@pytest.mark.parametrize(
+    ("person", "header", "expected"),
+    [
+        (None, None, None),
+        (None, "", None),
+        (None, "   ", None),
+        (None, "proxy-reviewer", "proxy-reviewer"),
+        ("middleware-reviewer", None, "middleware-reviewer"),
+        ("middleware-reviewer", "proxy-reviewer", "middleware-reviewer"),
+    ],
+)
+def test_human_actor(
+    person: str | None, header: str | None, expected: str | None
+) -> None:
+    request = Request(
+        {
+            "type": "http",
+            "headers": [] if header is None else [(b"x-eye-person", header.encode())],
+        }
+    )
+    if person is not None:
+        request.state.person = person
+    if expected is None:
+        with pytest.raises(HTTPException) as exc:
+            human_actor(request)
+        assert exc.value.status_code == 401
+    else:
+        assert human_actor(request) == expected
+
+
+def test_human_control_routes(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
+    app, _, core = service
+    incident = core.incidents.all()[0]
+    with TestClient(app) as client:
+        close_url = f"/api/incidents/{incident.id}/close"
+        body = {"tenant_id": "default", "note": "Reviewed recovery"}
+        assert client.post(close_url, json=body).status_code == 401
+        assert client.post("/api/kill").status_code == 401
+        assert (
+            client.post("/api/approvals/unknown", json={"approve": True}).status_code
+            == 401
+        )
+        client.headers["X-Eye-Person"] = "reviewer"
+        assert client.post(close_url, json=body).status_code == 409
+        incident.status = "resolved"
+        core.incidents._save(incident)
+        closed = client.post(close_url, json=body)
+        assert closed.status_code == 200
+        assert closed.json()["closure"]["closed_by"] == "reviewer"
+        assert client.post(close_url, json=body).status_code == 409
+        identifier = core.control.pending(
+            "run", incident.id, "human_input", {"question": "Continue?"}
+        )
+        assert client.get("/api/approvals").json()[0]["id"] == identifier
+        assert (
+            client.post(
+                f"/api/approvals/{identifier}", json={"approve": False}
+            ).status_code
+            == 200
+        )
+        assert client.get("/api/approvals").json()[0]["status"] == "rejected"
+        assert client.get("/api/approvals").json()[0]["decided_by"] == "reviewer"
+        for endpoint in (
+            "/api/kill",
+            "/api/tenants/default/kill",
+            "/api/runs/run/kill",
+        ):
+            assert client.post(endpoint).json() == {"active": True}
+            assert client.delete(endpoint).json() == {"active": False}
+        audit = client.get("/api/audit").json()
+        assert any(
+            row["action"] == "incident_closed" and row["actor"] == "reviewer"
+            for row in audit
+        )

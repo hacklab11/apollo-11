@@ -235,6 +235,12 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Orchestrator communicates with agents only over A2A"
+type = "forbidden"
+source_modules = ["eye.orchestrator", "eye.api", "eye.main", "eye.incidents", "eye.datasource", "eye.directory", "eye.control"]
+forbidden_modules = ["eye.agents", "eye.specialists"]
+
+[[tool.importlinter.contracts]]
 name = "SellerOS is independent"
 type = "independence"
 modules = [

@@ -119,7 +119,7 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                 and datetime.fromisoformat(payload["ts"]) >= investigate_after
                 and anomaly["metric"]
                 in {"aov", "first_party_margin", "contribution_margin"}
-                and anomaly["segment"].get("category", "electronics") == "electronics"
+                and anomaly["segment"] == {"category": "electronics"}
                 and anomaly["delta"] < 0
             ):
                 action = "investigate"

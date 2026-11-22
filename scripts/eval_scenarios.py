@@ -22,6 +22,7 @@ import yaml
 from eye.a2a_client import _FAILURES, A2AClient, AgentCardInfo
 from eye.agents.cartographer import Cartographer
 from eye.agents.detective import Detective
+from eye.agents.reporter import Reporter
 from eye.agents.sentinel import Sentinel
 from eye.api.app import create_app
 from eye.config import LlmSettings, load_settings
@@ -33,11 +34,12 @@ from eye.contracts import (
     SpecialistResponse,
     TrailStep,
 )
+from eye.contracts_v2 import AgentResult, DetectResult, InvestigateResult, ReportResult
+from eye.directory import AgentDirectory
 from eye.graph.bootstrap import load_or_bootstrap
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable, configure_client
 from eye.llm.runtime import run_agent
-from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
@@ -890,7 +892,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             "eye.agents.detective",
             "eye.agents.cartographer",
             "eye.llm.runtime",
-            "eye.main",
             "eye.a2a_client",
         ):
             stream = seeded_ids(args.seed, name, module)
@@ -935,22 +936,65 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         scenarios = ScenarioManager(sim)
         for id, params in entry.get("scenario_params", {}).items():
             scenarios.params[id].update(params)
+        sentinel = Sentinel(
+            connection,
+            registry,
+            settings=settings.sentinel,
+            llm=settings.llm,
+            graph=graph,
+        )
+        cartographer = Cartographer(engine, graph, llm=settings.llm)
+
+        class EvalDirectory(AgentDirectory):
+            async def resolve(self) -> None:
+                pass
+
+            async def call(
+                self, skill: str, payload: Any, metadata: Any, result_type: Any
+            ) -> Any:
+                trail = []
+
+                async def on_step(step: TrailStep) -> None:
+                    trail.append(step)
+
+                if skill == "detect":
+                    result = DetectResult(
+                        decisions=await sentinel.run(
+                            payload.ts, open_incidents=store.all(), on_step=on_step
+                        ),
+                        trail=trail,
+                    )
+                elif skill == "investigate":
+                    result = InvestigateResult(
+                        investigation=await recorded_investigate(
+                            payload.anomaly, on_step
+                        ),
+                        trail=trail,
+                    )
+                elif skill == "report":
+                    title, summary = await Reporter().write(payload.investigation)
+                    result = ReportResult(title=title, summary=summary)
+                elif skill == "map":
+                    hours = [
+                        sim.history_start + n * HOUR
+                        for n in range((sim.now - sim.history_start) // HOUR)
+                    ]
+                    result = await cartographer.add_metric(
+                        payload.metric, hours, on_step
+                    )
+                    for step in trail:
+                        store.add_step(step)
+                else:
+                    raise ValueError(f"unknown eval skill: {skill}")
+                return AgentResult(status="done", result=result)
+
         core = Orchestrator(
             settings,
             sim,
-            Sentinel(
-                connection,
-                registry,
-                settings=settings.sentinel,
-                llm=settings.llm,
-                graph=graph,
-            ),
             store,
-            llm,
             z_lookup,
-            a2a=a2a,
-            investigate=investigate,
-            add_metric=Cartographer(engine, graph, llm=settings.llm).add_metric,
+            directory=EvalDirectory(settings.a2a),
+            database_url=f"sqlite:///{path}/control.sqlite",
             invalidate=engine.invalidate,
         )
         world_http = httpx.AsyncClient(
@@ -978,8 +1022,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             )
             return result
 
-        core.investigate = recorded_investigate
-
         async def notify(alert: Any) -> Any:
             ack = await a2a.notify_seller_os(alert)
             item = store.get(alert.incident_id)
@@ -1005,11 +1047,11 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             return ack
 
         store.notify = notify
-        store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
         actions = ConditionalActions(entry, DEMO_METRICS, scenarios)
         scenario_audits: list[TrailStep] = []
         try:
+            await core.start()
             for hour in range(entry["run_hours"]):
                 for command in entry["play"]:
                     action, at = command.rsplit("@", 1)

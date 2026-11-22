@@ -52,16 +52,27 @@ apollo-11/
 ```
 clock tick (every sim.seconds_per_sim_hour real seconds)
   1. sim.step()                       → writes 1 sim-hour of rows, emits SSE "tick"
-  2. sentinel.run(ts)                 → decisions (investigate / watch / defer / ignore / attach)
-  3. reporter.match(decisions)        → attach to open incident or start new investigation
-  4. detective.investigate(anomaly)   → async task; trail steps stream as SSE "trail_step"
-        ↳ tools (local), specialists + SellerOS (A2A), skeptic (local agent)
-  5. reporter.upsert(result)          → incident created/updated/merged, SSE "incident_upserted"
-        ↳ SellerOS notification (A2A) if small sellers are affected
-  6. reporter.lifecycle(ts)           → persisting / resolved checks (deterministic)
+  2. enqueue completed hour on DBOS partitioned queue (default tenant)
+  3. A2A detect skill                 → decisions, previous tick decisions only
+  4. A2A investigate skill            → typed result and persisted trail
+        ↳ Detective owns challenge/specialist delegation, never Core
+  5. IncidentStore.upsert + A2A report → title/summary, SSE "incident_upserted"
+  6. deterministic lifecycle          → recovered; only a person may close
 ```
 
 Rules:
+- Each A2A call is a DBOS step with a remaining budget, trace context, audit entry,
+  and kill-switch check. Runs never execute inline in HTTP handlers. Production
+  uses Postgres; offline tests use DBOS-supported SQLite. Queue concurrency is
+  bounded globally and serialized per tenant. Only DEFAULT_TENANT is enabled.
+- Core imports no agent implementations. Metric registration calls `map` over
+  A2A. Startup does not refine causal seeds. `needs_input` creates a pending human
+  task; approval decisions are audited, not implicitly executed as privileged tools.
+- Human mutations use authenticated `request.state.person`, falling back to the
+  trusted proxy's `X-Eye-Person` header; without either they return 401. The proxy
+  must strip untrusted identity headers. Closed incidents carry the
+  person's identity, note and timestamp. Existing HTTP routes and SSE retain v1
+  incident shapes; A2A payloads project lifecycle statuses to mitigating/recovered.
 - At most `orchestrator.max_concurrent_investigations` investigations run at the same time.
 - If `orchestrator.pause_sim_during_investigation` is true, step 1 waits until no investigation runs. This keeps the demo easy to follow.
 - The Detective's time window is fixed at the anomaly's `ts`. New data after that does not change the investigation.
