@@ -17,7 +17,7 @@ RUN useradd --create-home --uid 10001 eye
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY config ./config
-RUN mkdir -p /app/data/lake /app/packages/selleros/data \
+RUN mkdir -p /app/data/lake /app/data/auth /app/packages/selleros/data \
     && chown -R eye:eye /app/data /app/packages/selleros/data
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER eye

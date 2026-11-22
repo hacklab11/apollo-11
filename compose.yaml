@@ -2,13 +2,14 @@ x-service: &service
   image: eye-system:local
   build: .
   init: true
-  env_file:
-    - path: .env
-      required: false
   environment: &environment
     EYE_BIND_HOST: 0.0.0.0
     EYE_CORE_URL: http://eye-core:8000
     EYE_MCP_URL: http://eye-mcp:8100/mcp
+    EYE_AUTH_URL: http://auth:8500
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    EYE_MODEL_API_KEY: ${EYE_MODEL_API_KEY:-}
     OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
     OTEL_METRIC_EXPORT_INTERVAL: "5000"
   volumes:
@@ -30,11 +31,13 @@ x-agent: &agent
     HTTPS_PROXY: http://egress-proxy:3128
     http_proxy: http://egress-proxy:3128
     https_proxy: http://egress-proxy:3128
-    NO_PROXY: &no-proxy localhost,127.0.0.1,eye-data,eye-core,eye-mcp,sentinel,detective,skeptic,reporter,cartographer,eye-specialists,selleros,lgtm
+    NO_PROXY: &no-proxy localhost,127.0.0.1,auth,eye-data,eye-core,eye-mcp,sentinel,detective,skeptic,reporter,cartographer,eye-specialists,selleros,lgtm
     no_proxy: *no-proxy
   depends_on: &agent-dependencies
     egress-proxy:
       condition: service_started
+    auth:
+      condition: service_healthy
     eye-data:
       condition: service_healthy
   networks: [agents, warehouse]
@@ -47,6 +50,31 @@ x-agent: &agent
       - "import os, urllib.parse, urllib.request; port = urllib.parse.urlsplit(os.environ['EYE_AGENT_URL']).port; urllib.request.urlopen(f'http://127.0.0.1:{port}/healthz', timeout=2)"
 
 services:
+  auth:
+    <<: *service
+    networks: [eye, agents]
+    command: [eye-auth]
+    environment:
+      EYE_BIND_HOST: 0.0.0.0
+      EYE_AUTH_URL: http://auth:8500
+      EYE_AUTH_KEY_PATH: /app/data/auth/key.pem
+      EYE_AUTH_EYE_CORE_SECRET: ${EYE_AUTH_EYE_CORE_SECRET:-}
+      EYE_AUTH_SENTINEL_SECRET: ${EYE_AUTH_SENTINEL_SECRET:-}
+      EYE_AUTH_DETECTIVE_SECRET: ${EYE_AUTH_DETECTIVE_SECRET:-}
+      EYE_AUTH_SKEPTIC_SECRET: ${EYE_AUTH_SKEPTIC_SECRET:-}
+      EYE_AUTH_REPORTER_SECRET: ${EYE_AUTH_REPORTER_SECRET:-}
+      EYE_AUTH_CARTOGRAPHER_SECRET: ${EYE_AUTH_CARTOGRAPHER_SECRET:-}
+      EYE_AUTH_GROWTH_SECRET: ${EYE_AUTH_GROWTH_SECRET:-}
+      EYE_AUTH_MARKETPLACE_SECRET: ${EYE_AUTH_MARKETPLACE_SECRET:-}
+      EYE_AUTH_DISCOVERY_SECRET: ${EYE_AUTH_DISCOVERY_SECRET:-}
+      EYE_AUTH_SELLEROS_SECRET: ${EYE_AUTH_SELLEROS_SECRET:-}
+      EYE_AUTH_SIM_SECRET: ${EYE_AUTH_SIM_SECRET:-}
+    volumes:
+      - auth-keys:/app/data/auth
+    healthcheck:
+      <<: *health
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8500/healthz', timeout=2)"]
+
   lgtm:
     image: grafana/otel-lgtm:0.22.0
     environment:
@@ -93,6 +121,11 @@ services:
       SIM_PORT: "8100"
       SIM_WORLD_DB: /app/data/world.duckdb
       SIM_LAKE_DIR: /app/data/lake
+      EYE_AUTH_CLIENT_ID: sim
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_SIM_SECRET:-}
+    depends_on:
+      auth:
+        condition: service_healthy
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       - sim-world:/app/data
@@ -129,6 +162,12 @@ services:
     environment:
       <<: *agent-environment
       OTEL_SERVICE_NAME: eye-specialists
+      EYE_AUTH_GROWTH_SECRET: ${EYE_AUTH_GROWTH_SECRET:-}
+      EYE_AUTH_MARKETPLACE_SECRET: ${EYE_AUTH_MARKETPLACE_SECRET:-}
+      EYE_AUTH_DISCOVERY_SECRET: ${EYE_AUTH_DISCOVERY_SECRET:-}
+    depends_on:
+      auth:
+        condition: service_healthy
     command: [eye-specialists]
     networks: [agents, warehouse]
     depends_on: *agent-dependencies
@@ -143,6 +182,8 @@ services:
       <<: *agent-environment
       OTEL_SERVICE_NAME: sentinel
       EYE_AGENT_URL: http://sentinel:8210/
+      EYE_AUTH_CLIENT_ID: sentinel
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_SENTINEL_SECRET:-}
 
   detective:
     <<: *agent
@@ -152,6 +193,8 @@ services:
       OTEL_SERVICE_NAME: detective
       EYE_AGENT_URL: http://detective:8220/
       EYE_SKEPTIC_URL: http://skeptic:8230/
+      EYE_AUTH_CLIENT_ID: detective
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_DETECTIVE_SECRET:-}
     depends_on:
       <<: *agent-dependencies
       skeptic:
@@ -164,6 +207,8 @@ services:
       <<: *agent-environment
       OTEL_SERVICE_NAME: skeptic
       EYE_AGENT_URL: http://skeptic:8230/
+      EYE_AUTH_CLIENT_ID: skeptic
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_SKEPTIC_SECRET:-}
 
   reporter:
     <<: *agent
@@ -172,7 +217,11 @@ services:
       <<: *agent-environment
       OTEL_SERVICE_NAME: reporter
       EYE_AGENT_URL: http://reporter:8240/
-    depends_on: {}
+      EYE_AUTH_CLIENT_ID: reporter
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_REPORTER_SECRET:-}
+    depends_on:
+      auth:
+        condition: service_healthy
     networks: [agents]
 
   cartographer:
@@ -182,6 +231,8 @@ services:
       <<: *agent-environment
       OTEL_SERVICE_NAME: cartographer
       EYE_AGENT_URL: http://cartographer:8250/
+      EYE_AUTH_CLIENT_ID: cartographer
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_CARTOGRAPHER_SECRET:-}
       SIM_LAKE_DIR: /app/data/lake
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
@@ -196,7 +247,14 @@ services:
       OTEL_SERVICE_NAME: selleros
       SELLEROS_URL: http://selleros:8300/
       SELLEROS_DATA_DIR: /app/packages/selleros/data
+      EYE_AUTH_CLIENT_ID: selleros
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_SELLEROS_SECRET:-}
+      SELLEROS_PROVIDER: ${SELLEROS_PROVIDER:-anthropic}
+      SELLEROS_BASE_URL: ${SELLEROS_BASE_URL:-https://openrouter.ai/api/v1}
+      SELLEROS_MODEL: ${SELLEROS_MODEL:-}
     depends_on:
+      auth:
+        condition: service_healthy
       sim:
         condition: service_healthy
     volumes:
@@ -215,9 +273,13 @@ services:
       EYE_DATA_URL: http://eye-data:8150
       EYE_DATABASE_URL: postgresql://eye:eye@postgres:5432/eye
       EYE_DBOS_APPLICATION_VERSION: ${EYE_DBOS_APPLICATION_VERSION:-eye-orchestrator-v1}
+      EYE_AUTH_CLIENT_ID: eye-core
+      EYE_AUTH_CLIENT_SECRET: ${EYE_AUTH_EYE_CORE_SECRET:-}
       EYE_SELLER_REVERT_OPERATOR_TOKEN: ${EYE_SELLER_REVERT_OPERATOR_TOKEN:-}
       EYE_TRUST_PROXY_PERSON_HEADER: "1"
     depends_on:
+      auth:
+        condition: service_healthy
       postgres:
         condition: service_healthy
       sentinel:
@@ -272,6 +334,7 @@ services:
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)"]
 
 volumes:
+  auth-keys:
   control-data:
   eye-data:
   warehouse-data:

@@ -46,7 +46,7 @@ jobs:
       COMPOSE_DISABLE_ENV_FILE: '1'
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose up -d --build --wait && ./scripts/smoke.sh
+      - run: docker compose up -d --build --wait --scale detective=3 && ./scripts/smoke.sh
       - run: ./scripts/e2e-s8.sh
       - run: docker compose ps
       - if: failure()

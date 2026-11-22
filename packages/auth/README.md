@@ -3,7 +3,9 @@
 Leaf workspace package for the OAuth issuer and A2A trust library. It imports
 no application packages. A2A services enroll signed cards at startup and require
 OAuth tokens. SellerOS and sim use scoped JWTs for price-revert permissions.
-Compose service wiring is pending.
+Compose runs the issuer as `auth:8500`, keeps its key in `auth-keys`, and waits
+for it to be healthy before starting clients. See the root README for credentials
+and the offline deployment gate.
 
 ## Issuer
 
