@@ -21,9 +21,13 @@ docker compose down
 
 Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
 its own container and HTTP health check; `sim-generate` exits successfully after
-initializing the DuckDB/SellerOS volumes. `eye-data` reads that DuckDB snapshot
+initializing the DuckDB snapshot. `eye-data` reads that DuckDB snapshot
 from a read-only mount and serves it to Core on a private network; no warehouse
-port is published. Host ports can be changed in
+port is published. Alongside it, continuous `sim` backfills/resumes its private
+`sim-world` volume and publishes hourly Parquet to the named `sim-lake` volume.
+Only continuous `sim` publishes the shared SellerOS export; SellerOS waits for
+its `/health`. The simulator uses host port 8100 and MCP starts at 8110.
+Host ports can be changed in
 `.env`. Compose uses the normal live Anthropic LLM defaults, matching
 `config/settings.yaml`. Set `ANTHROPIC_API_KEY` in `.env` to run real agents;
 Compose does not override credentials. For OpenRouter, add the same `llm`
@@ -35,8 +39,11 @@ CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
 model requests. Missing credentials produce the existing `refinement_unavailable`
 warning without preventing startup; this is not an agent-quality eval.
 This Compose setup reads the initial snapshot; the Core clock only advances
-when the warehouse has another complete hour. Use the local stack below for a
-rehearsal that drives the simulator directly. Containers bind
+when the warehouse has another complete hour. Neither Core nor `eye-data` mounts
+`sim-lake` yet; wiring the live lake is a separate data-service follow-up.
+The private continuous simulator and one-shot snapshot use separate world volumes
+to avoid concurrent DuckDB writers. Do not scale `sim` against the same volumes.
+Containers bind
 `EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
 `EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
 `EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
@@ -48,7 +55,13 @@ so services can be independently replicated (for example,
 Core and SellerOS currently retain process-local state/file-backed storage;
 multiple replicas are not a distributed-state or multi-writer deployment.
 
-### Local stack and rehearsal
+### Simulator controls
+
+Scenario controls now belong exclusively to the [continuous simulator service](sim/README.md), not Core, MCP, chat or the Observatory. Start `uv run eye-sim serve`; trigger with `curl -fsS -X POST http://127.0.0.1:8100/scenarios/s8`, inspect `/status`, and clear with `DELETE /scenarios/s8`. S8 starts the planned coupon day immediately and the seller typo after `typo_delay_hours` (default 1).
+
+The legacy `scripts/demo_run.py` and rehearsal instructions below predate this boundary and are not compatible with the removed core scenario endpoints. A separate demo CLI follows in Wave 2. Do not run Core and the simulator service as concurrent writers to the same world. Until the data-service migration, use Core's existing DuckDB source for externally ingested data.
+
+### Legacy local stack and rehearsal
 
 From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):
 
@@ -97,7 +110,7 @@ Once ready, open [the observatory](http://127.0.0.1:8000/) and run:
 uv run python scripts/demo_run.py --script demo
 ```
 
-The runner prepares 09:00 with I3 (Electronics coupon day) active since midnight, injects S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
+The legacy runner prepared 09:00 with a coupon campaign active since midnight and injected S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
 
 `--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
 
@@ -164,7 +177,7 @@ Code computes the numbers; agents decide what evidence to collect and how to exp
 
 ## Scenarios
 
-These are expected outcomes, not measured scores. See the [scenario spec](docs/specs/04-scenarios.md) for the controls and decoys.
+Only S8 is enabled by the simulator. It includes the planned electronics coupon day; I3 is no longer a separate trigger. The table below preserves historical oracle expectations, not supported controls or measured scores. See the [scenario spec](docs/specs/04-scenarios.md) for background.
 
 | ID | Scenario | Expected outcome |
 | --- | --- | --- |
@@ -178,7 +191,7 @@ These are expected outcomes, not measured scores. See the [scenario spec](docs/s
 | S8 | One seller enters the wrong electronics price | Confirm the price error with SellerOS; track recovery |
 | I1 | Planned Black Friday campaign | Innocent; no business alert |
 | I2 | French orders arrive late | Defer or flag a data issue; no business alert |
-| I3 | Planned 10% electronics coupon day | Recognize the expected change; no business alert |
+| coupon_day (S8 confounder) | Planned 10% electronics coupon day | Recognize the expected change; no business alert |
 
 ## A2A and MCP
 
@@ -186,7 +199,7 @@ These are expected outcomes, not measured scores. See the [scenario spec](docs/s
 | --- | --- |
 | [A2A specialists](docs/specs/10-a2a-and-specialists.md) | `http://localhost:8200/growth`, `/marketplace`, `/discovery` |
 | [A2A SellerOS](docs/specs/11-selleros-external.md) | `http://localhost:8300` |
-| [MCP, streamable HTTP](docs/specs/12-mcp-server.md) | `http://localhost:8100/mcp` |
+| [MCP, streamable HTTP](docs/specs/12-mcp-server.md) | `http://localhost:8100/mcp` locally; `http://localhost:8110/mcp` in Compose |
 
 Append `/.well-known/agent-card.json` to an A2A base address to inspect its card. In Q&A, try asking an MCP client: “What is broken right now and who is affected?”
 

@@ -10,8 +10,7 @@ from typing import Protocol
 import duckdb
 
 from eye.config import Settings
-from eye.contracts import ScenarioId
-from eye.orchestrator import HOUR, Scenarios
+from eye.orchestrator import HOUR
 from eye.schema import validate_schema
 from eye.warehouse import operations as ops
 from eye.warehouse.client import DataClient, DataUnavailable
@@ -21,21 +20,15 @@ class DataSource(Protocol):
     now: datetime
     history_start: datetime
     live_start: datetime
-    scenarios: Scenarios | None
-    scenario_titles: dict[ScenarioId, str]
 
     def step(self) -> None: ...
     def cursor(self) -> duckdb.DuckDBPyConnection: ...
-    def record_scenario(self, id: ScenarioId, ts: datetime, active: bool) -> None: ...
     def close(self) -> None: ...
 
 
 class DuckDBSource:
-    scenarios: Scenarios | None = None
-
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.scenario_titles: dict[ScenarioId, str] = {}
         self._con = duckdb.connect(str(path), read_only=True)
         try:
             validate_schema(self._con)
@@ -67,9 +60,6 @@ class DuckDBSource:
             ).fetchone()[0]
         if loaded:
             self.now += HOUR
-
-    def record_scenario(self, id: ScenarioId, ts: datetime, active: bool) -> None:
-        raise RuntimeError("Scenarios are not supported by the DuckDB data source")
 
     def close(self) -> None:
         self._con.close()

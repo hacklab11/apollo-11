@@ -13,6 +13,7 @@ check() {
 
 core=$(url eye-core 8000)
 check "$core/api/status"
+check "$(url sim 8100)/health"
 check "$(url eye-specialists 8200)/healthz"
 check "$(url selleros 8300)/healthz"
 check "$(url eye-mcp 8100)/healthz"

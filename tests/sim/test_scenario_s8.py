@@ -10,7 +10,6 @@ import pytest
 import yaml
 
 from eye.config import Settings
-from eye.sim.cli import _play_schedule
 from eye.sim.engine import Simulator
 from eye.sim.scenarios import ScenarioManager
 
@@ -85,34 +84,25 @@ def run(
             fork(baseline, directory / "sellers.json") as sim,
         ):
             normal, manager = ScenarioManager(control), ScenarioManager(sim)
-            schedule = _play_schedule("I3@0,S8@10")
+            normal.params["S8"]["typo_delay_hours"] = 1000
+            manager.params["S8"]["typo_delay_hours"] = 10
+            normal.inject("S8")
+            manager.inject("S8")
             start = sim.now + timedelta(hours=10)
             original = {}
             for hour in range(11):
-                for scenario in schedule.get(hour, []):
-                    if scenario == "S8":
-                        original = {
-                            (o.seller_id, o.sku): (o.price, o.repricer_mode)
-                            for offers in sim.world.offers.values()
-                            for o in offers
-                        }
-                        with sim.store.cursor() as con:
-                            before_changes = con.execute(
-                                "SELECT * FROM change_log ORDER BY ALL"
-                            ).fetchall()
-                    manager.inject(scenario)
-                    if scenario == "S8":
-                        with sim.store.cursor() as con:
-                            changes_match = (
-                                before_changes
-                                == con.execute(
-                                    "SELECT * FROM change_log ORDER BY ALL"
-                                ).fetchall()
-                            )
-                    if scenario != "S8":
-                        normal.inject(scenario)
+                if hour == 10:
+                    original = {
+                        (o.seller_id, o.sku): (o.price, o.repricer_mode)
+                        for offers in sim.world.offers.values()
+                        for o in offers
+                    }
                 control.step()
                 sim.step()
+            with sim.store.cursor() as con:
+                changes_match = con.execute(
+                    "SELECT count(*) FROM change_log WHERE id = 'coupon-day-electronics' AND planned"
+                ).fetchone() == (1,)
             seller = manager.params["S8"]["seller_id"]
             affected = [
                 o
@@ -314,7 +304,8 @@ def test_s8_scheduled_clear_and_lifecycle_errors(
         assert not manager.active()
         sim.step()
         assert manager.active()[0].injected_ts == due
-        offers = manager._s8_original.copy()
+        sim.step()
+        offers = manager.plugins["S8"].original.copy()
         stock = [o.stock for o, _, _ in offers]
         assert all(o.repricer_mode == "fixed" for o, _, _ in offers)
         manager.clear("S8")
@@ -322,47 +313,6 @@ def test_s8_scheduled_clear_and_lifecycle_errors(
             (price, mode) for _, price, mode in offers
         ]
         assert [o.stock for o, _, _ in offers] == stock
-
-
-def test_s8_and_i2_overlapping_backfills(settings: Settings, tmp_path: Path) -> None:
-    with closing(Simulator(settings, db_path=":memory:")) as sim:
-        sim.selleros_export.path = tmp_path / "sellers.json"
-        manager = ScenarioManager(sim)
-        manager.inject("I2")
-        sim.step()
-        manager.inject("S8")
-        start = sim.now
-        due = start + timedelta(hours=6)
-
-        def partition(country: str) -> tuple[int, int, datetime]:
-            with sim.store.cursor() as con:
-                expected, loaded, ready = con.execute(
-                    "SELECT expected_rows, loaded_rows, loaded_at FROM partition_status "
-                    "WHERE table_name = 'orders_hourly' AND country = ? AND ts = ?",
-                    [country, start],
-                ).fetchone()
-                assert con.execute(
-                    "SELECT count(*) FROM orders_hourly WHERE country = ? AND ts = ?",
-                    [country, start],
-                ).fetchone() == (loaded,)
-                return expected, loaded, ready
-
-        sim.step()
-        expected, loaded, ready = partition("FR")
-        partial = round(expected * 0.4)
-        assert 0 < loaded == round(partial * 0.5) < partial < expected
-        assert ready == due
-        manager.clear("I2")
-        sim.step()
-        assert partition("FR") == (expected, partial, due)
-        de_expected, de_loaded, de_ready = partition("DE")
-        assert de_loaded == de_expected
-        assert de_ready == start + timedelta(hours=1)
-        for _ in range(4):
-            sim.step()
-        assert partition("FR") == (expected, partial, due)
-        sim.step()
-        assert partition("FR") == (expected, expected, due)
 
 
 def test_s8_graph_seed() -> None:

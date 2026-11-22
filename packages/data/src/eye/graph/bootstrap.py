@@ -44,7 +44,7 @@ def load_or_bootstrap(
     engine: MetricEngine,
     path: Path = GRAPH_PATH,
     config_dir: str | Path = CONFIG_DIR,
-    scenario_hours: list[datetime] | None = None,
+    excluded_hours: list[datetime] | None = None,
     *,
     end: datetime | None = None,
 ) -> GraphStore:
@@ -54,14 +54,14 @@ def load_or_bootstrap(
         if store.registry_hash == expected:
             return store
         _log.info(json.dumps({"event": "graph_stale", "path": str(path)}))
-    return bootstrap(engine, path, config_dir, scenario_hours, end=end)
+    return bootstrap(engine, path, config_dir, excluded_hours, end=end)
 
 
 def bootstrap(
     engine: MetricEngine,
     path: Path | None = GRAPH_PATH,
     config_dir: str | Path = CONFIG_DIR,
-    scenario_hours: list[datetime] | None = None,
+    excluded_hours: list[datetime] | None = None,
     *,
     end: datetime | None = None,
 ) -> GraphStore:
@@ -71,15 +71,15 @@ def bootstrap(
     for metric in registry.metrics.values():
         store.add_metric(metric)
     for identity in registry.identities:
-        for edge in _formula_edges(engine, identity, scenario_hours, end):
+        for edge in _formula_edges(engine, identity, excluded_hours, end):
             store.add_edge(edge)
     for metric in registry.metrics.values():
         for dim in metric.dimensions:
             store.add_edge(
-                _breakdown_edge(engine, metric.name, dim, scenario_hours, end)
+                _breakdown_edge(engine, metric.name, dim, excluded_hours, end)
             )
     for seed in registry.causal_seeds:
-        store.add_edge(_seed_edge(engine, seed, scenario_hours, end))
+        store.add_edge(_seed_edge(engine, seed, excluded_hours, end))
     store.path = path
     store.save()
     return store
@@ -92,7 +92,7 @@ def _pending(registry: Registry, names: list[str]) -> list[str]:
 def _formula_edges(
     engine: MetricEngine,
     identity: Identity,
-    scenario_hours: list[datetime] | None,
+    excluded_hours: list[datetime] | None,
     end: datetime | None,
 ) -> list[Edge]:
     parsed = parse_identity(identity.text)
@@ -102,7 +102,7 @@ def _formula_edges(
         status, evidence = "ambiguous", {"pending_metrics": pending}
     else:
         result = validate_identity(
-            engine, identity.text, end=end, scenario_hours=scenario_hours
+            engine, identity.text, end=end, excluded_hours=excluded_hours
         )
         median = result.evidence["median_residual"]
         p95 = result.evidence["p95_residual"]
@@ -169,7 +169,7 @@ def _breakdown_edge(
     engine: MetricEngine,
     metric: str,
     dim: str,
-    scenario_hours: list[datetime] | None,
+    excluded_hours: list[datetime] | None,
     end: datetime | None,
 ) -> Edge:
     if pending := _pending(engine._registry, [metric]):
@@ -177,7 +177,7 @@ def _breakdown_edge(
     else:
         try:
             result = validate_breakdown(
-                engine, metric, dim, end=end, scenario_hours=scenario_hours
+                engine, metric, dim, end=end, excluded_hours=excluded_hours
             )
         except ValueError as error:
             status, confidence, evidence = "ambiguous", 0.0, {"error": str(error)}
@@ -206,7 +206,7 @@ def _breakdown_edge(
 def _seed_edge(
     engine: MetricEngine,
     seed: CausalSeed,
-    scenario_hours: list[datetime] | None,
+    excluded_hours: list[datetime] | None,
     end: datetime | None,
 ) -> Edge:
     evidence: dict = {"rationale": seed.rationale}
@@ -219,7 +219,7 @@ def _seed_edge(
             seed.dst,
             SEED_MAX_LAG,
             end=end,
-            scenario_hours=scenario_hours,
+            excluded_hours=excluded_hours,
         )
         evidence |= {
             "corr": result.corr,

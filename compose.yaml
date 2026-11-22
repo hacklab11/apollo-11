@@ -26,7 +26,25 @@ services:
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       - eye-data:/app/data
+
+  sim:
+    <<: *service
+    command: [eye-sim, serve]
+    environment:
+      <<: *environment
+      SIM_HOST: 0.0.0.0
+      SIM_PORT: "8100"
+      SIM_WORLD_DB: /app/data/world.duckdb
+      SIM_LAKE_DIR: /app/data/lake
+    volumes:
+      - ./config/compose.yaml:/app/config/settings.yaml:ro
+      - sim-world:/app/data
+      - sim-lake:/app/data/lake
       - seller-data:/app/packages/selleros/data
+    ports: ["127.0.0.1:${SIM_PORT:-8100}:8100"]
+    healthcheck:
+      <<: *health
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=2)"]
 
   eye-data:
     <<: *service
@@ -63,8 +81,8 @@ services:
       SELLEROS_URL: http://selleros:8300/
       SELLEROS_DATA_DIR: /app/packages/selleros/data
     depends_on:
-      sim-generate:
-        condition: service_completed_successfully
+      sim:
+        condition: service_healthy
     volumes:
       - seller-data:/app/packages/selleros/data
     ports: ["127.0.0.1:${SELLEROS_PORT:-8300-8309}:8300"]
@@ -104,7 +122,7 @@ services:
     depends_on:
       eye-core:
         condition: service_healthy
-    ports: ["127.0.0.1:${MCP_PORT:-8100-8109}:8100"]
+    ports: ["127.0.0.1:${MCP_PORT:-8110-8119}:8100"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)"]
@@ -112,6 +130,8 @@ services:
 volumes:
   eye-data:
   warehouse-data:
+  sim-world:
+  sim-lake:
   seller-data:
 
 networks:

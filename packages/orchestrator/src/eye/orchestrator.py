@@ -22,8 +22,6 @@ from eye.contracts import (
     Event,
     Incident,
     InvestigationResult,
-    ScenarioId,
-    ScenarioState,
     SentinelDecision,
     TrailStep,
 )
@@ -48,7 +46,6 @@ type EventType = Literal[
     "investigation_finished",
     "incident_upserted",
     "graph_changed",
-    "scenario_changed",
     "agent_status",
 ]
 
@@ -67,14 +64,6 @@ class SentinelSource(Protocol):
     ) -> list[SentinelDecision]: ...
 
 
-class Scenarios(Protocol):
-    def inject(self, id: ScenarioId) -> ScenarioState: ...
-
-    def clear(self, id: ScenarioId) -> None: ...
-
-    def timeline(self) -> list[ScenarioState]: ...
-
-
 class AgentHealth(BaseModel):
     ok: bool
     url: str
@@ -90,7 +79,6 @@ class Status(BaseModel):
     tokens_in: int
     tokens_out: int
     agents: dict[str, AgentHealth]
-    active_scenarios: list[ScenarioId]
     investigations_running: int
     llm_stop_reason: str | None = None
 
@@ -130,14 +118,11 @@ class Orchestrator:
             [str, dict[str, str], datetime], float | tuple[float, float]
         ],
         *,
-        scenarios: Scenarios | None = None,
-        scenario_titles: dict[ScenarioId, str] | None = None,
         a2a: A2AClient | None = None,
         investigate: Investigate | None = None,
         add_metric: AddMetric | None = None,
         refine: Refine | None = None,
         invalidate: Callable[[], None] = lambda: None,
-        record_scenario: Callable[[ScenarioId, datetime, bool], None] = lambda *_: None,
     ) -> None:
         self.settings = settings
         self.sim = sim
@@ -145,14 +130,11 @@ class Orchestrator:
         self.incidents = incidents
         self.llm = llm
         self.z_lookup = z_lookup
-        self.scenarios = scenarios
-        self.scenario_titles = scenario_titles or {}
         self.a2a = a2a
         self.investigate = investigate
         self.add_metric = add_metric
         self.refine = refine
         self.invalidate = invalidate
-        self.record_scenario = record_scenario
         self.events = EventBus()
         self.decisions: deque[SentinelDecision] = deque(maxlen=2_000)
         self.tick = max(0, (sim.now - sim.live_start) // HOUR)
@@ -288,47 +270,9 @@ class Orchestrator:
             tokens_in=int(usage["tokens_in"]),
             tokens_out=int(usage["tokens_out"]),
             agents=self._agents,
-            active_scenarios=[
-                state.id for state in self.scenario_states() if state.active
-            ],
             investigations_running=len(self._tasks),
             llm_stop_reason=str(llm_stop) if llm_stop else None,
         )
-
-    def scenario_states(self) -> list[ScenarioState]:
-        latest = (
-            {state.id: state for state in self.scenarios.timeline()}
-            if self.scenarios
-            else {}
-        )
-        return [
-            latest.get(scenario)
-            or ScenarioState(
-                id=scenario,
-                title=title,
-                active=False,
-                injected_ts=None,
-                cleared_ts=None,
-            )
-            for scenario, title in self.scenario_titles.items()
-        ]
-
-    async def set_scenario(
-        self, scenario: ScenarioId, *, active: bool
-    ) -> ScenarioState:
-        async with self._tick_lock:
-            if self.scenarios is None or scenario not in self.scenario_titles:
-                raise LookupError(scenario)
-            if active:
-                state = self.scenarios.inject(scenario)
-            else:
-                self.scenarios.clear(scenario)
-                state = next(
-                    item for item in self.scenario_states() if item.id == scenario
-                )
-            self.record_scenario(scenario, self.sim.now, active)
-            self.emit("scenario_changed", state, self.sim.now)
-            return state
 
     def clean_hours(self) -> list[datetime]:
         start = self.sim.history_start
@@ -377,7 +321,6 @@ class Orchestrator:
                 and self._tasks
             ):
                 return self.status()
-            before = self.scenario_states()
             ts = self.sim.now
             await asyncio.to_thread(self.sim.step)
             if self.sim.now == ts:
@@ -388,9 +331,6 @@ class Orchestrator:
             self.sim_ts = ts
             self.tick += 1
             self.emit("tick", {"tick": self.tick})
-            for previous, current in zip(before, self.scenario_states(), strict=True):
-                if previous != current:
-                    self.emit("scenario_changed", current)
             if advanced is not None and not advanced.done():
                 advanced.set_result(self.status())
             decisions = []

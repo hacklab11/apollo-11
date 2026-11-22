@@ -18,7 +18,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY config ./config
 COPY web ./web
-RUN mkdir -p /app/data /app/packages/selleros/data \
+RUN mkdir -p /app/data/lake /app/packages/selleros/data \
     && chown -R eye:eye /app/data /app/packages/selleros/data
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1
 USER eye

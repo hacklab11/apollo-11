@@ -9,7 +9,7 @@ All JSON uses the models in `02-contracts.md`. Response fixtures live in `tests/
 
 | Method + path | Returns | Test fixture |
 |---|---|---|
-| `GET /api/status` | `{sim_ts, tick, running, paused, llm_mode, llm_calls, tokens_in, tokens_out, agents: {name: {ok, url}}, active_scenarios, investigations_running}` | `status.json` |
+| `GET /api/status` | `{sim_ts, tick, running, paused, llm_mode, llm_calls, tokens_in, tokens_out, agents: {name: {ok, url}}, investigations_running}` | `status.json` |
 | `GET /api/graph?node&depth` | `GraphView` | `graph.json` |
 | `GET /api/metrics` | list of `MetricDef` (no SQL) | `metrics.json` |
 | `GET /api/metrics/{name}?start&end&segment` | `Series` with expected/lower/upper (from `baseline_compare`) | `metric_orders.json` |
@@ -19,12 +19,9 @@ All JSON uses the models in `02-contracts.md`. Response fixtures live in `tests/
 | `GET /api/incidents?status` | list of `Incident` (without hypotheses detail) | `incidents.json` |
 | `GET /api/incidents/{id}` | `Incident` | `incident_s7.json`, `incident_s6.json` |
 | `GET /api/incidents/{id}/trail` | list of `TrailStep` for all its investigations | `trail_s7.json` |
-| `GET /api/scenarios` | list of `ScenarioState` | `scenarios.json` |
-| `POST /api/scenarios/{id}/inject`, `/clear` | `ScenarioState` | – |
 | `POST /api/clock/pause`, `/resume`, `/step` | status | – |
 | `GET /api/events` | SSE stream of `Event` | `events.jsonl` (one event per line) |
 | `POST /api/chat` | §2 | `chat_response.json` |
-| `GET /api/demo/truth` | `scenario_log` (ground truth) — only when `demo.show_truth: true` in config | `truth.json` |
 
 Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `styles.css` are served at the root and under `/web/`. Test fixtures are not served.
 
@@ -32,7 +29,7 @@ Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `style
 
 - Request: `{messages: [{role: "user"|"assistant", content: str}]}` (max 20 messages, each ≤ 4000 chars).
 - The backend opens an MCP client session (`mcp` 2.3.0 streamable HTTP client) to `http://127.0.0.1:8100/mcp`, lists tools, converts each MCP tool to a Claude tool (name, description, input schema), and runs the agent loop (`08-agent-runtime.md`) with a `chat` agent spec. Tool calls go to the MCP session.
-- The chat agent's prompt: answer questions about the marketplace and its incidents; always cite incident ids and numbers; use `inject_scenario` only if the user asks for a demo.
+- The chat agent's prompt: answer questions about the marketplace and its incidents; always cite incident ids and numbers.
 - Response: `{answer: str (Markdown), tool_calls: [{tool, input, summary}], incident_ids: [str]}`. Non-streaming; the UI shows a spinner.
 - Why through MCP and not direct calls: the chat proves the MCP server works for any agent. Write this in the pitch.
 
@@ -41,7 +38,7 @@ Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `style
 ### 3.1 Layout (one page, desktop 1440 × 900 first)
 
 ```
-┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots · S8 scenario button ┐
+┌ Top bar: "Eye of the System" · sim clock · ▶/⏸ · LLM mode · agents health dots ┐
 ├───────────────┬────────────────────────────────────────┬──────────────────────┤
 │ Graph         │ Metric chart (selected node)           │ Chat                 │
 │ (Cytoscape)   │ actual line, expected band, markers    │ messages             │
@@ -57,7 +54,7 @@ Static: `GET /` serves `web/index.html`; only `index.html`, `app.js`, and `style
 + "Add metric" modal (name, description, SQL) → shows AddMetricResult and highlights new edges
 ```
 
-S8 is the only scenario control in the Observatory. The API still lists the supported scenarios and allows explicit injection, including I3 for the €9 demo.
+Scenario controls and ground-truth endpoints are not part of core or the Observatory. Use the [simulator service](../../sim/README.md) directly: `GET /scenarios`, `POST /scenarios/s8`, `DELETE /scenarios/s8` on port 8100. S8 includes the planned coupon campaign as its confounder.
 
 ### 3.2 Visual rules
 

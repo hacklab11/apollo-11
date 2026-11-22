@@ -16,7 +16,7 @@ from mcp import Client
 from eye.api.chat import create_router
 from eye.config import LlmSettings
 from eye.llm.client import LLMClient
-from eye.mcp_server import SCENARIO_TOOLS, create_server
+from eye.mcp_server import create_server
 
 MCP_URL = "http://127.0.0.1:8100/mcp"
 
@@ -42,8 +42,6 @@ async def test_chat_through_real_mcp(monkeypatch, kind: str) -> None:
     incident = make_incident_s7()
 
     async def core(request: httpx.Request) -> httpx.Response:
-        if request.url.path == "/api/scenarios":
-            return httpx.Response(200, json=[])
         core_calls.append(request.url.path)
         assert request.url.path == "/api/incidents"
         if kind == "error":
@@ -59,7 +57,7 @@ async def test_chat_through_real_mcp(monkeypatch, kind: str) -> None:
         if len(llm_calls) == 1:
             names = {tool["name"] for tool in body["tools"]}
             assert "list_incidents" in names
-            assert not names & SCENARIO_TOOLS
+            assert not names & {"list_scenarios", "inject_scenario", "clear_scenario"}
             definition = next(t for t in body["tools"] if t["name"] == "list_incidents")
             assert "limit" in definition["input_schema"]["properties"]
             return httpx2.Response(200, json=response("list_incidents", {"limit": 5}))

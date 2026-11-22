@@ -12,13 +12,12 @@ import uvicorn
 from mcp import Client
 from mcp.server import MCPServer
 from mcp.types import CallToolResult, TextContent
-from mcp_fake_core import Calls, fake_core
+from mcp_fake_core import Calls
 from pydantic import TypeAdapter
 
 from eye.api.app import MetricDefinition
-from eye.contracts import AddMetricResult, GraphView, ScenarioState, Series
+from eye.contracts import AddMetricResult, GraphView, Series
 from eye.mcp_server import (
-    SCENARIO_TOOLS,
     IncidentDetail,
     IncidentSummary,
     create_server,
@@ -32,15 +31,11 @@ TOOLS = {
     "query_metric",
     "explain_metric",
     "add_metric",
-    "list_scenarios",
-    "inject_scenario",
-    "clear_scenario",
 }
 
 
 def core_calls(calls: Calls) -> Calls:
-    """Drop the scenario-source probe that every tool listing makes."""
-    return [call for call in calls if call != ("/api/scenarios", {})]
+    return calls
 
 
 def text(result: CallToolResult) -> str:
@@ -80,7 +75,7 @@ async def http_url(server: MCPServer) -> AsyncIterator[str]:
 
 
 @pytest.mark.asyncio
-async def test_streamable_http_lists_ten_described_tools(http_url: str) -> None:
+async def test_streamable_http_lists_seven_described_tools(http_url: str) -> None:
     async with Client(http_url) as client:
         tools = (await client.list_tools()).tools
         status = payload(await client.call_tool("system_status", {}))
@@ -95,25 +90,15 @@ async def test_streamable_http_lists_ten_described_tools(http_url: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "scenarios",
-    [[], {"detail": "not a catalogue"}, None],
-    ids=["no-scenario-source", "invalid-catalogue", "core-unavailable"],
-)
-async def test_scenario_tools_hidden_without_scenario_source(
-    scenarios: object,
-) -> None:
+async def test_tool_listing_does_not_probe_core() -> None:
     def unavailable(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("core down", request=request)
+        raise AssertionError(f"unexpected core request: {request.url}")
 
-    transport = (
-        httpx.ASGITransport(app=fake_core([], scenario_list=scenarios))
-        if scenarios is not None
-        else httpx.MockTransport(unavailable)
-    )
-    async with Client(create_server("http://core", transport=transport)) as client:
+    async with Client(
+        create_server("http://core", transport=httpx.MockTransport(unavailable))
+    ) as client:
         tools = (await client.list_tools()).tools
-    assert {tool.name for tool in tools} == TOOLS - SCENARIO_TOOLS
+    assert {tool.name for tool in tools} == TOOLS
 
 
 @pytest.mark.asyncio
@@ -138,27 +123,16 @@ async def test_list_incidents_limit_keeps_newest(server: MCPServer) -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_scenario_is_rejected_without_api_call(
-    server: MCPServer, calls: Calls
+@pytest.mark.parametrize(
+    "name", ["inject_scenario", "clear_scenario", "list_scenarios"]
+)
+async def test_scenario_tools_are_not_exposed(
+    server: MCPServer, calls: Calls, name: str
 ) -> None:
     async with Client(server) as client:
-        result = await client.call_tool("inject_scenario", {"id": "S9"})
+        result = await client.call_tool(name, {"id": "S8"})
     assert result.is_error
-    assert "validation error" in text(result)
     assert calls == []
-
-
-@pytest.mark.asyncio
-async def test_inject_and_clear_scenario(server: MCPServer, calls: Calls) -> None:
-    async with Client(server) as client:
-        injected = payload(await client.call_tool("inject_scenario", {"id": "S8"}))
-        cleared = payload(await client.call_tool("clear_scenario", {"id": "S8"}))
-    assert ScenarioState.model_validate(injected).active
-    assert not ScenarioState.model_validate(cleared).active
-    assert [path for path, _ in core_calls(calls)] == [
-        "/api/scenarios/S8/inject",
-        "/api/scenarios/S8/clear",
-    ]
 
 
 @pytest.mark.asyncio
@@ -228,7 +202,6 @@ async def test_other_tools_return_contract_json(server: MCPServer) -> None:
         definition = payload(
             await client.call_tool("explain_metric", {"name": "orders"})
         )
-        scenarios = payload(await client.call_tool("list_scenarios", {}))
         added = payload(
             await client.call_tool(
                 "add_metric",
@@ -241,5 +214,4 @@ async def test_other_tools_return_contract_json(server: MCPServer) -> None:
         )
     assert len(GraphView.model_validate(graph).nodes) == 12
     assert MetricDefinition.model_validate(definition).name == "orders"
-    assert len(TypeAdapter(list[ScenarioState]).validate_python(scenarios)) == 9
     assert AddMetricResult.model_validate(added).metric.name

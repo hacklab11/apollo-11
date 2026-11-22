@@ -223,7 +223,7 @@ def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[Fas
             registry = load_registry(connection)
             engine = MetricEngine(connection, registry)
             graph = bootstrap.load_or_bootstrap(
-                engine, scenario_hours=sorted(incidents.excluded_hours(source.now))
+                engine, excluded_hours=sorted(incidents.excluded_hours(source.now))
             )
             queries = LocalQueries(
                 connection, registry, graph, settings.sentinel, engine
@@ -284,14 +284,11 @@ def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[Fas
             incidents,
             llm,
             z_lookup,
-            scenarios=local.scenarios if local is not None else None,
-            scenario_titles=local.scenario_titles if local is not None else None,
             a2a=a2a,
             investigate=investigate,
             add_metric=cart.add_metric if cart else None,
             refine=refine if cart else None,
             **({"invalidate": engine.invalidate} if engine is not None else {}),
-            **({"record_scenario": local.record_scenario} if local is not None else {}),
         )
         incidents.reporter = _reporter(llm, settings, orchestrator).write
         if local is not None:

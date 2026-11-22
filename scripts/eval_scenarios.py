@@ -28,7 +28,6 @@ from eye.config import LlmSettings, load_settings
 from eye.contracts import (
     AddMetricRequest,
     Incident,
-    ScenarioState,
     SellerAlertAck,
     SpecialistRequest,
     SpecialistResponse,
@@ -43,7 +42,7 @@ from eye.orchestrator import HOUR, Orchestrator
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
-from eye.sim.scenarios import _TITLES, ScenarioManager
+from eye.sim.scenarios import _TITLES, ScenarioManager, ScenarioState
 from eye.specialists.app import SPECIALISTS
 from eye.specialists.app import answer as answer_specialist
 from eye.specialists.tools import DataApiUnavailable, DataClient
@@ -108,6 +107,7 @@ def append_json(path: Path, value: dict) -> None:
 
 
 def scenario_audit(state: ScenarioState, params: dict) -> TrailStep:
+    fault_ts = state.injected_ts + params.get("typo_delay_hours", 0) * HOUR
     return TrailStep(
         id=f"eval:scenario:{state.id}:{state.injected_ts.isoformat()}",
         investigation_id="eval:scenarios",
@@ -118,7 +118,8 @@ def scenario_audit(state: ScenarioState, params: dict) -> TrailStep:
         output_summary=f"Injected {state.id}",
         output={
             "scenario_id": state.id,
-            "inject_ts": state.injected_ts.isoformat(),
+            "trigger_ts": state.injected_ts.isoformat(),
+            "inject_ts": fault_ts.isoformat(),
             "scenario_seller": params.get("seller_id"),
         },
     )
@@ -573,6 +574,9 @@ def matching_incidents(
             commands[0][0] if commands else None,
         )
     offset = next((hour for name, hour in commands if name == scenario), 0)
+    offset += (
+        entry.get("scenario_params", {}).get(scenario, {}).get("typo_delay_hours", 0)
+    )
     until = min(
         (hour for name, hour in commands if hour > offset),
         default=entry.get("run_hours", float("inf")),
@@ -625,8 +629,14 @@ def matching_incidents(
 
 
 class ConditionalActions:
-    def __init__(self, entry: dict, metrics: dict[str, AddMetricRequest]) -> None:
+    def __init__(
+        self,
+        entry: dict,
+        metrics: dict[str, AddMetricRequest],
+        scenarios: ScenarioManager | None = None,
+    ) -> None:
         self.entry, self.metrics = entry, metrics
+        self.scenarios = scenarios
         self.actions: dict[str, tuple[str, str]] = {}
         self.completed: set[str] = set()
         self.incident_id: str | None = None
@@ -681,7 +691,9 @@ class ConditionalActions:
             if method == "add_metric":
                 await core.register_metric(self.metrics[target])
             else:
-                await core.set_scenario(target, active=False)
+                if self.scenarios is None:
+                    raise RuntimeError("clearing requires a simulator scenario manager")
+                self.scenarios.clear(target)
             self.completed.add(trigger)
 
 
@@ -743,6 +755,9 @@ def evaluate(
             )
             offsets = [
                 int(p.rsplit("@", 1)[1])
+                + entry.get("scenario_params", {})
+                .get(p.rsplit("@", 1)[0], {})
+                .get("typo_delay_hours", 0)
                 for p in entry.get("play", [])
                 if p.rsplit("@", 1)[0] == scenario
                 or (scenario is None and p.startswith("S"))
@@ -764,14 +779,14 @@ def evaluate(
             )
         return chosen
 
-    results = group(entry, "expect.")
+    results = group(entry, "expect.", entry.get("focus"))
     other_groups = {
         name: group(spec, f"also.{name}.", name)
         for name, spec in entry.get("also", {}).items()
-        if name not in {"I1", "I3"}
+        if name not in {"I1", "coupon_day"}
     }
     for name, spec in entry.get("also", {}).items():
-        if name in {"I1", "I3"}:
+        if name in {"I1", "coupon_day"}:
             campaign_id = (
                 "black-friday-2026" if name == "I1" else "coupon-day-electronics"
             )
@@ -917,6 +932,9 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             value = expected(metric, ts, segment, con=connection, registry=registry)
             return value.z if value.z is not None else float("inf"), value.completeness
 
+        scenarios = ScenarioManager(sim)
+        for id, params in entry.get("scenario_params", {}).items():
+            scenarios.params[id].update(params)
         core = Orchestrator(
             settings,
             sim,
@@ -930,8 +948,6 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
             store,
             llm,
             z_lookup,
-            scenarios=ScenarioManager(sim),
-            scenario_titles=_TITLES,
             a2a=a2a,
             investigate=investigate,
             add_metric=Cartographer(engine, graph, llm=settings.llm).add_metric,
@@ -991,7 +1007,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
         store.notify = notify
         store.reporter = _reporter(llm, settings, core).write
         entry = {**entry, "start_ts": sim.now.isoformat()}
-        actions = ConditionalActions(entry, DEMO_METRICS)
+        actions = ConditionalActions(entry, DEMO_METRICS, scenarios)
         scenario_audits: list[TrailStep] = []
         try:
             for hour in range(entry["run_hours"]):
@@ -999,15 +1015,17 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                     action, at = command.rsplit("@", 1)
                     if int(at) == hour:
                         clear = action.startswith("clear(")
-                        state = await core.set_scenario(
-                            action[6:-1] if clear else action, active=not clear
-                        )
-                        if not clear:
-                            scenario_audits.append(
-                                scenario_audit(
-                                    state, core.scenarios.params.get(action, {})
+                        target = action[6:-1] if clear else action
+                        if clear:
+                            scenarios.clear(target)
+                        else:
+                            state = scenarios.inject(target)
+                            params = scenarios.params[target]
+                            if target == "S8":
+                                params["seller_id"] = (
+                                    scenarios.plugins[target].offers()[0].seller_id
                                 )
-                            )
+                            scenario_audits.append(scenario_audit(state, params))
                 await core.step_once()
                 for decision in core.decisions:
                     if decision.anomaly.ts == core.sim_ts:

@@ -1,5 +1,7 @@
 # 15 Demo and pitch
 
+The rehearsal below predates Wave 2. Core, MCP and the Observatory no longer expose scenario controls; the legacy `scripts/demo_run.py` needs a separate migration. Use the [simulator service](../../sim/README.md) for controls. Its S8 plugin starts the coupon campaign and later the typo; there is no independent I3 trigger. The offline D6 oracle configures a 10-hour typo delay and triggers S8 once at midnight.
+
 Owner: P3. Tasks: T24 (demo runner script, dev), T25 (pitch assets, P3).
 Judging: 20% demo. The demo must show: a fault, an innocent change, a new metric, the autonomous response, and an easy-to-follow graph, decisions, evidence, and report.
 

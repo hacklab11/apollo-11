@@ -218,7 +218,6 @@ Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to
 | `get_graph(node?, depth?)` | nodes and typed edges |
 | `query_metric(name, start, end, dims?)` | time series |
 | `add_metric(name, description, sql)` | triggers the Cartographer |
-| `inject_scenario(id)` / `clear_scenario(id)` / `list_scenarios()` | demo control |
 | `system_status()` | sim clock, tick, agents online |
 
 ### 7.3 Web UI (one page)
@@ -226,7 +225,7 @@ Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to
 - Left: the graph (Cytoscape.js). Node color = anomaly state. Edge style = edge type. Click a node → its chart.
 - Center: metric chart with expected band and anomaly markers. Incident list. Click an incident → the trail as a timeline.
 - Right: chat. `/api/chat` runs a Claude agent whose tools come from our MCP server through an MCP client.
-- Top bar: sim clock, scenario buttons, "add metric" form.
+- Top bar: sim clock and "add metric" form. Scenario controls belong to the simulator service, not the UI.
 - Live updates over SSE.
 
 ## 8. Acceptance criteria (demo must show these)
@@ -238,7 +237,7 @@ Optional ambiguous metric: `delivery_delay_hours` (causal to `refund_rate` or to
 5. I1 alone is labeled `INNOCENT` and does not raise an alert.
 6. I2 is deferred or labeled as a data issue, not as a business fault.
 7. `add_metric(fee_per_order, ...)` places the metric with validated edges in < 60 s, and the UI shows it. During S8 its anomaly attaches to the open S8 incident.
-8. The same anomaly on later ticks updates one incident. After `clear_scenario`, the incident becomes `resolved`.
+8. The same anomaly on later ticks updates one incident. After the simulator clears S8, the incident becomes `resolved`.
 9. S6 uses evidence from SellerOS over A2A, and SellerOS receives a notification. Stopping SellerOS makes the report say "agent unavailable" and lowers confidence.
 10. An external MCP client (Claude Desktop or Claude Code) can list incidents and read a report.
 11. Chat in the UI answers "why did contribution fall?" by using MCP tools.

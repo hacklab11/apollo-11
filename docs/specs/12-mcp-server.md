@@ -7,24 +7,23 @@ Package: `mcp` 2.3.0. Read the official Python SDK docs for the 2.x server API (
 
 - Transport: streamable HTTP at `http://127.0.0.1:8100/mcp`. Public through Caddy at `/mcp` (`16-deployment.md`).
 - The MCP server is a thin adapter over the core public API (`13-api-and-ui.md`) using `httpx`. It holds no state and no DB connection. Why: one source of truth; the MCP server can restart any time.
-- Server name `eye-of-the-system`, instructions text: "Monitoring system for a simulated marketplace. Start with system_status and list_incidents. Incidents contain evidence trails. Use inject_scenario only when the user asks for a demo."
+- Server name `eye-of-the-system`, instructions text: "Monitoring system for a simulated marketplace. Start with system_status and list_incidents. Incidents contain evidence trails."
 
 ## 2. Tools
 
 | Tool | Input | Output | Core API |
 |---|---|---|---|
-| `system_status` | – | clock, tick, agents health, active scenarios, LLM mode | `GET /api/status` |
+| `system_status` | – | clock, tick, agents health, LLM mode | `GET /api/status` |
 | `list_incidents` | `status?` (enum), `limit?` ≤ 50 | id, title, status, verdict, impact, opened/updated | `GET /api/incidents` |
 | `get_incident` | `id` | full `Incident` + trail steps (summaries only, max 60) | `GET /api/incidents/{id}` + `/trail` |
 | `get_graph` | `node?`, `depth?` ≤ 3 | `GraphView` (trimmed to 80 nodes) | `GET /api/graph` |
 | `query_metric` | `name`, `start?`, `end?` (default last 48 h), `segment?` | series with expected band | `GET /api/metrics/{name}` |
 | `explain_metric` | `name` | definition, SQL, dimensions, in/out edges with types and status | `GET /api/metrics/{name}/definition` |
 | `add_metric` | `name`, `description`, `sql` or `expression` | `AddMetricResult` | `POST /api/metrics` |
-| `list_scenarios` | – | `ScenarioState` list | `GET /api/scenarios` |
-| `inject_scenario` | `id` (enum) | new state | `POST /api/scenarios/{id}/inject` |
-| `clear_scenario` | `id` (enum) | new state | `POST /api/scenarios/{id}/clear` |
 
 Every tool description says what it returns and when to use it. Output is JSON text plus a one-line human summary first.
+
+Scenario controls belong exclusively to the [simulator service](../../sim/README.md); MCP cannot trigger, clear or list them.
 
 ## 3. Resources (optional, cut if late)
 
@@ -37,7 +36,7 @@ Core API error → MCP tool error result with the HTTP status and message. Core 
 
 ## 5. Tests (T19)
 
-1. Start core (test mode, no LLM) + MCP; an `mcp` client session lists 10 tools.
+1. Start core (test mode, no LLM) + MCP; an `mcp` client session lists 7 tools.
 2. `list_incidents` returns valid JSON against a seeded incident.
-3. `inject_scenario` with an invalid id → validation error, no API call.
+3. Scenario tools are not exposed and tool listing makes no core requests.
 4. Manual check (write the result in the PR): Claude Code connects with `claude mcp add --transport http eye http://localhost:8100/mcp` and answers "what incidents are open?".

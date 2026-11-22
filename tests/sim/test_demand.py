@@ -190,11 +190,11 @@ def test_cli_play_schedule_and_missing_scenarios(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    assert cli._play_schedule("I1@0,S7@3,S6@3") == {0: ["I1"], 3: ["S7", "S6"]}
+    assert cli._play_schedule("S8@0,S8@3") == {0: ["S8"], 3: ["S8"]}
     path = tmp_path / "world.duckdb"
     monkeypatch.setattr(cli, "WORLD_DB", path)
     monkeypatch.setitem(sys.modules, "eye.sim.scenarios", None)
-    monkeypatch.setattr(sys, "argv", ["eye-sim", "generate", "--play", "I1@0"])
+    monkeypatch.setattr(sys, "argv", ["eye-sim", "generate", "--play", "S8@0"])
     with pytest.raises(SystemExit) as error:
         cli.main()
     assert error.value.code == 2
@@ -219,11 +219,11 @@ def test_cli_play_injects_at_offsets(
     monkeypatch.setattr(cli, "WORLD_DB", path)
     monkeypatch.setattr(cli, "load_settings", lambda: settings)
     monkeypatch.setattr(Simulator, "backfill", lambda self: None)
-    monkeypatch.setattr(sys, "argv", ["eye-sim", "generate", "--play", "S7@3,I1@0"])
+    monkeypatch.setattr(sys, "argv", ["eye-sim", "generate", "--play", "S8@3,S8@0"])
     cli.main()
     assert played == [
-        (settings.sim.start_ts, "I1"),
-        (settings.sim.start_ts + timedelta(hours=3), "S7"),
+        (settings.sim.start_ts, "S8"),
+        (settings.sim.start_ts + timedelta(hours=3), "S8"),
     ]
     with duckdb.connect(str(path)) as con:
         con.execute("CREATE TABLE consumer_state AS SELECT 42 AS value")
