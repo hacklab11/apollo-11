@@ -2,6 +2,7 @@ x-service: &service
   image: eye-system:local
   build: .
   init: true
+  env_file: []
   environment: &environment
     EYE_BIND_HOST: 0.0.0.0
     EYE_CORE_URL: http://eye-core:8000
@@ -58,6 +59,7 @@ services:
       EYE_BIND_HOST: 0.0.0.0
       EYE_AUTH_URL: http://auth:8500
       EYE_AUTH_KEY_PATH: /app/data/auth/key.pem
+      AUTHLIB_INSECURE_TRANSPORT: "1"
       EYE_AUTH_EYE_CORE_SECRET: ${EYE_AUTH_EYE_CORE_SECRET:-}
       EYE_AUTH_SENTINEL_SECRET: ${EYE_AUTH_SENTINEL_SECRET:-}
       EYE_AUTH_DETECTIVE_SECRET: ${EYE_AUTH_DETECTIVE_SECRET:-}
