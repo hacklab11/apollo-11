@@ -12,7 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agent_runtime import Budget, InMemoryKillSwitch
 from eye.agents.detective import Detective, _Submission
-from eye.config import DetectiveSettings
+from eye.config import DetectiveSettings, LlmSettings
 from eye.contracts import (
     Anomaly,
     Contribution,
@@ -29,6 +29,16 @@ from eye.sim.store import Store
 START = datetime(2026, 11, 27, 3, tzinfo=UTC)
 HOUR = timedelta(hours=1)
 END = START + 2 * HOUR
+
+
+@pytest.fixture(autouse=True)
+def model_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "eye.agents.detective.LlmSettings",
+        lambda: LlmSettings(
+            prices={"detective": {"input_per_mtok": 0, "output_per_mtok": 0}}
+        ),
+    )
 
 
 @pytest.fixture
@@ -423,6 +433,24 @@ async def test_provider_failure_becomes_error(world: duckdb.DuckDBPyConnection) 
     assert result.stop_reason == "error"
     assert result.verdict == "HYPOTHESIS"
     assert "503" in result.open_questions[0]
+
+
+@pytest.mark.asyncio
+async def test_missing_credentials_become_error(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    monkeypatch.delenv("DETECTIVE_TEST_KEY", raising=False)
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        llm=LlmSettings(provider="openai_compatible", api_key_env="DETECTIVE_TEST_KEY"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "error"
+    assert result.verdict == "HYPOTHESIS"
+    assert "DETECTIVE_TEST_KEY" in result.open_questions[0]
 
 
 @pytest.mark.asyncio

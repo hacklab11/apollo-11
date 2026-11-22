@@ -16,6 +16,7 @@ import duckdb
 from pydantic import AwareDatetime, BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext
 
@@ -36,6 +37,7 @@ from eye.agents.investigation_tools import (
     _Window,
     _WindowTools,
 )
+from eye.agents.models import build_model, price_table
 from eye.config import DetectiveSettings, LlmSettings, SentinelSettings
 from eye.contracts import (
     Anomaly,
@@ -56,7 +58,6 @@ from eye.contracts import (
 )
 from eye.contracts_v2 import IncidentV2, SkepticResult
 from eye.llm.client import BudgetExceeded, LLMUnavailable
-from eye.llm.models import PRICES, build_model
 from eye.registry.loader import Registry
 from eye.tools.drill import AttributionResult
 from eye.tools.models import (
@@ -822,7 +823,6 @@ class Detective:
                     "max_tokens": self._llm.max_tokens,
                     **(
                         {
-                            "anthropic_effort": "high",
                             "anthropic_thinking": {"type": "adaptive"},
                         }
                         if self._llm.provider == "anthropic"
@@ -835,7 +835,7 @@ class Detective:
                 json.dumps(payload, sort_keys=True),
                 scope=scope or RunScope(run_id=investigation_id, tenant_id="default"),
                 limits=RunLimits(max_steps=self._settings.max_steps),
-                prices=PRICES,
+                prices=price_table(self._llm),
                 budget=budget,
                 deps=_Deps(investigation_id, emit),
                 kill_switch=self._kill_switch,
@@ -866,7 +866,7 @@ class Detective:
                     output_summary=answer.summary[:500],
                 )
             )
-        except (BudgetExceeded, LLMUnavailable) as exc:
+        except (BudgetExceeded, LLMUnavailable, KeyError, UserError) as exc:
             stop = "budget" if isinstance(exc, BudgetExceeded) else "error"
             answer = _Submission(
                 verdict="HYPOTHESIS",

@@ -206,6 +206,9 @@ async def test_detective_delegates_and_reports(
     skeptic_url = "http://skeptic:8230/"
     monkeypatch.setenv("EYE_SKEPTIC_URL", skeptic_url)
     settings = Settings()
+    settings.llm.prices["detective"] = settings.llm.prices[
+        "claude-opus-5-5"
+    ].model_copy(update={"input_per_mtok": 0, "output_per_mtok": 0})
     skeptic = create_app("skeptic", skeptic_url, settings, data=warehouse)
     hypothesis = make_incident_s7().root_cause
     assert hypothesis is not None

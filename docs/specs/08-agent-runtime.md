@@ -29,10 +29,12 @@ calls and an optional kill switch. `gave_up` maps to a HYPOTHESIS/budget stop;
 `needs_input` and `failed` map to HYPOTHESIS/error, retaining the hypothesis board.
 Deterministic evidence checks still downgrade unsupported verdicts.
 
-`eye.llm.models.build_model` constructs the configured Anthropic or OpenAI-compatible
-model and uses `model_chain` to fall back from an agent override to the configured
-default. `PRICES` pins USD per million tokens; unknown response model names fail
-closed. The `detective` model name is reserved for the zero-cost offline gate.
+`eye.agents.models.build_model` constructs the configured Anthropic or OpenAI-compatible
+model and uses `model_chain` with the agent's explicit `llm.fallback_models` list.
+Anthropic effort comes from `llm.effort.detective`. `price_table(settings)` reads
+`llm.prices` in USD per million tokens; unknown response model names fail closed.
+OpenRouter free routes and any routed response IDs need explicit zero-cost prices.
+The offline gate configures the `detective` model name at zero cost.
 Legacy record/replay and process-local `LLMClient` counters do not apply to the
 Detective. Offline tests inject PydanticAI `FunctionModel` rather than credentials.
 
