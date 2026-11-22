@@ -17,12 +17,12 @@ from google.protobuf.json_format import ParseDict
 from google.protobuf.struct_pb2 import Value
 from starlette.applications import Starlette
 
-from eye.warehouse.domain import create_router
 from eye.config import A2aSettings, Settings
 from eye.contracts import SpecialistRequest
 from eye.sim.store import Store
 from eye.specialists.app import create_app
 from eye.specialists.tools import DataClient
+from eye.warehouse.domain import create_router
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "llm"
 DAY = datetime(2026, 11, 27, tzinfo=UTC)

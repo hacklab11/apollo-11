@@ -13,6 +13,7 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check . && uv run ruff format --check .
       - run: uv run lint-imports
+      - run: uv run vulture
       - run: uv run pytest -m "not live" -q
       - run: uv run python scripts/agent_evals.py --report data/eval/offline.json
 

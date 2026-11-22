@@ -7,16 +7,14 @@ import re
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import get_args
 
 import duckdb
 import yaml
 from pydantic import BaseModel, Field
 
-from eye.contracts import Dimension, MetricDef
+from eye.contracts import MetricDef
 
 CONFIG_DIR = Path("config")
-DIMENSIONS: frozenset[str] = frozenset(get_args(Dimension))
 HIDDEN_TABLES = frozenset({"scenario_log"})
 
 _log = logging.getLogger(__name__)

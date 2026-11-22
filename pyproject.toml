@@ -26,6 +26,41 @@ dev = [
     "ruff==0.17.6",
     "import-linter==2.11",
     "pydantic-evals==2.66.0",
+    "vulture==2.16",
+]
+
+[tool.vulture]
+paths = [
+    "packages/agent_runtime/src",
+    "packages/agents/src",
+    "packages/contracts/src",
+    "packages/data/src",
+    "packages/demo/src",
+    "packages/llm/src",
+    "packages/mcp/src",
+    "packages/orchestrator/src",
+    "packages/selleros/selleros",
+    "packages/specialists/src",
+    "sim/src",
+    "scripts/vulture_whitelist.py",
+]
+min_confidence = 60
+ignore_decorators = [
+    "@field_validator",
+    "@model_validator",
+    "@app.get",
+    "@app.post",
+    "@app.put",
+    "@app.delete",
+    "@app.exception_handler",
+    "@app.command",
+    "@app.callback",
+    "@router.get",
+    "@server.tool",
+    "@server.custom_route",
+    "@self.agent.output_validator",
+    "@DBOS.step",
+    "@DBOS.workflow",
 ]
 
 [tool.pytest.ini_options]

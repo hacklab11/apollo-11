@@ -24,7 +24,6 @@ class SimSource:
         self,
         sim: Simulator,
         scenarios: ScenarioManager | None,
-        titles: dict[ScenarioId, str],
     ) -> None:
         self.sim = sim
         self.live_start = sim.settings.sim.start_ts
@@ -32,7 +31,6 @@ class SimSource:
             24 * sim.settings.sim.history_days
         )
         self.scenarios = scenarios
-        self.scenario_titles = titles
 
     @property
     def now(self) -> datetime:
@@ -64,7 +62,7 @@ def open_sim_source(settings: Settings, path: Path = WORLD_DB) -> Iterator[SimSo
             raise
         scenarios = None
     with _world(settings, scenarios, path) as (sim, manager):
-        yield SimSource(sim, manager, scenarios._TITLES if scenarios else {})
+        yield SimSource(sim, manager)
 
 
 @contextmanager

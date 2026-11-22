@@ -48,9 +48,6 @@ def registry() -> dict[str, type[ScenarioPlugin]]:
     return {key: available[key] for key in sorted(enabled)}
 
 
-_TITLES = {"S8": "Price typo: the €9 headphones"}
-
-
 class ScenarioManager:
     def __init__(
         self, sim: Simulator, *, config_path: str | Path = "config/scenarios.yaml"

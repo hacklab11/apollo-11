@@ -43,6 +43,7 @@ Production cannot import `eye.sim`; contracts are leaf models with no workspace 
 uv sync                                   # install
 uv run ruff check . && uv run ruff format --check .
 uv run lint-imports
+uv run vulture
 uv run pytest -m "not live" -q            # must pass before every PR
 uv run eye-sim generate --days 28 --seed 42
 ./scripts/dev.sh                          # run all processes locally

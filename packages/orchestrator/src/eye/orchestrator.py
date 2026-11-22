@@ -394,10 +394,6 @@ class Orchestrator(DBOSConfiguredInstance):
             self.incidents.add_step(step)
             self.emit("trail_step", step)
 
-    async def record_step(self, step: TrailStep, ts: datetime | None = None) -> None:
-        self.incidents.add_step(step)
-        self.emit("trail_step", step, ts)
-
     async def notify_seller_os(self, alert: SellerAlert) -> SellerAlertAck:
         run_id = DBOS.workflow_id
         if run_id is None:
