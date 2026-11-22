@@ -52,17 +52,17 @@ def test_empty_candidates_submit_no_decisions(client: TestClient) -> None:
     assert client.get("/stats").json() == {"calls": {"sentinel": 1}, "errors": []}
 
 
-def test_reporter_returns_narrative_without_tools(client: TestClient) -> None:
+def test_reporter_returns_narrative_output_tool(client: TestClient) -> None:
     body = completion("reporter", {})
-    del body["tools"]
+    body["tools"][0]["function"]["name"] = "final_result_Narrative"
     response = post(client, body)
     assert response.status_code == 200
     message = response.json()["choices"][0]["message"]
     assert (
-        json.loads(message["content"])["title"]
+        json.loads(message["tool_calls"][0]["function"]["arguments"])["title"]
         == "Electronics price-change investigation"
     )
-    assert "tool_calls" not in message
+    assert message["tool_calls"][0]["function"]["name"] == "final_result_Narrative"
 
 
 @pytest.mark.parametrize(

@@ -9,6 +9,7 @@ llm:
   mode: live
   prices:
     sentinel: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    reporter: {input_per_mtok: 0.0, output_per_mtok: 0.0}
   models:
     default: unsupported
     cartographer: cartographer

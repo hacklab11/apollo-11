@@ -172,15 +172,13 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             )
 
     if request.model == "reporter":
-        return {
-            "role": "assistant",
-            "content": json.dumps(
-                {
-                    "title": "Electronics price-change investigation",
-                    "summary": "Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.",
-                }
-            ),
-        }
+        return tool(
+            "final_result_Narrative",
+            {
+                "title": "Electronics price-change investigation",
+                "summary": "Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.",
+            },
+        )
     raise ValueError(f"Unexpected scripted model or turn: {request.model}")
 
 

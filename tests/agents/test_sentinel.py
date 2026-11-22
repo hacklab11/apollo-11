@@ -167,6 +167,7 @@ async def test_kill_surfaces_failure(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.asyncio
 async def test_provider_error_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-test-only")
     calls = []
 
     def broken(*_):

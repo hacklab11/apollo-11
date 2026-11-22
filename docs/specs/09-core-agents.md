@@ -136,7 +136,7 @@ For a Sentinel decision `investigate`:
 - If another open incident has the same final fingerprint → merge: keep the older one, move investigation ids, set `merged_into` on the newer.
 - If two open incidents share a causal chain (`path_exists` between their root nodes, or the same `trigger` hypothesis) → link both in `related_incident_ids`; if one is the trigger of the other, merge the downstream one into the trigger's incident. This produces one S6 story.
 - Status: `INNOCENT` verdict → `innocent`; `DATA_ISSUE` → `deferred`; else `open`.
-- Reporter LLM writes `title` and `summary` from the result (effort `medium`, no tools, structured output). Code fills the numbers; the LLM may not change them.
+- Reporter uses a PydanticAI agent through `agent_runtime.run_agent` (no tools, structured Narrative output, bounded steps/tokens/time/cost). An output validator retries changed numbers once; non-done outcomes use the deterministic template. Configured provider model chains and pinned prices apply; A2A metadata supplies scope and budget, and usage is returned to the service.
 - If `affected_sellers` is not empty and SellerOS is reachable → send `SellerAlert`; store the ack in `notifications`.
 
 ### 5.4 Lifecycle (every tick, code only)

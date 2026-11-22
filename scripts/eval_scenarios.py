@@ -972,7 +972,7 @@ async def run_scenario(name: str, entry: dict, args: argparse.Namespace) -> dict
                         trail=trail,
                     )
                 elif skill == "report":
-                    title, summary = await Reporter().write(payload.investigation)
+                    title, summary = Reporter.template(payload.investigation)
                     result = ReportResult(title=title, summary=summary)
                 elif skill == "map":
                     hours = [

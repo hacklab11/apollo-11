@@ -12,11 +12,12 @@ from anthropic.types.beta import BetaMessage
 from factories import make_anomaly, make_incident_s7
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.models.test import TestModel
 from pydantic_ai.usage import RequestUsage
 
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import PORTS, create_app
-from eye.config import Settings
+from eye.config import LlmPrice, Settings
 from eye.contracts import AddMetricRequest, AddMetricResult, SentinelDecision
 from eye.contracts_v2 import (
     Budget,
@@ -297,6 +298,15 @@ async def test_detective_delegates_and_reports(
     assert child.budget.deadline == metadata.budget.deadline
 
     reporter_url = "http://reporter:8240/"
+    model.pop()
+    reporter_model = TestModel(
+        custom_output_args={
+            "title": "Orders fell",
+            "summary": "No supported explanation yet.",
+        }
+    )
+    monkeypatch.setattr("eye.agents.reporter.build_model", lambda *_: reporter_model)
+    settings.llm.prices["test"] = LlmPrice(input_per_mtok=0.0, output_per_mtok=0.0)
     reporter = create_app("reporter", reporter_url, settings)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=reporter)) as http:
         reported = await send_skill(
