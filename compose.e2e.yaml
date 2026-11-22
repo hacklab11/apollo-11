@@ -24,9 +24,6 @@ services:
       timeout: 3s
       retries: 30
 
-  sim-generate:
-    <<: *offline
-
   sim:
     <<: *offline
     ports: !override ["127.0.0.1::8100"]

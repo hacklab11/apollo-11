@@ -83,8 +83,20 @@ successfully, or Ctrl+C to stop. It does not promise the scripted D6 timeline.
 
 ### Play S8 with Compose
 
-**Live (funded model calls):** inject through the simulator controls above.
-Core's data service still needs the live lake wiring to observe those changes.
+**Live (funded model calls):** set `ANTHROPIC_API_KEY` in `.env` first, then:
+
+```sh
+docker compose up -d --build --wait
+SIM_URL="http://$(docker compose port sim 8100)"
+CORE_URL="http://$(docker compose port eye-core 8000)"
+curl -fsS -X POST "$SIM_URL/scenarios/s8"
+curl -fsS -X POST "$CORE_URL/api/clock/resume"
+curl -fsS "$SIM_URL/status"
+curl -fsS "$CORE_URL/api/incidents"
+# Follow the investigation in the UI at $CORE_URL; clear the scenario when done:
+curl -fsS -X DELETE "$SIM_URL/scenarios/s8"
+docker compose down
+```
 
 **Offline wave gate (no keys, Docker Compose ≥2.24.4):**
 
@@ -100,8 +112,8 @@ docker compose down -v
 unset COMPOSE_FILE COMPOSE_PROJECT_NAME COMPOSE_DISABLE_ENV_FILE
 ```
 
-The S8 gate uses the continuous simulator and Core's `eye-data` path; it requires
-the pending live Parquet lake wiring before it can pass end to end.
+The S8 gate uses the continuous simulator's live Parquet lake through `eye-data`;
+Core has no scenario-injection or in-process simulator override.
 
 The override removes `.env` injection, clears real provider credentials, and points
 all model configuration at a test-only, non-forwarding OpenAI-compatible server in
