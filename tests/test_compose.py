@@ -3,6 +3,17 @@ from pathlib import Path
 import yaml
 
 
+def test_compose_retains_service_specific_environment(repo_root: Path) -> None:
+    services = yaml.safe_load((repo_root / "compose.yaml").read_text())["services"]
+    seller = services["selleros"]["environment"]
+    for suffix in ("PROVIDER", "BASE_URL", "MODEL", "API_KEY_ENV"):
+        key = f"SELLEROS_{suffix}"
+        assert key in seller
+        assert all(key not in service.get("environment", {}) for name, service in services.items() if name != "selleros")
+    assert "SIM_SECONDS_PER_SIM_HOUR" in services["sim"]["environment"]
+    assert "EYE_AUTH_CONFIG" in services["auth"]["environment"]
+
+
 def test_compose_auth_credentials_are_isolated(repo_root: Path) -> None:
     compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
     services = compose["services"]

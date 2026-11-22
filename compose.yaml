@@ -59,6 +59,7 @@ services:
       EYE_BIND_HOST: 0.0.0.0
       EYE_AUTH_URL: http://auth:8500
       EYE_AUTH_KEY_PATH: /app/data/auth/key.pem
+      EYE_AUTH_CONFIG: ${EYE_AUTH_CONFIG:-config/auth.yaml}
       AUTHLIB_INSECURE_TRANSPORT: "1"
       EYE_AUTH_EYE_CORE_SECRET: ${EYE_AUTH_EYE_CORE_SECRET:-}
       EYE_AUTH_SENTINEL_SECRET: ${EYE_AUTH_SENTINEL_SECRET:-}
@@ -121,6 +122,7 @@ services:
       OTEL_SERVICE_NAME: sim
       SIM_HOST: 0.0.0.0
       SIM_PORT: "8100"
+      SIM_SECONDS_PER_SIM_HOUR:
       SIM_WORLD_DB: /app/data/world.duckdb
       SIM_LAKE_DIR: /app/data/lake
       EYE_AUTH_CLIENT_ID: sim
@@ -251,6 +253,7 @@ services:
       SELLEROS_PROVIDER: ${SELLEROS_PROVIDER:-anthropic}
       SELLEROS_BASE_URL: ${SELLEROS_BASE_URL:-https://openrouter.ai/api/v1}
       SELLEROS_MODEL: ${SELLEROS_MODEL:-}
+      SELLEROS_API_KEY_ENV:
     depends_on:
       auth:
         condition: service_healthy
