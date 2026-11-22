@@ -1,9 +1,10 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, CheckCheck, GitBranch, Inbox } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { IncidentDetail } from "./components/IncidentDetail";
-import { get } from "./lib/api";
+import { Button } from "./components/ui/button";
+import { get, setPaused } from "./lib/api";
 import { group, time } from "./lib/incidents";
 
 const CausalGraph = lazy(() =>
@@ -20,6 +21,12 @@ export default function App() {
     queryKey: ["status"],
     queryFn: () => get("/api/ui/status"),
     refetchInterval: 5000,
+  });
+  const monitoring = useMutation({
+    mutationFn: setPaused,
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["status"] });
+    },
   });
   const incidents = useQuery({
     queryKey: ["incidents"],
@@ -109,6 +116,19 @@ export default function App() {
             "Connecting to the system…"
           )}
         </div>
+        {status.data && (
+          <Button
+            variant="outline"
+            disabled={monitoring.isPending || status.isError}
+            onClick={() => monitoring.mutate(!status.data.paused)}
+          >
+            {monitoring.isPending
+              ? "Updating…"
+              : status.data.paused
+                ? "Resume monitoring"
+                : "Pause monitoring"}
+          </Button>
+        )}
         <TabsList aria-label="Workspace">
           <TabsTrigger value="incidents">
             <Inbox size={15} />
@@ -120,6 +140,11 @@ export default function App() {
           </TabsTrigger>
         </TabsList>
       </header>
+      {monitoring.isError && (
+        <p role="alert" className="error-banner">
+          {monitoring.error.message}
+        </p>
+      )}
       {(status.isError || incidents.isError) && (
         <p role="alert" className="error-banner">
           Core not reachable. Showing the last available data; retrying

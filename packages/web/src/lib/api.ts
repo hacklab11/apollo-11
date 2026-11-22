@@ -45,6 +45,12 @@ export function approve(id: string) {
   });
 }
 
+export function setPaused(paused: boolean) {
+  return request(`/api/clock/${paused ? "pause" : "resume"}`, {
+    method: "POST",
+  });
+}
+
 export function closeIncident(incident: Incident, note: string) {
   const body: components["schemas"]["IncidentCloseRequest"] = {
     tenant_id: incident.tenant_id,
