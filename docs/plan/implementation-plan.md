@@ -98,6 +98,18 @@ uv run python scripts/eval_scenarios.py --scenario D6 --mode live
 
 Never cut: S8, I3 and run D6 (the live demo), S1–S5, S7, I1, S6 in some form, `add_metric`, SellerOS over A2A, the MCP server, the trail in the UI.
 
+## Wave 6 — step 18: agent eval gate
+
+`uv run python scripts/agent_evals.py` is the fast offline pydantic-evals gate
+for all production PydanticAI agents and configured primary/fallback routes.
+S8's finite scripted submissions and typed data reads are Dataset files in
+`tests/evals/cases/`; captured regressions are discovered recursively. Every
+agent/model must score 1.000. Reports pin prompt/tool-schema hashes and versions.
+`nightly-eval.yml` runs the explicit `--live` variant through OpenRouter with a
+shared 30-request allowance, 1,024 output tokens per call, cumulative token
+limits, and SDK retries disabled. See the root README for one-line commands.
+This complements, rather than supersedes, T23's whole-world scenario harness.
+
 ## 7. Risks
 
 | Risk | Sign | Action |

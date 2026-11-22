@@ -13,6 +13,7 @@ import duckdb
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models import Model
 
 from agent_runtime import (
     Budget,
@@ -103,8 +104,10 @@ class Sentinel:
         data: DataQueries | None = None,
         kill_switch: KillSwitch | None = None,
         prices: PriceTable | None = None,
+        model: Model | None = None,
     ) -> None:
         self._settings = settings or SentinelSettings()
+        self._model = model
         if data is None:
             assert con is not None and registry is not None
             data = LocalQueries(con, registry, graph=graph, settings=self._settings)
@@ -132,7 +135,7 @@ class Sentinel:
         self, run_id: str, on_step: Callable[[TrailStep], Awaitable[None]]
     ) -> Agent:
         agent = Agent(
-            build_model(self._llm, "sentinel"),
+            self._model or build_model(self._llm, "sentinel"),
             instructions=_PROMPT.read_text(),
             output_type=[
                 ToolOutput(SentinelSubmission, name="submit"),

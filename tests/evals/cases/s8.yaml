@@ -1,0 +1,180 @@
+cases:
+  - name: s8-sentinel-electronics
+    metadata:
+      source: tests/e2e/provider.py sentinel scripted response
+      scenario: S8
+    inputs:
+      agent: sentinel
+      payload:
+        ts: '2026-11-27T12:00:00Z'
+        min_completeness: 0.9
+        open_incidents: []
+        candidates:
+          - completeness: 1.0
+            anomaly: &entry
+              id: s8-electronics-aov
+              ts: '2026-11-27T12:00:00Z'
+              metric: aov
+              segment: {category: electronics}
+              kind: point
+              actual: 50.0
+              expected: 100.0
+              delta: -50.0
+              delta_pct: -0.5
+              z: -8.0
+              window_hours: 1
+              impact_eur_per_hour: 500.0
+              completeness: 1.0
+              priority: 4000.0
+      responses:
+        - decisions:
+            - anomaly: *entry
+              action: investigate
+              reason: Scripted triage of measured candidates during the S8 integration schedule.
+      reads: &reads
+        anomalies: {summary: '1 anomaly', anomalies: [*entry]}
+        divergence: {summary: '0 divergent segments', anomalies: []}
+        freshness: {summary: 'Completeness 1.0; freshness ok.', points: [], late_hours: [], verdict: ok}
+        events: {summary: '0 events', events: []}
+        baseline: {summary: 'AOV actual 50, expected 100; delta -50.', points: [], actual: 50.0, expected: 100.0, delta: -50.0}
+        first-change: {summary: '0 changed metrics', changes: {}}
+    expected_output:
+      decisions:
+        - anomaly: *entry
+          action: investigate
+          reason: Scripted triage of measured candidates during the S8 integration schedule.
+  - name: s8-sentinel-quiet
+    metadata: {source: S8 empty-candidate boundary, scenario: S8}
+    inputs:
+      agent: sentinel
+      payload: {ts: '2026-11-27T12:00:00Z', candidates: [], open_incidents: []}
+      responses: [{decisions: []}]
+      reads:
+        anomalies: {summary: '0 anomalies', anomalies: []}
+        divergence: {summary: '0 divergent segments', anomalies: []}
+    expected_output: {decisions: []}
+  - name: s8-detective-price-change
+    metadata:
+      source: tests/e2e/provider.py detective final response
+      scenario: S8
+    inputs:
+      agent: detective
+      reads: *reads
+      payload:
+        entry: *entry
+        evidence:
+          - {source: baseline_compare, summary: 'AOV actual 50, expected 100; delta -50.'}
+          - {source: check_freshness, summary: 'Completeness 1.0; freshness ok.'}
+          - {source: selleros, summary: 'Manual price change on E01 was likely_error.'}
+          - {source: skeptic, summary: 'not_innocent; explained_share 0.'}
+      responses:
+        - {tool: baseline_compare, arguments: {metric: aov, segment: {category: electronics}}}
+        - {tool: check_freshness, arguments: {metric: aov, segment: {category: electronics}}}
+        - verdict: CONFIRMED
+          summary: Scripted price-change investigation completed after deterministic tools and Skeptic review.
+          root_cause: &root
+            id: scripted-price-change
+            statement: Scripted electronics price-change hypothesis for the integration gate.
+            cause_type: price_change
+            root_node: aov
+            segment: {category: electronics}
+            first_change_ts: '2026-11-27T12:00:00Z'
+            explained_share: 1.0
+            status: supported
+            evidence_for:
+              - {group: data, source: baseline_compare, summary: 'AOV actual 50, expected 100; delta -50.', step_id: ref-1}
+              - {group: freshness, source: check_freshness, summary: 'Completeness 1.0; freshness ok.', step_id: ref-2}
+            evidence_against: []
+          hypotheses: [*root]
+          contributions: []
+          open_questions: []
+          affected_sellers: [S-1]
+          suggested_actions: [Revert manual prices.]
+    expected_output: {verdict: CONFIRMED, affected_sellers: [S-1]}
+  - name: s8-skeptic-challenge
+    metadata: {source: tests/e2e/provider.py skeptic scripted response, scenario: S8}
+    inputs:
+      agent: skeptic
+      reads: *reads
+      payload:
+        entry: *entry
+        hypothesis: *root
+        evidence:
+          - {source: baseline_compare, summary: 'AOV actual 50, expected 100; delta -50.'}
+          - {source: check_freshness, summary: 'Completeness 1.0; freshness ok.'}
+      responses:
+        - {tool: baseline_compare, arguments: {metric: aov, segment: {category: electronics}}}
+        - {tool: check_freshness, arguments: {metric: aov, segment: {category: electronics}}}
+        - verdict: not_innocent
+          explained_share: 0
+          reasons: [Scripted challenge after baseline and freshness tools.]
+          evidence: []
+    expected_output: {verdict: not_innocent, explained_share: 0.0}
+  - name: s8-reporter-grounded
+    metadata: {source: tests/e2e/provider.py reporter scripted response, scenario: S8}
+    inputs:
+      agent: reporter
+      payload:
+        investigation_id: eval-s8
+        entry: *entry
+        verdict: CONFIRMED
+        root_cause: *root
+        summary: Price-change signal investigated with baseline, freshness and Skeptic review.
+        hypotheses: [*root]
+        contributions: []
+        open_questions: []
+        suggested_actions: [Revert manual prices.]
+        steps_used: 3
+        stop_reason: confirmed
+      responses:
+        - title: Electronics price-change investigation
+          summary: 'Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.'
+    expected_output: {title: Electronics price-change investigation}
+  - name: s8-cartographer-no-new-claims
+    metadata: {source: tests/e2e/provider.py cartographer placement response, scenario: S8}
+    inputs:
+      agent: cartographer
+      payload:
+        metric: {name: fee_per_order, unit: eur}
+        evidence: []
+      responses:
+        - edges: []
+          notes: Scripted placement; no causal claims.
+          unit: eur
+    expected_output: {edges: [], unit: eur}
+  - name: s8-selleros-price-intent
+    metadata: {source: tests/e2e/provider.py SellerOS scripted response, scenario: S8}
+    inputs:
+      agent: selleros
+      payload:
+        investigation_id: eval-s8
+        question: Were manual price changes for S-1 intended?
+        metric: aov
+        segment: {category: electronics}
+        window_start_ts: '2026-11-27T12:00:00Z'
+        window_end_ts: '2026-11-27T13:00:00Z'
+        baseline_start_ts: '2026-11-20T12:00:00Z'
+        baseline_end_ts: '2026-11-20T13:00:00Z'
+        context: Electronics average order value fell after a manual price change.
+      snapshot:
+        generated_for_seed: 42
+        sellers:
+          - seller_id: S-1
+            customer_of_selleros: true
+            repricer: {mode: follow, floor: 50, status: active}
+            skus:
+              - {sku: E01, unit_cost: 50, stock_policy_days: 7, supplier_eta_days: 2}
+            price_history:
+              - {ts: '2026-11-27T11:00:00Z', sku: E01, price: 100, source: repricer}
+              - {ts: '2026-11-27T12:00:00Z', sku: E01, price: 10, source: manual}
+      responses:
+        - {tool: price_intent_check, arguments: {selection: {}}}
+        - agent: selleros
+          answered: true
+          findings:
+            - claim: Manual price change on E01 was likely_error.
+              numbers: {seller_id: S-1, sku: E01, ts: '2026-11-27T12:00:00Z', source: manual, old: 100, new: 10, unit_cost: 50, verdict: likely_error}
+              confidence: 1
+              supports: [price_change]
+          data_used: [price_intent_check]
+    expected_output: {agent: selleros, answered: true, data_used: [price_intent_check]}

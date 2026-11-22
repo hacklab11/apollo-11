@@ -1,0 +1,33 @@
+name: Nightly live agent eval
+
+on:
+  schedule:
+    - cron: '21 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-live-eval
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.13'
+      - run: uv sync --locked
+      - name: Live per-model eval (30 requests maximum across the entire run)
+        run: uv run python scripts/agent_evals.py --live --report data/eval/nightly.json
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: nightly-live-eval
+          path: data/eval/nightly.json
