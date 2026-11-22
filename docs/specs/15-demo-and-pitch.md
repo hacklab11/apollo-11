@@ -1,6 +1,6 @@
 # 15 Demo and pitch
 
-The rehearsal below predates Wave 2. Core, MCP and the Observatory no longer expose scenario controls; the legacy `scripts/demo_run.py` needs a separate migration. Use the [simulator service](../../sim/README.md) for controls. Its S8 plugin starts the coupon campaign and later the typo; there is no independent I3 trigger. The offline D6 oracle configures a 10-hour typo delay and triggers S8 once at midnight.
+The rehearsal below predates Wave 2. Core, MCP and the Observatory no longer expose scenario controls; use `uv run demo trigger s8` against the [simulator service](../../sim/README.md). Its S8 plugin starts the coupon campaign and later the typo; there is no independent I3 trigger. The offline D6 oracle configures a 10-hour typo delay and triggers S8 once at midnight.
 
 Owner: P3. Tasks: T24 (demo runner script, dev), T25 (pitch assets, P3).
 Judging: 20% demo. The demo must show: a fault, an innocent change, a new metric, the autonomous response, and an easy-to-follow graph, decisions, evidence, and report.
@@ -61,7 +61,10 @@ The five headphones and €99 → €9 are narrative labels. The simulator uses 
 
 S1–S7, the MCP client, the chat and A2A details are not in the live script. Show them in Q&A if asked. S6 stays the deep example on slide 5: totals can hide a hurt group.
 
-`scripts/demo_run.py --script demo` (T24) drives the same timeline automatically for the backup video and for rehearsals.
+For continuous-stack rehearsals, use `uv run demo trigger s8`, `uv run demo status`,
+and `uv run demo narrate`. These commands observe the already-running simulation;
+they do not set up the historical D6 clock/coupon pre-state, add metrics, or reset
+the world. See the README for service prerequisites, URL options and exit conditions.
 
 ### 1.5 What the build must support
 
