@@ -1,6 +1,6 @@
 # 06 Metric graph and Cartographer
 
-Code: `src/eye/graph/`, `src/eye/agents/cartographer.py`. Tasks: T09 (graph), T10 (Cartographer).
+Code: `packages/data/src/eye/graph/`, `packages/agents/src/eye/agents/cartographer.py`. Tasks: T09 (graph), T10 (Cartographer).
 Judging weight: 40% (graph + automatic extension).
 
 ## 1. Graph store (`graph/store.py`)

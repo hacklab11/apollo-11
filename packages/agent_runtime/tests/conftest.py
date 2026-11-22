@@ -2,11 +2,12 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
-from agent_runtime import ModelPrice, PriceTable, RunScope
 from pydantic import BaseModel
 from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from agent_runtime import ModelPrice, PriceTable, RunScope
 
 models.ALLOW_MODEL_REQUESTS = False
 

@@ -1,0 +1,15 @@
+[project]
+name = "eye-contracts"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic==2.14.4",
+    "pyyaml==6.0.4",
+]
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eye"]

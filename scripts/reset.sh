@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-rm -rf -- data external/selleros/data
+rm -rf -- data packages/selleros/data

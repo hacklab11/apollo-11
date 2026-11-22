@@ -1,0 +1,26 @@
+[project]
+name = "eye-mcp"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "eye-contracts",
+    "eye-orchestrator",
+    "httpx==0.28.1",
+    "mcp==2.3.0",
+    "pydantic==2.14.4",
+    "uvicorn==0.54.0",
+]
+
+[project.scripts]
+eye-mcp = "eye.mcp_server:main"
+
+[build-system]
+requires = ["hatchling==1.33.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/eye"]
+
+[tool.uv.sources]
+eye-contracts = { workspace = true }
+eye-orchestrator = { workspace = true }

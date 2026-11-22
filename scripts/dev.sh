@@ -39,6 +39,6 @@ start() {
 
 start core uv run eye-core
 start specialists uv run eye-specialists
-start selleros uv run --project external/selleros selleros
+start selleros uv run --project packages/selleros selleros
 start mcp uv run eye-mcp
 wait -n "${pids[@]}"

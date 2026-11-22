@@ -1,7 +1,7 @@
 # 03 Simulator
 
 Goal: a seeded, hourly marketplace that behaves like a real one. Faults come from switches (`04-scenarios.md`). S6 comes out of seller rules, not from a drawn curve.
-Code: `src/eye/sim/`. Tasks: T01, T02, T03 (baseline), T04, T05 (scenarios).
+Code: `sim/src/eye/sim/`. Tasks: T01, T02, T03 (baseline), T04, T05 (scenarios).
 
 All numbers below are starting values. Tasks may tune them, but must keep the baseline tests (§9) green and must write the final values in `config/scenarios.yaml` or in constants with a comment.
 

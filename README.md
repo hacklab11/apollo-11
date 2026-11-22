@@ -30,7 +30,7 @@ llm:
     default: nvidia/nemotron-3.5-lightning:free
 ```
 
-SellerOS does not read Core's settings. Before starting the stack, set its [provider and model](external/selleros/README.md) in the same shell:
+SellerOS does not read Core's settings. Before starting the stack, set its [provider and model](packages/selleros/README.md) in the same shell:
 
 ```sh
 export SELLEROS_PROVIDER=openai_compatible
@@ -75,6 +75,12 @@ To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your 
 ### Docker
 
 Once [the deployment card](docs/tasks/T26-deployment.md) lands, use Docker Compose. Populate `.env` from `.env.example` with the API key and demo credentials, then run `docker compose up --build -d` and open `http://localhost:8080/`. See the [deployment guide](docs/specs/16-deployment.md#5-steps-to-deploy-for-the-team) for the password-protected tunnel and Codespaces backup.
+
+## Workspace layout
+
+The implicit `eye` namespace is split across `packages/{contracts,data,llm,agents,orchestrator,specialists,mcp}/src/eye` and `sim/src/eye/sim`. SellerOS lives independently in `packages/selleros`. The reusable `agent_runtime` package lives in `packages/agent_runtime/src/agent_runtime` and imports neither Eye nor SellerOS. Eye tests and scripts stay at the root; the LLM member owns shared prompt resources.
+
+`uv sync --locked` installs every member. From the repository root run `uv run eye-core`, `uv run eye-specialists`, `uv run eye-mcp`, or `uv run selleros`; `uv run eye-sim --help` lists simulator commands. `uv run lint-imports` enforces import boundaries; `uv run pytest -m "not live" -q` runs Eye, SellerOS, and agent runtime tests. Runtime tests use scripted models with real model requests disabled.
 
 ## Architecture
 

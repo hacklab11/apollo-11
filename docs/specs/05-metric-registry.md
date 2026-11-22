@@ -1,6 +1,6 @@
 # 05 Metric registry
 
-Files: `config/metrics.yaml`, `config/identities.yaml`, `config/causal_seeds.yaml`. Loader and engine: `src/eye/registry/`. Tasks: T06 (registry + engine), T09 (graph uses it).
+Files: `config/metrics.yaml`, `config/identities.yaml`, `config/causal_seeds.yaml`. Loader and engine: `packages/data/src/eye/registry/`. Tasks: T06 (registry + engine), T09 (graph uses it).
 P3 writes the plain-English `description` of every metric. Dev 1 writes the SQL.
 
 ## 1. SQL contract for `kind: sql`

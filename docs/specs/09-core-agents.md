@@ -1,6 +1,6 @@
 # 09 Core agents: Sentinel, Lead Detective, Skeptic, Reporter
 
-Code: `src/eye/agents/`, `src/eye/orchestrator.py`, `src/eye/incidents/store.py`. Tasks: T12 (incidents + Reporter), T13 (Sentinel), T14 (Skeptic + Detective), T18 (orchestrator).
+Code: `packages/agents/src/eye/agents/`, `packages/orchestrator/src/eye/orchestrator.py`, `packages/orchestrator/src/eye/incidents/store.py`. Tasks: T12 (incidents + Reporter), T13 (Sentinel), T14 (Skeptic + Detective), T18 (orchestrator).
 Judging weight: 40% (autonomous monitoring and investigation).
 Cartographer: `06-graph-and-cartographer.md`.
 

@@ -1,9 +1,12 @@
+import pytest
+
 from agent_runtime import InMemoryKillSwitch, RunScope
 
 SCOPE = RunScope(run_id="run-1", tenant_id="tenant-a")
 OTHER = RunScope(run_id="run-2", tenant_id="tenant-b")
 
 
+@pytest.mark.asyncio
 async def test_run_switch_stops_only_that_run() -> None:
     switch = InMemoryKillSwitch()
     switch.kill_run("run-1", "operator")
@@ -11,6 +14,7 @@ async def test_run_switch_stops_only_that_run() -> None:
     assert await switch.reason(OTHER) is None
 
 
+@pytest.mark.asyncio
 async def test_tenant_switch_stops_only_that_tenant() -> None:
     switch = InMemoryKillSwitch()
     switch.kill_tenant("tenant-a", "abuse")
@@ -18,6 +22,7 @@ async def test_tenant_switch_stops_only_that_tenant() -> None:
     assert await switch.reason(OTHER) is None
 
 
+@pytest.mark.asyncio
 async def test_system_switch_stops_everything_and_clears() -> None:
     switch = InMemoryKillSwitch()
     switch.kill_system("incident")

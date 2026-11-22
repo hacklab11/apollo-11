@@ -2,6 +2,8 @@ from collections.abc import AsyncIterator
 
 import httpx
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+
 from agent_runtime import (
     IDEMPOTENCY_KEY_HEADER,
     CircuitBreaker,
@@ -9,7 +11,6 @@ from agent_runtime import (
     RetryPolicy,
     resilient_client,
 )
-from opentelemetry.sdk.trace import TracerProvider
 
 FAST = RetryPolicy(attempts=3, initial_backoff_s=0, max_backoff_s=0)
 
@@ -22,6 +23,7 @@ def flaky(statuses: list[int], seen: list[httpx.Request]) -> httpx.MockTransport
     return httpx.MockTransport(handler)
 
 
+@pytest.mark.asyncio
 async def test_retries_retryable_status_then_succeeds() -> None:
     seen: list[httpx.Request] = []
     async with resilient_client(
@@ -32,6 +34,7 @@ async def test_retries_retryable_status_then_succeeds() -> None:
     assert len(seen) == 3
 
 
+@pytest.mark.asyncio
 async def test_returns_last_response_when_retries_run_out() -> None:
     seen: list[httpx.Request] = []
     async with resilient_client(policy=FAST, transport=flaky([503], seen)) as client:
@@ -40,6 +43,7 @@ async def test_returns_last_response_when_retries_run_out() -> None:
     assert len(seen) == 3
 
 
+@pytest.mark.asyncio
 async def test_does_not_retry_client_errors() -> None:
     seen: list[httpx.Request] = []
     async with resilient_client(policy=FAST, transport=flaky([404], seen)) as client:
@@ -48,6 +52,7 @@ async def test_does_not_retry_client_errors() -> None:
     assert len(seen) == 1
 
 
+@pytest.mark.asyncio
 async def test_retries_transport_errors() -> None:
     attempts = 0
 
@@ -65,6 +70,7 @@ async def test_retries_transport_errors() -> None:
     assert attempts == 2
 
 
+@pytest.mark.asyncio
 async def test_open_breaker_fails_fast_without_calling_host() -> None:
     seen: list[httpx.Request] = []
     single = RetryPolicy(attempts=1)
@@ -110,6 +116,7 @@ def test_failed_probe_reopens_breaker() -> None:
     assert breaker.state == "open"
 
 
+@pytest.mark.asyncio
 async def test_injects_traceparent_on_every_request() -> None:
     seen: list[httpx.Request] = []
     tracer = TracerProvider().get_tracer("test")
@@ -120,6 +127,7 @@ async def test_injects_traceparent_on_every_request() -> None:
     assert seen[0].headers["traceparent"].split("-")[1] == trace_id
 
 
+@pytest.mark.asyncio
 async def test_does_not_retry_non_idempotent_post() -> None:
     seen: list[httpx.Request] = []
     async with resilient_client(
@@ -130,6 +138,7 @@ async def test_does_not_retry_non_idempotent_post() -> None:
     assert len(seen) == 1
 
 
+@pytest.mark.asyncio
 async def test_retries_post_with_idempotency_key() -> None:
     seen: list[httpx.Request] = []
     async with resilient_client(
@@ -144,6 +153,7 @@ async def test_retries_post_with_idempotency_key() -> None:
     assert [r.content for r in seen] == [b'{"order":1}', b'{"order":1}']
 
 
+@pytest.mark.asyncio
 async def test_does_not_retry_streamed_upload() -> None:
     seen: list[httpx.Request] = []
 
