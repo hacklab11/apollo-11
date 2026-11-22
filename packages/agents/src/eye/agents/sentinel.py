@@ -4,14 +4,26 @@ import asyncio
 import json
 from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from functools import partial
+from datetime import UTC, datetime, timedelta
 from importlib.resources import files
 from typing import Protocol, cast
+from uuid import uuid4
 
 import duckdb
 from pydantic import BaseModel, Field
+from pydantic_ai import Agent, ToolOutput
+from pydantic_ai.messages import ModelResponse, ToolCallPart
 
+from agent_runtime import (
+    KillSwitch,
+    ModelPrice,
+    PriceTable,
+    RunLimits,
+    RunScope,
+    end_state_outputs,
+    run_agent,
+)
+from eye.agents.models import configured_model
 from eye.config import LlmSettings, SentinelSettings
 from eye.contracts import (
     Anomaly,
@@ -22,7 +34,6 @@ from eye.contracts import (
     TrailStep,
 )
 from eye.contracts_v2 import IncidentV2
-from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareInput,
@@ -88,6 +99,8 @@ class Sentinel:
         llm: LlmSettings | None = None,
         graph: GraphSource | None = None,
         data: DataQueries | None = None,
+        kill_switch: KillSwitch | None = None,
+        prices: PriceTable | None = None,
     ) -> None:
         self._settings = settings or SentinelSettings()
         if data is None:
@@ -95,6 +108,13 @@ class Sentinel:
             data = LocalQueries(con, registry, graph=graph, settings=self._settings)
         self._data = data
         self._llm = llm or LlmSettings()
+        self._kill_switch = kill_switch
+        self._prices = prices or PriceTable(
+            prices={
+                name: ModelPrice(input_per_mtok=5, output_per_mtok=25)
+                for name in self._llm.models.values()
+            }
+        )
         self._graph = graph
         self._watch_tick: datetime | None = None
         self._watched: set[_WatchKey] = set()
@@ -111,45 +131,73 @@ class Sentinel:
             summary=f"Graph: {len(view.nodes)} nodes and {len(view.edges)} edges.",
         )
 
-    def _spec(self) -> AgentSpec:
-        spec = AgentSpec(
-            name="sentinel",
-            system_prompt_file=str(_PROMPT),
-            tools=[
-                ToolSpec(
-                    "baseline_compare",
-                    "Compare actual and expected metric values for an hourly window.",
-                    BaselineCompareInput,
-                    partial(self._data.read, ops.BASELINE),
-                ),
-                ToolSpec(
-                    "check_freshness",
-                    "Check pipeline completeness for a metric and segment or a list of tables.",
-                    CheckFreshnessInput,
-                    partial(self._data.read, ops.FRESHNESS),
-                ),
-                ToolSpec(
-                    "list_events",
-                    "Read change-log and external status events in a time window.",
-                    ListEventsInput,
-                    partial(self._data.read, ops.EVENTS),
-                ),
-                ToolSpec(
-                    "get_graph",
-                    "Read the whole metric graph or a neighborhood by node and depth.",
-                    _GetGraphInput,
-                    self._get_graph,
-                ),
+    def _agent(
+        self, run_id: str, on_step: Callable[[TrailStep], Awaitable[None]]
+    ) -> Agent:
+        agent = Agent(
+            configured_model(self._llm, "sentinel"),
+            instructions=_PROMPT.read_text(),
+            output_type=[
+                ToolOutput(SentinelSubmission, name="submit"),
+                *end_state_outputs(SentinelSubmission)[1:],
             ],
-            submit_model=SentinelSubmission,
-            effort="low",
-            model=self._llm.model_for("sentinel"),
-            max_steps=4,
-            max_tokens=self._llm.max_tokens,
+            model_settings={"max_tokens": self._llm.max_tokens},
         )
-        if not isinstance(self._data, LocalQueries):
-            spec.tools = [tool.offloaded() for tool in spec.tools]
-        return spec
+        n = 0
+
+        async def record(name: str, args: BaseModel, output: BaseModel) -> None:
+            nonlocal n
+            n += 1
+            await on_step(
+                TrailStep(
+                    id=str(uuid4()),
+                    investigation_id=run_id,
+                    n=n,
+                    real_ts=datetime.now(UTC),
+                    actor="sentinel",
+                    action="tool_call",
+                    tool=name,
+                    input=args.model_dump(mode="json"),
+                    output=output.model_dump(mode="json"),
+                    output_summary=getattr(
+                        output, "summary", "Sentinel submitted decisions."
+                    ),
+                )
+            )
+
+        async def read(
+            name: str, operation: ops.Operation, args: BaseModel
+        ) -> BaseModel:
+            if isinstance(self._data, LocalQueries):
+                output = self._data.read(operation, args)
+            else:
+                output = await asyncio.to_thread(self._data.read, operation, args)
+            await record(name, args, output)
+            return output
+
+        @agent.tool_plain
+        async def baseline_compare(args: BaselineCompareInput) -> BaseModel:
+            """Compare actual and expected metric values for an hourly window."""
+            return await read("baseline_compare", ops.BASELINE, args)
+
+        @agent.tool_plain
+        async def check_freshness(args: CheckFreshnessInput) -> BaseModel:
+            """Check pipeline completeness for metrics or tables."""
+            return await read("check_freshness", ops.FRESHNESS, args)
+
+        @agent.tool_plain
+        async def list_events(args: ListEventsInput) -> BaseModel:
+            """Read change-log and external status events in a time window."""
+            return await read("list_events", ops.EVENTS, args)
+
+        @agent.tool_plain
+        async def get_graph(args: _GetGraphInput) -> _GraphOutput:
+            """Read the metric graph or a neighborhood."""
+            output = await asyncio.to_thread(self._get_graph, args)
+            await record("get_graph", args, output)
+            return output
+
+        return agent
 
     def _candidates(self, ts: datetime) -> list[_Candidate]:
         point = self._data.read(ops.SCAN, ScanAnomaliesInput(ts=ts))
@@ -276,12 +324,57 @@ class Sentinel:
             self._watch_tick = ts
             return []
 
-        submitted = cast(
-            SentinelSubmission,
-            await run_agent(
-                self._spec(), content, f"sentinel:{ts.isoformat()}", on_step
+        run_id = f"sentinel:{ts.isoformat()}"
+        outcome = await run_agent(
+            self._agent(run_id, on_step),
+            content,
+            scope=RunScope(run_id=run_id, tenant_id="eye"),
+            limits=RunLimits(
+                max_steps=5,
+                max_tool_calls=16,
+                max_tokens=64000,
+                max_cost_usd=1,
+                max_wall_clock_s=60,
             ),
+            prices=self._prices,
+            kill_switch=self._kill_switch,
         )
+        if outcome.result.status != "done":
+            raise RuntimeError(
+                f"Sentinel {outcome.result.status}: {outcome.result.reason or outcome.result.question}"
+            )
+        submitted = cast(SentinelSubmission, outcome.result.result)
+        await on_step(
+            TrailStep(
+                id=str(uuid4()),
+                investigation_id=run_id,
+                n=0,
+                real_ts=datetime.now(UTC),
+                actor="sentinel",
+                action="llm_call",
+                output_summary=f"Model finished after {outcome.result.usage.requests} requests.",
+                tokens_in=outcome.result.usage.input_tokens,
+                tokens_out=outcome.result.usage.output_tokens,
+            )
+        )
+        for message in outcome.messages:
+            if isinstance(message, ModelResponse):
+                for part in message.parts:
+                    if isinstance(part, ToolCallPart) and part.tool_name == "submit":
+                        await on_step(
+                            TrailStep(
+                                id=str(uuid4()),
+                                investigation_id=run_id,
+                                n=outcome.result.usage.tool_calls + 1,
+                                real_ts=datetime.now(UTC),
+                                actor="sentinel",
+                                action="tool_call",
+                                tool="submit",
+                                input=part.args_as_dict(),
+                                output=submitted.model_dump(mode="json"),
+                                output_summary=f"Submitted {len(submitted.decisions)} decisions.",
+                            )
+                        )
         by_id: dict[str, SentinelDecision] = {}
         for decision in submitted.decisions:
             by_id.setdefault(decision.anomaly.id, decision)

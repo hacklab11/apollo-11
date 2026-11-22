@@ -10,6 +10,9 @@ import httpx
 import pytest
 from anthropic.types.beta import BetaMessage
 from factories import make_anomaly, make_incident_s7
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RequestUsage
 
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import PORTS, create_app
@@ -67,6 +70,19 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
             )
 
     monkeypatch.setattr("eye.llm.client._client", Scripted())
+
+    def sentinel_response(messages, info):
+        content = turns.popleft()
+        return ModelResponse(
+            parts=[ToolCallPart(item["name"], item["input"]) for item in content],
+            model_name="claude-opus-5-5",
+            usage=RequestUsage(input_tokens=7, output_tokens=5),
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.sentinel.configured_model",
+        lambda *_: FunctionModel(sentinel_response, model_name="claude-opus-5-5"),
+    )
     return turns
 
 
