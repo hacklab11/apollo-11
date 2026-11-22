@@ -56,6 +56,8 @@ def test_agents_have_only_internal_networks(repo_root: Path) -> None:
         service = compose["services"][name]
         assert all(compose["networks"][n]["internal"] for n in service["networks"])
         assert "ports" not in service
+        assert service["environment"]["EYE_CORE_URL"] == "http://eye-core:8000"
+        assert service["environment"]["EYE_MCP_URL"] == "http://eye-mcp:8100/mcp"
         for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
             assert service["environment"][key] == "http://egress-proxy:3128"
         assert "scripted-model" not in service["environment"]["NO_PROXY"]

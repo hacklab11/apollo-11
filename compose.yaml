@@ -25,13 +25,12 @@ x-agent: &agent
   <<: *service
   environment: &agent-environment
     <<: *environment
-    EYE_BIND_HOST: 0.0.0.0
     EYE_DATA_URL: http://eye-data:8150
     HTTP_PROXY: http://egress-proxy:3128
     HTTPS_PROXY: http://egress-proxy:3128
     http_proxy: http://egress-proxy:3128
     https_proxy: http://egress-proxy:3128
-    NO_PROXY: &no-proxy localhost,127.0.0.1,eye-data,eye-core,eye-mcp,sentinel,detective,skeptic,reporter,cartographer,eye-specialists,selleros
+    NO_PROXY: &no-proxy localhost,127.0.0.1,eye-data,eye-core,eye-mcp,sentinel,detective,skeptic,reporter,cartographer,eye-specialists,selleros,lgtm
     no_proxy: *no-proxy
   depends_on: &agent-dependencies
     egress-proxy:
@@ -57,7 +56,7 @@ services:
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_PLUGINS_PREINSTALL_DISABLED: "true"
     ports: ["127.0.0.1:3000:3000"]
-    networks: [eye, warehouse]
+    networks: [eye, warehouse, agents]
     volumes:
       - ./config/grafana/alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro
     healthcheck:
@@ -129,10 +128,9 @@ services:
   eye-specialists:
     <<: *service
     environment:
-      <<: *environment
+      <<: *agent-environment
       OTEL_SERVICE_NAME: eye-specialists
     command: [eye-specialists]
-    environment: *agent-environment
     networks: [agents, warehouse]
     depends_on: *agent-dependencies
     healthcheck:
