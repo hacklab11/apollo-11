@@ -151,7 +151,7 @@ def _mean_shares(
     engine: MetricEngine,
     target: str,
     components: list[str],
-    end: datetime | None,
+    end: datetime | None = None,
 ) -> dict[str, float]:
     """|component mean| / |target mean| over the validation window (06 §4)."""
     start, end = _window(engine, None, end, [target, *components])
