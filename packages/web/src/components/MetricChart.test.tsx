@@ -10,7 +10,9 @@ afterEach(() => {
 });
 
 it("includes the latest consumed hour in the half-open API window", async () => {
-  const fetch = vi.fn(async () => Response.json({ points: [] }));
+  const fetch = vi.fn<(url: string) => Promise<Response>>(async () =>
+    Response.json({ points: [] }),
+  );
   vi.stubGlobal("fetch", fetch);
   render(
     <QueryClientProvider client={new QueryClient()}>
@@ -23,7 +25,7 @@ it("includes the latest consumed hour in the half-open API window", async () => 
             id: "inc-1",
             opened_ts: "2026-01-01T10:00:00Z",
             entry: { segment: { category: "electronics", country: "DE" } },
-          } as Incident
+          } as unknown as Incident
         }
         end="2026-01-01T11:00:00Z"
       />

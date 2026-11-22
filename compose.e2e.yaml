@@ -75,4 +75,4 @@ services:
       SELLEROS_PROVIDER: openai_compatible
       SELLEROS_BASE_URL: http://scripted-model:8400/v1
       SELLEROS_API_KEY_ENV: EYE_E2E_TOKEN
-      SELLEROS_MODEL: selleros
+      SELLEROS_MODEL: openai/gpt-oss-20b

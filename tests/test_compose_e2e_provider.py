@@ -14,6 +14,7 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from agent_runtime import end_state_outputs
 from eye.agents.cartographer import Submission
+from selleros.models import SpecialistResponse
 
 
 @pytest.fixture
@@ -291,3 +292,39 @@ def test_rejects_real_or_missing_credentials(client: TestClient) -> None:
     response = client.post("/v1/chat/completions", json=completion("reporter", {}))
     assert response.status_code == 401
     assert client.get("/stats").json()["calls"] == {}
+
+
+def test_seller_script_preserves_nullable_price_history(client: TestClient) -> None:
+    model = "openai/gpt-oss-20b"
+    body = completion(model, {})
+    body["messages"][0]["content"] = "<selleros_request>{}</selleros_request>"
+    body["tools"].append(
+        {"type": "function", "function": {"name": "price_intent_check"}}
+    )
+    first = post(client, body)
+    first.raise_for_status()
+    assert (
+        first.json()["choices"][0]["message"]["tool_calls"][0]["function"]["name"]
+        == "price_intent_check"
+    )
+    body = completion(
+        model,
+        {},
+        [
+            {
+                "rows": [
+                    {"sku": "E11", "old": None, "new": 170.46, "verdict": "intended"}
+                ],
+                "summary": "1 scoped row",
+            }
+        ],
+    )
+    response = post(client, body)
+    response.raise_for_status()
+    args = response.json()["choices"][0]["message"]["tool_calls"][0]["function"][
+        "arguments"
+    ]
+    answer = SpecialistResponse.model_validate_json(args)
+    assert answer.answered and answer.findings[0].numbers["new"] == 170.46
+    assert "old" not in answer.findings[0].numbers
+    assert client.get("/stats").json()["errors"] == []

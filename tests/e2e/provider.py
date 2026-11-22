@@ -220,7 +220,7 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                 },
             )
 
-    if request.model == "selleros":
+    if request.model == "openai/gpt-oss-20b":
         if not outputs:
             return tool("price_intent_check", {"selection": {}})
         if len(outputs) == 1:
@@ -232,7 +232,11 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                     "findings": [
                         {
                             "claim": f"Manual price change on {row['sku']} was {row['verdict']}.",
-                            "numbers": row,
+                            "numbers": {
+                                key: value
+                                for key, value in row.items()
+                                if value is not None
+                            },
                             "confidence": 1,
                             "supports": ["price_change"],
                         }
