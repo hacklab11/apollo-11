@@ -1,6 +1,8 @@
 """Configured model chains and pinned runtime prices."""
 
 import os
+from collections.abc import Mapping, Sequence
+from typing import Literal, Protocol
 
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelMessage, ModelResponse
@@ -11,7 +13,22 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
 from agent_runtime import ModelPrice, PriceTable, model_chain
-from eye.config import LlmSettings
+
+
+class _Price(Protocol):
+    input_per_mtok: float
+    output_per_mtok: float
+
+
+class ModelConfig(Protocol):
+    provider: str
+    api_key_env: str
+    base_url: str
+    effort: Mapping[str, Literal["low", "medium", "high", "xhigh", "max"]]
+    fallback_models: Mapping[str, Sequence[str]]
+    prices: Mapping[str, _Price]
+
+    def model_for(self, agent: str) -> str: ...
 
 
 class _MissingCredentialsModel(Model):
@@ -38,7 +55,9 @@ class _MissingCredentialsModel(Model):
         raise ModelAPIError(self.model_name, f"Missing credential: {self._key_env}")
 
 
-def build_model(settings: LlmSettings, agent: str) -> Model:
+def build_model(
+    settings: ModelConfig, agent: str, *, effort_key: str | None = None
+) -> Model:
     def build(name: str) -> Model:
         key_env = (
             "ANTHROPIC_API_KEY"
@@ -51,7 +70,7 @@ def build_model(settings: LlmSettings, agent: str) -> Model:
             return AnthropicModel(
                 name,
                 settings=AnthropicModelSettings(
-                    anthropic_effort=settings.effort.get(agent, "medium")
+                    anthropic_effort=settings.effort.get(effort_key or agent, "medium")
                 ),
             )
         return OpenAIChatModel(
@@ -67,10 +86,13 @@ def build_model(settings: LlmSettings, agent: str) -> Model:
     )
 
 
-def price_table(settings: LlmSettings) -> PriceTable:
+def price_table(settings: ModelConfig) -> PriceTable:
     return PriceTable(
         prices={
-            name: ModelPrice(**price.model_dump())
+            name: ModelPrice(
+                input_per_mtok=price.input_per_mtok,
+                output_per_mtok=price.output_per_mtok,
+            )
             for name, price in settings.prices.items()
         }
     )

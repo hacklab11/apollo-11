@@ -3,7 +3,8 @@ import json
 import httpx
 import pytest
 from openai import AsyncOpenAI
-from pydantic_ai import Agent, models
+from pydantic import BaseModel
+from pydantic_ai import Agent, ToolOutput, models
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.anthropic import AnthropicModel
@@ -12,10 +13,19 @@ from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.usage import RequestUsage
 
 from agent_runtime import RunLimits, RunScope, UnpricedModel, run_agent
-from eye.agents.models import build_model, price_table
+from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmPrice, LlmSettings
 
 OPENROUTER = "https://openrouter.ai/api/v1"
+
+
+class _Calculation(BaseModel):
+    value: int
+
+
+@pytest.fixture(autouse=True)
+def no_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
 
 
 def test_anthropic_model_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -153,7 +163,9 @@ async def test_cost_of_routed_response(
                 )
             )
 
-        monkeypatch.setattr("eye.agents.models.OpenAIProvider", offline_provider)
+        monkeypatch.setattr(
+            "agent_runtime.configured_models.OpenAIProvider", offline_provider
+        )
         agent = Agent(build_model(settings, "cartographer"))
         with models.override_allow_model_requests(True):
             outcome = await run_agent(
@@ -168,3 +180,111 @@ async def test_cost_of_routed_response(
     assert outcome.result.usage.cost_usd == pytest.approx(cost)
     assert outcome.result.usage.input_tokens == 1000
     assert outcome.result.usage.output_tokens == 1000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", ['{"value":2}', "{}", "{broken", "[]", "null"])
+async def test_openai_tool_round_trip_and_argument_repair(
+    monkeypatch: pytest.MonkeyPatch, arguments: str
+) -> None:
+    requests: list[dict] = []
+    values: list[int] = []
+    valid = arguments == '{"value":2}'
+
+    def increment(value: int) -> int:
+        values.append(value)
+        return value + 1
+
+    def completion(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append(body)
+        final = len(requests) == (2 if valid else 3)
+        name = "submit" if final else "increment"
+        args = '{"value":3}' if final else arguments
+        if len(requests) == 2 and not valid:
+            args = '{"value":2}'
+        return httpx.Response(
+            200,
+            json={
+                "id": "offline",
+                "object": "chat.completion",
+                "created": 1,
+                "model": "vendor/model:free",
+                "choices": [
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": f"call-{len(requests)}",
+                                    "type": "function",
+                                    "function": {"name": name, "arguments": args},
+                                }
+                            ],
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 5,
+                    "total_tokens": 15,
+                },
+            },
+        )
+
+    monkeypatch.setenv("TEST_MODEL_KEY", "offline-test-only")
+    settings = LlmSettings(
+        provider="openai_compatible",
+        api_key_env="TEST_MODEL_KEY",
+        models={"default": "vendor/model:free"},
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(completion)) as http:
+
+        def offline_provider(*, base_url: str, api_key: str) -> OpenAIProvider:
+            return OpenAIProvider(
+                openai_client=AsyncOpenAI(
+                    base_url=base_url, api_key=api_key, http_client=http
+                )
+            )
+
+        monkeypatch.setattr(
+            "agent_runtime.configured_models.OpenAIProvider", offline_provider
+        )
+        agent = Agent(
+            build_model(settings, "cartographer"),
+            output_type=ToolOutput(_Calculation, name="submit"),
+            tools=[increment],
+        )
+        with models.override_allow_model_requests(True):
+            outcome = await run_agent(
+                agent,
+                "Increment 2",
+                scope=RunScope(run_id="test-tools", tenant_id="test"),
+                limits=RunLimits(),
+                prices=price_table(settings),
+            )
+    assert outcome.result.status == "done", outcome.result.reason
+    assert outcome.result.result == _Calculation(value=3)
+    assert values == [2]
+    assert len(requests) == (2 if valid else 3)
+    assert {tool["function"]["name"] for tool in requests[0]["tools"]} == {
+        "increment",
+        "submit",
+    }
+    tool_results = [
+        message for message in requests[-1]["messages"] if message["role"] == "tool"
+    ]
+    assert tool_results[-1]["content"] == "3"
+    if not valid:
+        assert (
+            json.loads(tool_results[0]["content"])["error"][0]["type"]
+            == {
+                "{}": "missing",
+                "{broken": "json_invalid",
+                "[]": "dict_type",
+                "null": "dict_type",
+            }[arguments]
+        )

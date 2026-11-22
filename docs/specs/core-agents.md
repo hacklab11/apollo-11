@@ -1,6 +1,6 @@
 # Core agents
 
-Implementation: `packages/agents/src/eye/agents/`; prompts: `packages/llm/src/eye/llm/prompts/`.
+Implementation: `packages/agents/src/eye/agents/`; prompts: `packages/agents/src/eye/agents/prompts/`.
 Each core agent is served by `eye-agent <name>` over A2A, uses typed PydanticAI output and
 `agent_runtime`, and keeps model history private. Data tools use the warehouse API.
 

@@ -24,9 +24,10 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
-from eye.agents.models import build_model, price_table
+from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
     AddMetricRequest,
     AddMetricResult,
     Dimension,
@@ -35,7 +36,6 @@ from eye.contracts import (
     MetricDef,
     TrailStep,
 )
-from eye.contracts_v2 import DEFAULT_TENANT
 from eye.graph.bootstrap import _mean_shares
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine
@@ -183,7 +183,7 @@ class Cartographer:
         *,
         end: datetime | None = None,
     ) -> T:
-        prompt = files("eye.llm").joinpath("prompts/cartographer.md").read_text()
+        prompt = files("eye.agents").joinpath("prompts/cartographer.md").read_text()
         agent = Agent(
             self.model or build_model(self.llm, "cartographer"),
             name="cartographer",

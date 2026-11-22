@@ -1,22 +1,37 @@
 """Specialist domain tools: read-only HTTP calls to the core data API."""
 
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+)
+from pydantic_ai import ModelRetry, RunContext, Tool
+from pydantic_ai.capabilities import RawToolArgs
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.tools import ToolDefinition
 
-from eye.contracts import Category, Channel, Country, Platform, SellerTier
-from eye.llm.runtime import ToolSpec
+from eye.contracts_v2 import Category, Channel, Country, Platform, SellerTier
 
 # The data API returns up to 5 000 rows; the model only needs enough to reason.
 MAX_ROWS = 200
+_OBJECT_ARGS = TypeAdapter(dict[str, Any])
 
 
 Psp = Literal["PSP-1", "PSP-2"]
 
 
 class Window(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     start: AwareDatetime = Field(description="Inclusive window start, ISO 8601 UTC")
     end: AwareDatetime = Field(
         description="Exclusive window end, at most 14 days later"
@@ -102,6 +117,8 @@ class DataClient:
 
     async def get(self, endpoint: str, params: dict[str, Any]) -> DataResult:
         response = await self.http.get(f"{self.base_url}/{endpoint}", params=params)
+        if response.status_code == 422:
+            raise ModelRetry(f"/data/{endpoint} returned 422: {response.text}")
         if response.status_code >= 400:
             raise ValueError(
                 f"/data/{endpoint} returned {response.status_code}: "
@@ -144,20 +161,66 @@ def _params(args: BaseModel) -> dict[str, Any]:
     return args.model_dump(mode="json", exclude_none=True)
 
 
+@dataclass
+class Evidence:
+    steps: list[dict[str, str]] = field(default_factory=list)
+    used: set[str] = field(default_factory=set)
+
+
+def object_arguments(
+    ctx: RunContext[Evidence],
+    *,
+    call: ToolCallPart,
+    tool_def: ToolDefinition,
+    args: RawToolArgs,
+) -> RawToolArgs:
+    try:
+        if isinstance(args, str):
+            return _OBJECT_ARGS.validate_json(args)
+        return _OBJECT_ARGS.validate_python({} if args is None else args)
+    except ValidationError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+def _tool(
+    name: str,
+    description: str,
+    input_model: type[Window],
+    handler: Callable[[BaseModel], Awaitable[DataResult]],
+) -> Tool[Evidence]:
+    async def call(ctx: RunContext[Evidence], **kwargs: Any) -> DataResult:
+        try:
+            args = input_model.model_validate(kwargs)
+        except ValidationError as exc:
+            raise ModelRetry(str(exc)) from exc
+        result = await handler(args)
+        ctx.deps.steps.append({"tool": name, "summary": result.summary})
+        ctx.deps.used.add(result.endpoint)
+        return result
+
+    return Tool.from_schema(
+        call,
+        name=name,
+        description=description,
+        json_schema=input_model.model_json_schema(),
+        takes_ctx=True,
+    )
+
+
 def data_tool(
     client: DataClient,
     name: str,
     endpoint: str,
     input_model: type[Window],
     description: str,
-) -> ToolSpec:
+) -> Tool[Evidence]:
     async def call(args: BaseModel) -> DataResult:
         return await client.get(endpoint, _params(args))
 
-    return ToolSpec(name, description, input_model, call)
+    return _tool(name, description, input_model, call)
 
 
-def metric_tool(client: DataClient) -> ToolSpec:
+def metric_tool(client: DataClient) -> Tool[Evidence]:
     async def call(args: BaseModel) -> DataResult:
         params = _params(args)
         segment = {
@@ -176,7 +239,7 @@ def metric_tool(client: DataClient) -> ToolSpec:
         params["segment"] = json.dumps(segment, sort_keys=True)
         return await client.get("metric", params)
 
-    return ToolSpec(
+    return _tool(
         "metric",
         "Hourly actual vs expected values and z-scores for one registry metric in "
         "one segment. Use it to quantify the metric the question is about and a "
@@ -186,7 +249,7 @@ def metric_tool(client: DataClient) -> ToolSpec:
     )
 
 
-def changes_tool(client: DataClient) -> ToolSpec:
+def changes_tool(client: DataClient) -> Tool[Evidence]:
     return data_tool(
         client,
         "changes",

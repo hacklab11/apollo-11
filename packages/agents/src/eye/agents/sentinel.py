@@ -12,6 +12,7 @@ from uuid import uuid4
 import duckdb
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, ToolOutput
+from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 from pydantic_ai.models import Model
 
@@ -25,18 +26,17 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
-from eye.agents.models import build_model, price_table
+from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings, SentinelSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     Anomaly,
     AnomalyKind,
     GraphView,
     Incident,
+    IncidentV2,
     SentinelDecision,
     TrailStep,
 )
-from eye.contracts_v2 import IncidentV2
-from eye.llm.client import BudgetExceeded
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareInput,
@@ -49,7 +49,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.queries import DataQueries, LocalQueries
 
 _HOUR = timedelta(hours=1)
-_PROMPT = files("eye.llm").joinpath("prompts/sentinel.md")
+_PROMPT = files("eye.agents").joinpath("prompts/sentinel.md")
 # Compact ASCII JSON at roughly 3 characters per token; counting via the API costs a call.
 _MAX_CONTEXT_CHARS = 18_000
 _OPEN = {"investigating", "open", "persisting", "mitigating"}
@@ -360,7 +360,9 @@ class Sentinel:
         )
         if outcome.result.status != "done":
             error = (
-                BudgetExceeded if outcome.result.status == "gave_up" else RuntimeError
+                UsageLimitExceeded
+                if outcome.result.status == "gave_up"
+                else RuntimeError
             )
             raise error(
                 f"Sentinel {outcome.result.status}: {outcome.result.reason or outcome.result.question}"

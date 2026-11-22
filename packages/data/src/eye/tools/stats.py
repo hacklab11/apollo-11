@@ -12,7 +12,7 @@ from statistics import mean, median
 import duckdb
 
 from eye.config import SentinelSettings
-from eye.contracts import Anomaly, AnomalyKind, Dimension, GraphView, MetricDef
+from eye.contracts_v2 import Anomaly, AnomalyKind, Dimension, GraphView, MetricDef
 from eye.registry.engine import _evaluate, _names
 from eye.registry.loader import Registry
 from eye.tools.models import (

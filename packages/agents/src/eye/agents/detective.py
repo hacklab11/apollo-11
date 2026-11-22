@@ -16,6 +16,7 @@ import duckdb
 from pydantic import AwareDatetime, BaseModel, Field
 from pydantic_ai import Agent, ModelRetry, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext
 
@@ -28,6 +29,7 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
+from agent_runtime.configured_models import build_model, price_table
 from eye.a2a_client import A2AClient
 from eye.agents.investigation_tools import (
     _ControlInput,
@@ -36,9 +38,8 @@ from eye.agents.investigation_tools import (
     _Window,
     _WindowTools,
 )
-from eye.agents.models import build_model, price_table
 from eye.config import DetectiveSettings, LlmSettings, SentinelSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     Anomaly,
     Contribution,
     Dimension,
@@ -46,17 +47,17 @@ from eye.contracts import (
     GraphView,
     Hypothesis,
     Incident,
+    IncidentV2,
     InvestigationResult,
     MetricDef,
     Series,
+    SkepticResult,
     SpecialistRequest,
     SpecialistResponse,
     Symptom,
     TrailStep,
     Verdict,
 )
-from eye.contracts_v2 import IncidentV2, SkepticResult
-from eye.llm.client import BudgetExceeded, LLMUnavailable
 from eye.registry.loader import Registry
 from eye.tools.drill import AttributionResult
 from eye.tools.models import (
@@ -71,7 +72,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
-_PROMPT = files("eye.llm").joinpath("prompts/detective.md")
+_PROMPT = files("eye.agents").joinpath("prompts/detective.md")
 _WEEK = timedelta(weeks=1)
 
 
@@ -865,8 +866,8 @@ class Detective:
                     or outcome.result.status
                 )
                 if outcome.result.status == "gave_up":
-                    raise BudgetExceeded(reason)
-                raise LLMUnavailable(reason)
+                    raise UsageLimitExceeded(reason)
+                raise ModelAPIError(self._llm.model_for("detective"), reason)
             answer = cast(_Submission, outcome.result.result)
             await emit(
                 TrailStep(
@@ -882,8 +883,8 @@ class Detective:
                     output_summary=answer.summary[:500],
                 )
             )
-        except (BudgetExceeded, LLMUnavailable) as exc:
-            stop = "budget" if isinstance(exc, BudgetExceeded) else "error"
+        except (UsageLimitExceeded, ModelAPIError) as exc:
+            stop = "budget" if isinstance(exc, UsageLimitExceeded) else "error"
             answer = _Submission(
                 verdict="HYPOTHESIS",
                 summary="Investigation stopped before reaching a supported verdict.",

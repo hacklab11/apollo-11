@@ -11,18 +11,32 @@ import httpx
 import pytest
 from a2a.types import AgentCard
 from google.protobuf.json_format import ParseDict
+from pydantic_ai import RunContext, models
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RunUsage
 
+from agent_runtime import run_agent
+from agent_runtime.runner import RunOutcome
 from eye.a2a_client import A2AClient
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import create_app as agent_app
 from eye.config import A2aSettings, Settings
-from eye.contracts import SellerAlert, SpecialistRequest, SpecialistResponse
-from eye.contracts_v2 import Budget, DetectRequest, DetectResult, TaskMetadata
+from eye.contracts_v2 import (
+    AgentResult,
+    Budget,
+    DetectRequest,
+    DetectResult,
+    SellerAlert,
+    SpecialistRequest,
+    SpecialistResponse,
+    TaskMetadata,
+)
 from eye.directory import AgentDirectory
-from eye.specialists.app import SPECIALISTS, TOOL_SKILLS, authorized_tools
+from eye.specialists.app import SPECIALISTS, TOOL_SKILLS, answer, authorized_tools
 from eye.specialists.app import create_app as specialists_app
-from eye.specialists.tools import DataClient
+from eye.specialists.tools import DataClient, Evidence
 from eye_auth.trust import SkillGuard, verify_card
 from selleros.data import FileSellerStore
 from selleros.server import create_app as selleros_app
@@ -34,6 +48,11 @@ AGENTS = {
     "reporter": "report",
     "cartographer": "map",
 }
+
+
+@pytest.fixture(autouse=True)
+def no_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
 
 
 def rpc(payload: dict[str, Any]) -> dict[str, Any]:
@@ -131,12 +150,11 @@ async def test_tool_authorization_uses_server_mapping(specialist: Any) -> None:
                 for t in authorized_tools(specialist, client, denied)
                 if t.name == tool_name
             )
-            args = tool.input_model.model_validate(
-                {"start": "2026-11-27T00:00:00Z", "end": "2026-11-27T01:00:00Z"}
-            )
+            args = {"start": "2026-11-27T00:00:00Z", "end": "2026-11-27T01:00:00Z"}
+            ctx = RunContext(deps=Evidence(), model=TestModel(), usage=RunUsage())
             before = len(calls)
             with pytest.raises(PermissionError):
-                await tool.fn(args)
+                await tool.function(ctx, **args)
             assert len(calls) == before
             with pytest.raises(PermissionError):
                 denied.finish()
@@ -148,7 +166,7 @@ async def test_tool_authorization_uses_server_mapping(specialist: Any) -> None:
                 for t in authorized_tools(specialist, client, allowed)
                 if t.name == tool_name
             )
-            await tool.fn(args)
+            await tool.function(ctx, **args)
             allowed.finish()
             assert len(calls) == before + 1
 
@@ -217,23 +235,40 @@ async def test_specialist_dispatch_rejects_unauthorized_tool_even_if_caught(
         calls.append(request.url.path)
         return httpx.Response(200, json={"rows": []})
 
-    async def model(spec: Any, *args: Any) -> SpecialistResponse:
+    def model(messages: Any, info: Any) -> ModelResponse:
         granted = next(iter(specialist.SKILLS))
         tool = next(
             tool
-            for tool in spec.tools
+            for tool in info.function_tools
             if tool.name in TOOL_SKILLS[specialist.NAME]
             and TOOL_SKILLS[specialist.NAME][tool.name] != granted
         )
-        with pytest.raises(PermissionError):
-            await tool.fn(
-                tool.input_model.model_validate(
-                    {"start": "2026-11-27T00:00:00Z", "end": "2026-11-27T01:00:00Z"}
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool.name,
+                    {"start": "2026-11-27T00:00:00Z", "end": "2026-11-27T01:00:00Z"},
+                )
+            ]
+        )
+
+    scripted = FunctionModel(model, model_name="claude-opus-5-5")
+    monkeypatch.setattr("eye.specialists.app.build_model", lambda *_, **__: scripted)
+
+    async def swallow_denial(*args: Any, **kwargs: Any) -> RunOutcome:
+        try:
+            return await run_agent(*args, **kwargs)
+        except PermissionError:
+            return RunOutcome(
+                result=AgentResult(
+                    status="done",
+                    result=SpecialistResponse(
+                        agent=specialist.NAME, answered=True, findings=[]
+                    ),
                 )
             )
-        return SpecialistResponse(agent=specialist.NAME, answered=True, findings=[])
 
-    monkeypatch.setattr("eye.specialists.app.run_agent", model)
+    monkeypatch.setattr("eye.specialists.app.run_agent", swallow_denial)
     async with httpx.AsyncClient(transport=httpx.MockTransport(data)) as data_http:
         app = specialists_app(client=DataClient(data_http, "http://core/data"))
         async with (
@@ -255,6 +290,15 @@ async def test_specialist_dispatch_rejects_unauthorized_tool_even_if_caught(
             assert task["status"]["state"] == "TASK_STATE_FAILED"
             assert "PermissionError" in str(task)
             assert calls == ["/data/app_components"]
+            with pytest.raises(PermissionError, match="not authorized"):
+                await answer(
+                    specialist,
+                    DataClient(data_http, "http://core/data"),
+                    specialist_request(),
+                    Settings(),
+                    frozenset({scope}),
+                )
+            assert calls == ["/data/app_components", "/data/app_components"]
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ import duckdb
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from eye.contracts import Category, Country, Platform, SellerTier
+from eye.contracts_v2 import Category, Country, Platform, SellerTier
 
 
 class DataParams(BaseModel):

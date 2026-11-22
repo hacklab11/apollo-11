@@ -1,11 +1,13 @@
 """Discovery & Experience specialist: search, feed, checkout, errors, components."""
 
-from eye.llm.runtime import ToolSpec
+from pydantic_ai import Tool
+
 from eye.specialists.tools import (
     CheckoutFunnelInput,
     CountryInput,
     DataClient,
     ErrorsInput,
+    Evidence,
     FeedExposureInput,
     PaymentsInput,
     Window,
@@ -28,7 +30,7 @@ SKILLS = {
 }
 
 
-def tools(client: DataClient) -> list[ToolSpec]:
+def tools(client: DataClient) -> list[Tool[Evidence]]:
     return [
         data_tool(
             client,

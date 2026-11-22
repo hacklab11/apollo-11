@@ -5,7 +5,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
-from eye.contracts import Edge, GraphView, MetricDef
+from eye.contracts_v2 import Edge, GraphView, MetricDef
 from eye.warehouse import operations as ops
 from eye.warehouse.domain import DataParams, DataResponse
 

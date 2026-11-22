@@ -24,7 +24,7 @@ from google.protobuf.struct_pb2 import Value
 from pydantic import BaseModel, Field
 
 from eye.config import A2aSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     SellerAlert,
     SellerAlertAck,
     SpecialistRequest,

@@ -12,7 +12,7 @@ import duckdb
 import yaml
 from pydantic import BaseModel, Field
 
-from eye.contracts import MetricDef
+from eye.contracts_v2 import MetricDef
 
 CONFIG_DIR = Path("config")
 HIDDEN_TABLES = frozenset({"scenario_log"})

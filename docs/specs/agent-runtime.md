@@ -22,7 +22,10 @@ enforces checks before model/tool execution.
 - `idempotency.py` hashes run, tool and canonical arguments. The in-memory store is process-local;
   durable service executors must provide their own storage/unique constraint.
 - `models.py` builds guarded fallback models; `tracing.py` instruments runs and redacts PII.
+- `configured_models.py` builds configured Anthropic/OpenAI-compatible model chains and price
+  tables without importing application configuration. Core agents and specialists share it.
 
 The harness does not itself checkpoint every model/tool call into DBOS.
 Orchestrator checkpoints are at workflow/A2A-step boundaries; see [criteria and gaps](agent-criteria.md).
-Specialists still use the separate `eye.llm.runtime` loop.
+Specialists use the same harness with an eight-model-step cap and map unsuccessful end states
+to failed A2A tasks.

@@ -1,10 +1,12 @@
 """Marketplace specialist: Buy Box, pricing, availability, purchasing, sellers."""
 
-from eye.llm.runtime import ToolSpec
+from pydantic_ai import Tool
+
 from eye.specialists.tools import (
     CapacityInput,
     CategoryInput,
     DataClient,
+    Evidence,
     NewSellersInput,
     OffersInput,
     changes_tool,
@@ -24,7 +26,7 @@ SKILLS = {
 }
 
 
-def tools(client: DataClient) -> list[ToolSpec]:
+def tools(client: DataClient) -> list[Tool[Evidence]]:
     return [
         data_tool(
             client,

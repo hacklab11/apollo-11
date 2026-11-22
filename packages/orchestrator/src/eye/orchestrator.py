@@ -19,28 +19,26 @@ from pydantic import BaseModel
 from agent_runtime.tracing import inject_trace_context
 from eye.api.events import EventBus
 from eye.config import Settings
-from eye.contracts import (
-    AddMetricRequest,
-    AddMetricResult,
-    Event,
-    Incident,
-    InvestigationResult,
-    SellerAlert,
-    SellerAlertAck,
-    SentinelDecision,
-    TrailStep,
-)
 from eye.contracts_v2 import (
     DEFAULT_TENANT,
+    AddMetricRequest,
+    AddMetricResult,
     Budget,
     DetectRequest,
     DetectResult,
+    Event,
+    Incident,
     InvestigateRequest,
     InvestigateResult,
+    InvestigationResult,
     MapRequest,
     ReportRequest,
     ReportResult,
+    SellerAlert,
+    SellerAlertAck,
+    SentinelDecision,
     TaskMetadata,
+    TrailStep,
 )
 from eye.control import ControlPlane, RunKilled
 from eye.directory import AgentDirectory
@@ -131,7 +129,7 @@ class Orchestrator(DBOSConfiguredInstance):
                 "name": "eye-orchestrator",
                 "system_database_url": self.database_url,
                 "application_version": os.environ.get("EYE_DBOS_APPLICATION_VERSION")
-                or "eye-orchestrator-v1",
+                or "eye-orchestrator-v2",
             }
         )
         super().__init__(
@@ -229,7 +227,7 @@ class Orchestrator(DBOSConfiguredInstance):
             tick=self.tick,
             running=not self.paused,
             paused=self.paused,
-            llm_mode=self.settings.llm.mode,
+            llm_mode="live",
             llm_calls=self._usage["calls"],
             tokens_in=self._usage["tokens_in"],
             tokens_out=self._usage["tokens_out"],

@@ -2,8 +2,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from eye.config import Settings, load_settings
+from eye.config import LlmSettings, Settings, load_settings
 
 
 def test_checked_in_settings_equal_defaults(repo_root: Path) -> None:
@@ -20,7 +21,6 @@ def test_checked_in_settings_equal_defaults(repo_root: Path) -> None:
     assert settings.sim.start_ts == datetime(2026, 11, 27, tzinfo=UTC)
     assert settings.llm.model_for("detective") == "claude-opus-5-5"
     assert settings.llm.effort["detective"] == "high"
-    assert settings.llm.cache_path == Path("data/llm_cache.jsonl")
 
 
 def test_partial_settings_preserve_defaults(tmp_path: Path) -> None:
@@ -60,7 +60,10 @@ llm:
         ("sim: {seed: -1}", r"sim\.seed: .*greater than or equal to 0"),
         ("sim: {autostart: 1}", r"sim\.autostart: .*boolean"),
         ("sim: {start_ts: '2026-11-27T00:00:00'}", r"sim\.start_ts: .*timezone"),
-        ("llm: {mode: test}", r"llm\.mode: .*'live', 'record' or 'replay'"),
+        ("llm: {mode: replay}", r"llm\.mode: .*Extra inputs"),
+        ("llm: {cache_path: cache.jsonl}", r"llm\.cache_path: .*Extra inputs"),
+        ("llm: {max_calls_per_run: 10}", r"llm\.max_calls_per_run: .*Extra inputs"),
+        ("llm: {max_calls_per_hour: 50}", r"llm\.max_calls_per_hour: .*Extra inputs"),
         ("llm: {effort: {reporter: boosted}}", r"llm\.effort\.reporter: .*'max'"),
         ("a2a: {selleros_url: local}", r"a2a\.selleros_url: .*URL"),
         ("ports: {unknown: 8001}", r"ports\.unknown: .*Extra inputs"),
@@ -75,3 +78,26 @@ def test_invalid_setting_names_key_and_allowed_values(
 
     with pytest.raises(ValueError, match=message):
         load_settings(path)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"provider": "unknown"},
+        {"base_url": "not-url"},
+        {"base_url": "ftp://example.com"},
+        {"api_key_env": ""},
+        {"api_key_env": "HAS SPACE"},
+        {"api_key_env": 1},
+    ],
+)
+def test_provider_settings_invalid(values) -> None:
+    with pytest.raises(ValidationError):
+        LlmSettings(**values)
+
+
+def test_provider_settings_defaults() -> None:
+    settings = LlmSettings()
+    assert settings.provider == "anthropic"
+    assert settings.base_url == "https://openrouter.ai/api/v1"
+    assert settings.api_key_env == "OPENROUTER_API_KEY"

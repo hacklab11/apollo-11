@@ -11,8 +11,14 @@ from pydantic_ai.models.function import FunctionModel
 from agent_runtime import model_chain
 from eye.agents.reporter import Reporter
 from eye.config import LlmSettings
-from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision, Symptom
-from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    IncidentClosure,
+    InvestigationResult,
+    SellerAlertAck,
+    SentinelDecision,
+    Symptom,
+)
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore, canonical, fingerprint
 

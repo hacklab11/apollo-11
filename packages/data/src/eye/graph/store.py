@@ -9,7 +9,7 @@ from typing import Literal, get_args
 
 import networkx as nx
 
-from eye.contracts import Edge, EdgeStatus, EdgeType, GraphView, MetricDef
+from eye.contracts_v2 import Edge, EdgeStatus, EdgeType, GraphView, MetricDef
 from eye.tools.identity import parse_identity
 
 GRAPH_PATH = Path("data/graph.json")

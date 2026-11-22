@@ -28,10 +28,15 @@ from a2a.types import (
 )
 from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, ValidationError
+from pydantic_ai.exceptions import UsageLimitExceeded
 
-from eye.contracts import TrailStep
-from eye.contracts_v2 import DEFAULT_TENANT, AgentResult, RunUsageSummary, TaskMetadata
-from eye.llm.client import BudgetExceeded
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    AgentResult,
+    RunUsageSummary,
+    TaskMetadata,
+    TrailStep,
+)
 from eye_auth.client import oauth_client
 from eye_auth.trust import verify_card
 
@@ -79,13 +84,13 @@ class Run:
 
     def check_tokens(self) -> None:
         if self.usage.total_tokens >= self.metadata.budget.tokens:
-            raise BudgetExceeded("Token budget exhausted")
+            raise UsageLimitExceeded("Token budget exhausted")
 
     def delegate(self) -> TaskMetadata:
         budget = self.metadata.budget
         self.check_tokens()
         if budget.depth >= budget.max_depth or self.delegations >= budget.max_fan_out:
-            raise BudgetExceeded("Delegation limit reached")
+            raise UsageLimitExceeded("Delegation limit reached")
         self.delegations += 1
         return self.metadata.model_copy(
             update={
@@ -179,14 +184,14 @@ class SkillExecutor(AgentExecutor):
                 or metadata.budget.cost_usd <= 0
                 or metadata.budget.depth > metadata.budget.max_depth
             ):
-                raise BudgetExceeded("Task budget exhausted")
+                raise UsageLimitExceeded("Task budget exhausted")
             run.check_tokens()
             await updater.start_work()
             async with asyncio.timeout(remaining):
                 output = await self.skill.invoke(payload, run)
             run.check_tokens()
             result = result_model(status="done", result=output, usage=run.usage)
-        except (BudgetExceeded, TimeoutError):
+        except (UsageLimitExceeded, TimeoutError):
             result = result_model(
                 status="gave_up",
                 reason="Task budget exhausted",

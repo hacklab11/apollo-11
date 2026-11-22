@@ -439,13 +439,13 @@ import sys
 
 class NoEyeImports:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname.startswith("eye.") and fullname not in {"eye.contracts", "eye.contracts_v2"}:
+        if fullname.startswith("eye.") and fullname != "eye.contracts_v2":
             raise ImportError("SellerOS must not import Eye")
 
 sys.meta_path.insert(0, NoEyeImports())
 import selleros.server
 assert {name for name in sys.modules if name.startswith("eye.")} == {
-    "eye.contracts", "eye.contracts_v2",
+    "eye.contracts_v2",
 }
 """,
         ],

@@ -7,7 +7,7 @@ from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.usage import RequestUsage
 
 from agent_runtime import UnpricedModel
-from eye.agents.models import build_model, price_table
+from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings
 
 
@@ -23,7 +23,7 @@ def test_anthropic_effort_and_explicit_fallbacks(
         )
 
     constructor = Mock(side_effect=model)
-    monkeypatch.setattr("eye.agents.models.AnthropicModel", constructor)
+    monkeypatch.setattr("agent_runtime.configured_models.AnthropicModel", constructor)
     settings = LlmSettings(
         effort={"detective": effort}, fallback_models={"detective": ["backup"]}
     )

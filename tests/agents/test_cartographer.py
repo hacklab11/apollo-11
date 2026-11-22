@@ -30,7 +30,7 @@ from eye.agents.cartographer import (
     SeedSubmission,
     Submission,
 )
-from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
+from eye.contracts_v2 import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Identity, Registry

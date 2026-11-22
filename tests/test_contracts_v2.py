@@ -21,6 +21,7 @@ from eye.contracts_v2 import (
     IncidentV2,
     NeedsInput,
     PendingApproval,
+    PublicIncidentStatus,
     RunUsageSummary,
     TaskMetadata,
     TenantId,
@@ -29,6 +30,35 @@ from eye.contracts_v2 import (
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+
+def test_public_and_tenant_incident_statuses_preserve_their_wire_values() -> None:
+    assert set(get_args(PublicIncidentStatus)) == {
+        "investigating",
+        "open",
+        "persisting",
+        "resolved",
+        "deferred",
+        "innocent",
+    }
+    assert set(get_args(IncidentStatus)) == {
+        "investigating",
+        "open",
+        "mitigating",
+        "recovered",
+        "closed",
+    }
+
+
+@pytest.mark.parametrize("value", ["", "persisting", "closed"])
+def test_incident_status_validation_stays_separate(value: str) -> None:
+    for status_type in (PublicIncidentStatus, IncidentStatus):
+        adapter = TypeAdapter(status_type)
+        if value in get_args(status_type):
+            assert adapter.validate_python(value) == value
+        else:
+            with pytest.raises(ValidationError):
+                adapter.validate_python(value)
 
 
 @pytest.fixture

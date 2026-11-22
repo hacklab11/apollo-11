@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 
 import duckdb
 
-from eye.contracts import MetricDef, Series, SeriesPoint
+from eye.contracts_v2 import MetricDef, Series, SeriesPoint
 from eye.registry.loader import Registry
 
 type Key = tuple[str, ...]

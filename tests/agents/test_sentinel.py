@@ -4,16 +4,15 @@ from unittest.mock import Mock
 
 import pytest
 from factories import make_anomaly
-from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
 from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
 from agent_runtime import Budget, InMemoryKillSwitch, ModelPrice, PriceTable
-from eye.agents.models import build_model
+from agent_runtime.configured_models import build_model
 from eye.agents.sentinel import Sentinel, _Candidate
 from eye.config import LlmSettings
-from eye.contracts import TrailStep
-from eye.llm.client import BudgetExceeded
+from eye.contracts_v2 import TrailStep
 
 TICK = datetime(2026, 11, 27, 12, tzinfo=UTC)
 HOUR = timedelta(hours=1)
@@ -128,7 +127,7 @@ async def test_caller_budget_stops_before_model(
     monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
     agent._data.read.return_value.events = []
     usage = []
-    with pytest.raises(BudgetExceeded, match="budget exhausted"):
+    with pytest.raises(UsageLimitExceeded, match="budget exhausted"):
         await agent.run(
             TICK,
             budget=Budget(tokens=1000, cost_usd=0, deadline=datetime.now(UTC) + HOUR),
@@ -148,7 +147,7 @@ async def test_loop_surfaces_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = sentinel(monkeypatch, repeat)
     monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
     agent._data.read.return_value.events = []
-    with pytest.raises(BudgetExceeded, match="gave_up: loop detected"):
+    with pytest.raises(UsageLimitExceeded, match="gave_up: loop detected"):
         await agent.run(TICK)
 
 
@@ -181,7 +180,7 @@ async def test_provider_error_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> 
         "scripted": fallback,
     }
     monkeypatch.setattr(
-        "eye.agents.models.AnthropicModel", lambda name, **_: models[name]
+        "agent_runtime.configured_models.AnthropicModel", lambda name, **_: models[name]
     )
     monkeypatch.setattr("eye.agents.sentinel.build_model", build_model)
     agent._llm = LlmSettings(

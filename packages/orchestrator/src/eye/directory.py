@@ -24,10 +24,11 @@ from opentelemetry import propagate, trace
 from pydantic import BaseModel
 
 from eye.config import A2aSettings
-from eye.contracts import SellerAlert, SellerAlertAck
 from eye.contracts_v2 import (
     SELLER_REVERT_APPROVAL_METADATA_KEY,
     AgentResult,
+    SellerAlert,
+    SellerAlertAck,
     TaskMetadata,
 )
 from eye_auth.client import oauth_client

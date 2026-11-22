@@ -10,7 +10,7 @@ import numpy as np
 from numpy.random import Generator
 from numpy.typing import NDArray
 
-from eye.contracts import Channel, Country, Platform
+from eye.contracts_v2 import Channel, Country, Platform
 from eye.sim.market import buy_box
 from eye.sim.store import Batches
 from eye.sim.world import CATEGORIES, CATEGORY_SHARES, World

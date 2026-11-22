@@ -3,7 +3,8 @@
 `packages/specialists/src/eye/specialists/` exposes Growth (`/growth`),
 Marketplace (`/marketplace`) and Discovery & Experience (`/discovery`) on port 8200.
 Each returns a typed specialist response, evidence and usage through A2A.
-Unlike core agents, these specialists still use `eye.llm.runtime.run_agent` and `eye.llm.client`.
+Like core agents, specialists use PydanticAI through `agent_runtime.run_agent`, with
+typed tools, explicit end states, pinned pricing and an eight-model-step cap.
 
 | Specialist | Read-only warehouse evidence |
 |---|---|

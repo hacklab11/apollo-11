@@ -1,7 +1,7 @@
 # Discovery & Experience: exposure through payment
 
 Implementation: `packages/specialists/src/eye/specialists/discovery.py`;
-A2A endpoint: `/discovery`. This read-only specialist uses the legacy LLM runtime.
+A2A endpoint: `/discovery`. This read-only specialist uses PydanticAI through `agent_runtime`.
 
 Separate exposure/relevance changes from funnel breakage:
 search quality and conversion, feed impressions/clicks/availability, carts → checkout →

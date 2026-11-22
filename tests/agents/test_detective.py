@@ -18,7 +18,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from agent_runtime import Budget, InMemoryKillSwitch
 from eye.agents.detective import Detective, _Submission
 from eye.config import DetectiveSettings, LlmSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
     Anomaly,
     Contribution,
     Edge,

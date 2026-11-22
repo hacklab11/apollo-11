@@ -1,19 +1,25 @@
 import asyncio
+import json
 import time
-from pathlib import Path
+from datetime import datetime
 
 import httpx
-import httpx2
 import pytest
 from a2a.types.a2a_pb2 import TaskState
-from anthropic import AsyncAnthropic
-from conftest import FIXTURES, data_client, s1_request, s7_request, send, settings
+from conftest import data_client, s1_request, s7_request, send, settings
 from google.protobuf.json_format import MessageToDict
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import (
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import FunctionModel
 
 from eye.a2a_client import A2AClient
-from eye.contracts import SpecialistResponse
-from eye.llm.client import LLMClient
-from eye.specialists.app import create_app
+from eye.contracts_v2 import SpecialistResponse
+from eye.specialists import discovery
+from eye.specialists.app import answer, create_app
 from eye.specialists.tools import DataClient
 
 SKILLS = {
@@ -27,33 +33,76 @@ SKILLS = {
         "components",
     ],
 }
-CASES = {
-    "growth": (s1_request, FIXTURES / "specialist_s1_growth.jsonl"),
-    "discovery": (s7_request, FIXTURES / "specialist_s7_discovery.jsonl"),
-}
-
-
-def offline_sdk() -> AsyncAnthropic:
-    def refuse(request: httpx2.Request) -> httpx2.Response:
-        raise AssertionError(f"replay miss reached the network: {request.url}")
-
-    return AsyncAnthropic(
-        api_key="offline",
-        max_retries=0,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(refuse)),
-    )
-
-
-def use_llm(monkeypatch: pytest.MonkeyPatch, mode: str, fixture: Path, sdk) -> None:
-    llm = settings().llm.model_copy(update={"mode": mode, "cache_path": fixture})
-    monkeypatch.setattr("eye.llm.client._client", LLMClient(llm, sdk))
 
 
 async def ask(
     http: httpx.AsyncClient, agent: str, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[SpecialistResponse, list[dict[str, str]]]:
-    request, fixture = CASES[agent]
-    use_llm(monkeypatch, "replay", fixture, offline_sdk())
+    request = s1_request if agent == "growth" else s7_request
+
+    def respond(messages, info):
+        returns = [
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            window = {
+                "start": request().window_start_ts.isoformat(),
+                "end": request().window_end_ts.isoformat(),
+            }
+            calls = (
+                [("ads_pacing", {**window, "advertiser_id": "ADV-3"})]
+                if agent == "growth"
+                else [("errors", window), ("checkout_funnel", window)]
+            )
+            return ModelResponse(
+                parts=[ToolCallPart(name, args) for name, args in calls]
+            )
+        rows = returns[0].content.rows
+        if agent == "growth":
+            row = next(row for row in rows if "10:00" in row["ts"])
+            assert row["spent_today"] == row["daily_budget"] == 1000
+            assert row["planned_cum_share"] == 0.38
+            claim = "ADV-3 spent 100% by 10:00 against 38% scheduled"
+            numbers = {"spent_eur": row["spent_today"]}
+            supports = ["pacing_bug"]
+        else:
+            count = sum(
+                row["errors"]
+                for row in rows
+                if row["platform"] == "web" and row["app_version"] == "5.8"
+            )
+            assert count == 62000
+            claim = "checkout-web v5.8 caused 62,000 TypeError errors on web"
+            numbers = {"errors": count}
+            supports = []
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit",
+                    {
+                        "agent": "overridden",
+                        "answered": True,
+                        "findings": [
+                            {
+                                "claim": claim,
+                                "numbers": numbers,
+                                "confidence": 0.9,
+                                "supports": supports,
+                            }
+                        ],
+                        "data_used": ["untrusted"],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.specialists.app.build_model",
+        lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
     task = await send(http, agent, request())
     assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
         task.status
@@ -87,7 +136,7 @@ async def test_core_client_sees_all_three_specialists(specialists) -> None:
 
 
 @pytest.mark.asyncio
-async def test_growth_replay_answers_s1(specialists, monkeypatch) -> None:
+async def test_growth_answers_s1(specialists, monkeypatch) -> None:
     _, http = specialists
     response, steps = await ask(http, "growth", monkeypatch)
     assert response.answered and response.agent == "growth"
@@ -101,7 +150,156 @@ async def test_growth_replay_answers_s1(specialists, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_discovery_replay_answers_s7(specialists, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    "agent, tool, invalid",
+    [
+        ("growth", "marketing", {}),
+        ("growth", "marketing", {"start": "invalid"}),
+        ("growth", "marketing", {"country": "XX"}),
+        ("discovery", "payments", {"platform": "web"}),
+        ("discovery", "payments", {"country": "DE"}),
+        ("discovery", "payments", "[]"),
+        ("discovery", "payments", '"web"'),
+        ("discovery", "payments", "42"),
+        ("discovery", "payments", "null"),
+        ("discovery", "payments", "["),
+        ("discovery", "payments", ""),
+        ("discovery", "payments", None),
+    ],
+)
+async def test_invalid_tool_arguments_are_retried(
+    specialists, monkeypatch, agent, tool, invalid
+) -> None:
+    request = s1_request() if agent == "growth" else s7_request()
+    valid = {
+        "start": request.window_start_ts.isoformat(),
+        "end": request.window_end_ts.isoformat(),
+    }
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            schema = next(t for t in info.function_tools if t.name == tool)
+            assert schema.parameters_json_schema["additionalProperties"] is False
+            args = (
+                invalid
+                if invalid is None or isinstance(invalid, str)
+                else ({} if not invalid else {**valid, **invalid})
+            )
+            return ModelResponse(parts=[ToolCallPart(tool, args)])
+        if calls == 2:
+            assert any(
+                isinstance(part, ToolReturnPart)
+                and part.outcome != "success"
+                and "validation error" in str(part.content)
+                for part in messages[-1].parts
+            )
+            corrected = json.dumps(valid) if isinstance(invalid, str) else valid
+            return ModelResponse(parts=[ToolCallPart(tool, corrected)])
+        assert any(isinstance(part, ToolReturnPart) for part in messages[-1].parts)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit", {"agent": agent, "answered": False, "findings": []}
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.specialists.app.build_model",
+        lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
+    _, http = specialists
+    task = await send(http, agent, request)
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
+        task.status
+    )
+    assert calls == 3
+    assert [
+        step["tool"] for step in MessageToDict(task.artifacts[0].metadata)["steps"]
+    ] == [tool]
+
+
+@pytest.mark.asyncio
+async def test_warehouse_validation_error_is_retried() -> None:
+    request = s7_request()
+    valid = {
+        "start": request.window_start_ts.isoformat(),
+        "end": request.window_end_ts.isoformat(),
+    }
+    invalid = {"start": valid["end"], "end": valid["start"]}
+    queries = []
+    calls = 0
+    detail = "start must be before end"
+
+    def data(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/payments"):
+            queries.append(dict(request.url.params))
+            if len(queries) == 1:
+                return httpx.Response(422, json={"detail": detail})
+        return httpx.Response(200, json={"rows": []})
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(parts=[ToolCallPart("payments", invalid)])
+        if calls == 2:
+            assert any(
+                isinstance(part, ToolReturnPart)
+                and part.outcome != "success"
+                and "/data/payments returned 422" in str(part.content)
+                and detail in str(part.content)
+                for part in messages[-1].parts
+            )
+            return ModelResponse(parts=[ToolCallPart("payments", valid)])
+        assert any(
+            isinstance(part, ToolReturnPart)
+            and part.outcome == "success"
+            and part.content.rows == []
+            for part in messages[-1].parts
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit", {"agent": "discovery", "answered": False, "findings": []}
+                )
+            ]
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(data)) as http:
+        response, steps = await answer(
+            discovery,
+            DataClient(http, "http://core/data"),
+            request,
+            settings(),
+            frozenset({"discovery:checkout_funnel"}),
+            model=FunctionModel(respond, model_name="claude-opus-5-5"),
+        )
+    assert calls == 3
+    assert len(queries) == 2
+    assert datetime.fromisoformat(queries[1]["start"]) == request.window_start_ts
+    assert datetime.fromisoformat(queries[1]["end"]) == request.window_end_ts
+    assert response.data_used == ["payments"]
+    assert [step["tool"] for step in steps] == ["payments"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [400, 403, 500])
+async def test_non_validation_warehouse_errors_do_not_retry(status: int) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(status, json={"detail": "unavailable"})
+        )
+    ) as http:
+        with pytest.raises(ValueError, match=f"returned {status}"):
+            await DataClient(http, "http://core/data").get("payments", {})
+
+
+@pytest.mark.asyncio
+async def test_discovery_answers_s7(specialists, monkeypatch) -> None:
     _, http = specialists
     response, steps = await ask(http, "discovery", monkeypatch)
     assert response.answered and response.agent == "discovery"
@@ -117,7 +315,10 @@ async def test_discovery_replay_answers_s7(specialists, monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_data_api_down_fails_task_promptly(monkeypatch) -> None:
-    use_llm(monkeypatch, "replay", CASES["growth"][1], offline_sdk())
+    def unexpected_model(*_):
+        raise AssertionError("model must not be built when data API is down")
+
+    monkeypatch.setattr("eye.specialists.app.build_model", unexpected_model)
 
     def down(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
@@ -140,24 +341,156 @@ async def test_data_api_down_fails_task_promptly(monkeypatch) -> None:
         assert not core.answered and core.findings == []
 
 
-@pytest.mark.live
 @pytest.mark.asyncio
-@pytest.mark.parametrize("agent", sorted(CASES))
-async def test_record_fixture(agent: str, world, monkeypatch) -> None:
-    """Re-record with: uv run pytest tests/specialists -m live -q"""
-    request, fixture = CASES[agent]
-    fixture.unlink(missing_ok=True)
-    async with AsyncAnthropic(max_retries=2) as sdk:
-        use_llm(monkeypatch, "record", fixture, sdk)
-        client = data_client(world)
-        app = create_app(settings(), client)
+@pytest.mark.parametrize("ending", ["needs_input", "gave_up", "provider", "limit"])
+async def test_unsuccessful_runs_fail_a2a_task(
+    specialists, monkeypatch, ending
+) -> None:
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if ending == "provider":
+            raise ModelAPIError("claude-opus-5-5", "offline provider failure")
+        if ending == "limit":
+            request = s1_request()
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "changes",
+                        {
+                            "start": request.window_start_ts.isoformat(),
+                            "end": request.window_end_ts.isoformat(),
+                            "system": f"system-{calls}",
+                        },
+                    )
+                ]
+            )
+        output = next(tool for tool in info.output_tools if ending in tool.name.lower())
+        return ModelResponse(
+            parts=[ToolCallPart(output.name, {"reason": "No evidence"})]
+        )
+
+    monkeypatch.setattr(
+        "eye.specialists.app.build_model",
+        lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
+    _, http = specialists
+    task = await send(http, "growth", s1_request())
+    assert task.status.state == TaskState.TASK_STATE_FAILED
+    assert task.artifacts == []
+    assert calls == (8 if ending == "limit" else 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", ["growth", "marketplace", "discovery"])
+async def test_empty_answer_and_tool_results(monkeypatch, agent) -> None:
+    requested = []
+
+    def data(request):
+        requested.append(request)
+        return httpx.Response(200, json={"rows": []})
+
+    def respond(messages, info):
+        returns = [
+            part
+            for message in messages
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            request = s1_request()
+            window = {
+                "start": request.window_start_ts.isoformat(),
+                "end": request.window_end_ts.isoformat(),
+            }
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "metric", {**window, "name": "orders", "country": "DE"}
+                    ),
+                    ToolCallPart("changes", window),
+                ]
+            )
+        assert all(not part.content.rows for part in returns)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit",
+                    {
+                        "agent": "growth",
+                        "answered": False,
+                        "findings": [],
+                    },
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.specialists.app.build_model",
+        lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(data)) as core:
+        app = create_app(settings(), DataClient(core, "http://core/data"))
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
-            task = await send(http, agent, request())
+            task = await send(http, agent, s1_request())
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
+        task.status
+    )
+    response = MessageToDict(task.artifacts[0].parts[0].data)
+    assert response["answered"] is False and response["findings"] == []
+    assert response["agent"] == agent
+    assert response["data_used"] == ["changes", "metric"]
+    metric = next(
+        request for request in requested if request.url.path.endswith("/metric")
+    )
+    assert metric.url.params["segment"] == '{"country": "DE"}'
+
+
+@pytest.mark.asyncio
+async def test_configured_fallback(monkeypatch, world) -> None:
+    attempted = []
+
+    def constructor(name, **kwargs):
+        assert kwargs["settings"]["anthropic_effort"] == "high"
+
+        def respond(messages, info):
+            attempted.append(name)
+            if name == "claude-opus-5-5":
+                raise ModelAPIError(name, "offline primary unavailable")
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "submit",
+                        {
+                            "agent": "growth",
+                            "answered": False,
+                            "findings": [],
+                        },
+                    )
+                ]
+            )
+
+        return FunctionModel(respond, model_name=name)
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-test-only")
+    monkeypatch.setattr("agent_runtime.configured_models.AnthropicModel", constructor)
+    configured = settings()
+    configured.llm.fallback_models["growth"] = ["backup"]
+    configured.llm.effort["specialists"] = "high"
+    configured.llm.prices["backup"] = configured.llm.prices["claude-opus-5-5"]
+    client = data_client(world)
+    try:
+        app = create_app(configured, client)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
+            task = await send(http, "growth", s1_request())
+    finally:
         await client.http.aclose()
     assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
         task.status
     )
-    assert Path(fixture).read_text().strip()
+    assert attempted == ["claude-opus-5-5", "backup"]
 
 
 @pytest.mark.asyncio

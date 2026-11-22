@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 from pydantic import AwareDatetime, BaseModel, Field
 
-from eye.contracts import Anomaly, Dimension
+from eye.contracts_v2 import Anomaly, Dimension
 from eye.tools.models import (
     BaselineCompareInput,
     BaselineCompareOutput,

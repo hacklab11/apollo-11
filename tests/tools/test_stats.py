@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from eye.config import Settings
-from eye.contracts import GraphView, MetricDef
+from eye.contracts_v2 import GraphView, MetricDef
 from eye.registry.loader import load_registry
 from eye.sim.engine import Simulator
 from eye.sim.store import Store

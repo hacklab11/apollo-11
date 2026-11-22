@@ -9,8 +9,13 @@ import httpx
 import yaml
 from pydantic import TypeAdapter
 
-from eye.contracts import Incident, TrailStep
-from eye.contracts_v2 import DEFAULT_TENANT, IncidentCloseRequest, IncidentV2
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
+    Incident,
+    IncidentCloseRequest,
+    IncidentV2,
+    TrailStep,
+)
 from eye.orchestrator import Status
 from eye.sim.scenarios import ScenarioState
 from eye.sim.service import Status as SimStatus

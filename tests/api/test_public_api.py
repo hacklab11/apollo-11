@@ -31,19 +31,20 @@ from eye.api.app import (
     human_actor,
 )
 from eye.config import Settings
-from eye.contracts import (
+from eye.contracts_v2 import (
     AddMetricResult,
+    AgentResult,
     Edge,
     Event,
     GraphView,
     Incident,
+    IncidentV2,
     MetricDef,
     SellerAlert,
     Series,
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import AgentResult, IncidentV2
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status, TenantBackpressure
@@ -424,13 +425,13 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
 def test_llm_mode_cannot_change_at_runtime(
     service: tuple[FastAPI, Settings, Orchestrator],
 ) -> None:
-    app, settings, _ = service
+    app, _, _ = service
     with TestClient(app) as client:
         response = client.post("/api/llm/mode", json={"mode": "replay"})
         status = Status.model_validate(client.get("/api/status").json())
     assert response.status_code in {404, 405}
     assert "/api/llm/mode" not in {getattr(route, "path", "") for route in app.routes}
-    assert status.llm_mode == settings.llm.mode == "live"
+    assert status.llm_mode == "live"
 
 
 def test_incident_symptoms(service: tuple[FastAPI, Settings, Orchestrator]) -> None:

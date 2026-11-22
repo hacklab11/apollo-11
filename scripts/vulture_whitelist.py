@@ -48,6 +48,7 @@ _.seller_exchange
 _.running
 _.llm_calls
 _.llm_stop_reason
+_.stop_reason
 _.undercut_pct
 _.stock_policy_days
 _.generated_for_seed
@@ -70,7 +71,6 @@ _.set_edge_status
 _.set_state
 _.neighbors_upstream
 _.metric_value
-_.budget_status
 _.reverted_prices
 _.release
 _.add_external_status

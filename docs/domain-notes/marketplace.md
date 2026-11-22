@@ -1,7 +1,7 @@
 # Marketplace: offers, availability and seller mix
 
 Implementation: `packages/specialists/src/eye/specialists/marketplace.py`;
-A2A endpoint: `/marketplace`. This read-only specialist uses the legacy LLM runtime.
+A2A endpoint: `/marketplace`. This read-only specialist uses PydanticAI through `agent_runtime`.
 
 Track offer price/stock and Buy Box holders by SKU, seller and tier.
 A change in category GMV share is not the same as a count of Buy Box wins:

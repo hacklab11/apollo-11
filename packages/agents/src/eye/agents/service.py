@@ -28,21 +28,23 @@ from agent_runtime import Budget, RunScope, RunUsageSummary
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
-from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
 from eye.contracts_v2 import (
+    AddMetricResult,
+    Anomaly,
     ChallengeRequest,
     ChallengeResult,
     DetectRequest,
     DetectResult,
+    Hypothesis,
     InvestigateRequest,
     InvestigateResult,
     MapRequest,
     ReportRequest,
     ReportResult,
     SkepticResult,
+    TrailStep,
 )
 from eye.graph.store import GraphStore
-from eye.llm.client import LLMClient, configure_client
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.warehouse.client import DataClient, RemoteGraph
@@ -362,7 +364,6 @@ def main() -> None:
     handler.setFormatter(_JsonLogFormatter())
     logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
     settings = load_settings()
-    configure_client(LLMClient(settings.llm))
     uvicorn.run(
         instrument_app(
             create_app(

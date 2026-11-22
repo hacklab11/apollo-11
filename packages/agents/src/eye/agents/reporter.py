@@ -20,9 +20,9 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
-from eye.agents.models import build_model, price_table
+from agent_runtime.configured_models import build_model, price_table
 from eye.config import LlmSettings
-from eye.contracts import InvestigationResult
+from eye.contracts_v2 import InvestigationResult
 
 
 class Narrative(BaseModel):
@@ -57,7 +57,9 @@ class Reporter:
         self.agent = Agent(
             model or build_model(self.settings, "reporter"),
             deps_type=set[Decimal],
-            instructions=files("eye.llm").joinpath("prompts/reporter.md").read_text(),
+            instructions=files("eye.agents")
+            .joinpath("prompts/reporter.md")
+            .read_text(),
             output_type=end_state_outputs(Narrative),
             retries=1,
             model_settings={"max_tokens": min(self.settings.max_tokens, 2048)},

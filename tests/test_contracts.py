@@ -8,7 +8,7 @@ import pytest
 from factories import ChatResponse, MetricDefinitionResponse, StatusResponse, TruthRow
 from pydantic import TypeAdapter, ValidationError
 
-from eye.contracts import (
+from eye.contracts_v2 import (
     AddMetricRequest,
     AddMetricResult,
     Anomaly,

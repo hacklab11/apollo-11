@@ -10,16 +10,18 @@ import duckdb
 from pydantic import TypeAdapter
 
 from eye.config import ReporterSettings
-from eye.contracts import (
+from eye.contracts_v2 import (
+    DEFAULT_TENANT,
     Anomaly,
     Incident,
+    IncidentClosure,
+    IncidentV2,
     InvestigationResult,
     SellerAlert,
     SellerAlertAck,
     SentinelDecision,
     TrailStep,
 )
-from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure, IncidentV2
 
 OPS_DB = Path("data/ops.duckdb")
 

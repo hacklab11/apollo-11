@@ -6,7 +6,7 @@ from math import log
 import duckdb
 from pydantic import BaseModel, Field, validate_call
 
-from eye.contracts import Contribution
+from eye.contracts_v2 import Contribution
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.tools.identity import parse_identity, ratio_sums

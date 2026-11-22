@@ -4,6 +4,7 @@ import json
 import socket
 import sys
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -26,6 +27,32 @@ sys.modules[SPEC.name] = evals
 SPEC.loader.exec_module(evals)
 
 
+@pytest.mark.parametrize("agent", sorted(evals.AGENTS))
+def test_prompt_pins_use_implementation_resources(
+    agent: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if agent == "selleros":
+        resource = files("selleros").joinpath("prompt.md")
+    else:
+        package = (
+            "eye.specialists"
+            if agent in {s.NAME for s in evals.SPECIALISTS}
+            else "eye.agents"
+        )
+        resource = files(package).joinpath(f"prompts/{agent}.md")
+    monkeypatch.setattr(evals, "ROOT", tmp_path)
+    assert evals.prompt_for(agent) == resource.read_text()
+    assert evals.pins(agent, "offline")["prompt_sha256"] == evals.digest(
+        resource.read_text()
+    )
+
+
+@pytest.mark.parametrize("agent", ["", "unknown"])
+def test_missing_prompt_fails_closed(agent: str) -> None:
+    with pytest.raises(FileNotFoundError):
+        evals.prompt_for(agent)
+
+
 def test_every_production_pydantic_agent_is_covered() -> None:
     found = set()
     for path in (ROOT / "packages").rglob("*.py"):
@@ -38,12 +65,18 @@ def test_every_production_pydantic_agent_is_covered() -> None:
             and node.func.id == "Agent"
             for node in ast.walk(tree)
         ):
-            found.add("selleros" if "selleros" in path.parts else path.stem)
+            if "specialists" in path.parts:
+                found.update(item.NAME for item in evals.SPECIALISTS)
+            else:
+                found.add("selleros" if "selleros" in path.parts else path.stem)
     assert found == evals.AGENTS
 
 
 def test_regressions_auto_discovered(tmp_path: Path) -> None:
     (tmp_path / "base.yaml").write_text((evals.CASES / "s8.yaml").read_text())
+    (tmp_path / "specialists.yaml").write_text(
+        (evals.CASES / "specialists.yaml").read_text()
+    )
     regression = tmp_path / "regressions"
     regression.mkdir()
     original = evals.load_cases().cases[0]
@@ -145,6 +178,16 @@ def test_recording_exhaustion_fails_without_provider() -> None:
     model.function([], info)
     with pytest.raises(ValueError, match="Recording exhausted"):
         model.function([], info)
+
+
+@pytest.mark.asyncio
+async def test_specialist_unrecorded_data_fails_closed() -> None:
+    case = next(
+        case for case in evals.load_cases().cases if case.inputs.agent == "growth"
+    )
+    inputs = case.inputs.model_copy(update={"reads": {}})
+    with pytest.raises(ValueError, match="Unrecorded specialist data operation"):
+        await evals.run_case(inputs, evals.replay(inputs, evals.CLAUDE), evals.CLAUDE)
 
 
 @pytest.mark.asyncio

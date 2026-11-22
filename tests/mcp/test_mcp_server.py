@@ -16,7 +16,7 @@ from mcp_fake_core import Calls
 from pydantic import TypeAdapter
 
 from eye.api.app import MetricDefinition
-from eye.contracts import AddMetricResult, GraphView, Series
+from eye.contracts_v2 import AddMetricResult, GraphView, Series
 from eye.mcp_server import (
     IncidentDetail,
     IncidentSummary,
