@@ -6,7 +6,18 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
-from eye.contracts import Anomaly, Contribution, Hypothesis, Symptom, Verdict
+from eye.contracts import (
+    AddMetricRequest,
+    Anomaly,
+    Contribution,
+    Evidence,
+    Hypothesis,
+    InvestigationResult,
+    SentinelDecision,
+    Symptom,
+    TrailStep,
+    Verdict,
+)
 
 __all__ = [
     "A2A_TASK_STATES",
@@ -15,15 +26,25 @@ __all__ = [
     "INCIDENT_TRANSITIONS",
     "AgentResult",
     "Budget",
+    "ChallengeRequest",
+    "ChallengeResult",
+    "DetectRequest",
+    "DetectResult",
     "EndState",
     "GaveUp",
     "IncidentCloseRequest",
     "IncidentClosure",
     "IncidentStatus",
     "IncidentV2",
+    "InvestigateRequest",
+    "InvestigateResult",
+    "MapRequest",
     "NeedsInput",
     "PendingApproval",
+    "ReportRequest",
+    "ReportResult",
     "RunUsageSummary",
+    "SkepticResult",
     "TaskMetadata",
     "TenantId",
     "TenantScopedModel",
@@ -199,3 +220,60 @@ class TaskMetadata(TenantScopedModel):
     context_id: str
     traceparent: Traceparent
     budget: Budget
+
+
+class _SkillPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class DetectRequest(_SkillPayload):
+    ts: AwareDatetime
+    open_incidents: list[IncidentV2] = Field(default_factory=list)
+    previous_decisions: list[SentinelDecision] = Field(default_factory=list)
+
+
+class DetectResult(_SkillPayload):
+    decisions: list[SentinelDecision]
+    trail: list[TrailStep] = Field(default_factory=list)
+
+
+class InvestigateRequest(_SkillPayload):
+    anomaly: Anomaly
+    investigation_id: str | None = None
+    open_incidents: list[IncidentV2] = Field(default_factory=list)
+
+
+class InvestigateResult(_SkillPayload):
+    investigation: InvestigationResult
+    trail: list[TrailStep] = Field(default_factory=list)
+
+
+class ChallengeRequest(_SkillPayload):
+    anomaly: Anomaly
+    investigation_id: str
+    hypothesis: Hypothesis | None = None
+
+
+class SkepticResult(_SkillPayload):
+    verdict: Literal["innocent", "partly_innocent", "not_innocent", "data_issue"]
+    explained_share: float = Field(ge=0, le=1)
+    reasons: list[str]
+    evidence: list[Evidence]
+
+
+class ChallengeResult(_SkillPayload):
+    review: SkepticResult
+    trail: list[TrailStep] = Field(default_factory=list)
+
+
+class ReportRequest(_SkillPayload):
+    investigation: InvestigationResult
+
+
+class ReportResult(_SkillPayload):
+    title: str = Field(min_length=1, max_length=89)
+    summary: str = Field(min_length=1)
+
+
+class MapRequest(_SkillPayload):
+    metric: AddMetricRequest
