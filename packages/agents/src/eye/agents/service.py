@@ -25,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from agent_runtime import Budget, RunScope, RunUsageSummary
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
 from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
@@ -64,11 +65,20 @@ def _detect(settings: Settings, data: DataClient) -> Skill[DetectRequest, Detect
     )
 
     async def detect(request: DetectRequest, run: Run) -> DetectResult:
+        def record_usage(usage: RunUsageSummary) -> None:
+            run.add_usage(RunUsageSummary(cost_usd=usage.cost_usd))
+
         decisions = await sentinel.run(
             request.ts,
             open_incidents=request.open_incidents,
             on_step=run.record,
             previous_decisions=request.previous_decisions,
+            budget=Budget.model_validate(run.metadata.budget.model_dump()),
+            scope=RunScope(
+                run_id=f"sentinel:{request.ts.isoformat()}",
+                tenant_id=run.metadata.tenant_id,
+            ),
+            on_usage=record_usage,
         )
         return DetectResult(decisions=decisions, trail=run.trail)
 

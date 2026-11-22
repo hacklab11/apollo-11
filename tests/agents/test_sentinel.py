@@ -8,7 +8,7 @@ from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 
-from agent_runtime import InMemoryKillSwitch, ModelPrice, PriceTable
+from agent_runtime import Budget, InMemoryKillSwitch, ModelPrice, PriceTable
 from eye.agents.models import build_model
 from eye.agents.sentinel import Sentinel, _Candidate
 from eye.config import LlmSettings
@@ -118,6 +118,24 @@ async def test_quiet_tick(monkeypatch: pytest.MonkeyPatch) -> None:
     agent = sentinel(monkeypatch, lambda *_: pytest.fail("Model called"))
     monkeypatch.setattr(agent, "_candidates", lambda ts: [])
     assert await agent.run(TICK) == []
+
+
+@pytest.mark.asyncio
+async def test_caller_budget_stops_before_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = sentinel(monkeypatch, lambda *_: pytest.fail("Model called"))
+    monkeypatch.setattr(agent, "_candidates", lambda ts: [candidate(ts)])
+    agent._data.read.return_value.events = []
+    usage = []
+    with pytest.raises(BudgetExceeded, match="budget exhausted"):
+        await agent.run(
+            TICK,
+            budget=Budget(tokens=1000, cost_usd=0, deadline=datetime.now(UTC) + HOUR),
+            on_usage=usage.append,
+        )
+    assert len(usage) == 1
+    assert usage[0].cost_usd == 0
 
 
 @pytest.mark.asyncio

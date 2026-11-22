@@ -177,6 +177,7 @@ async def test_sentinel_watch_crosses_replicas(
         )
         assert response.result.trail[0].actor == "sentinel"
         assert response.usage.total_tokens == 12
+        assert response.usage.cost_usd == pytest.approx(0.00016)
         request = DetectRequest(
             ts=anm.ts + HOUR, previous_decisions=response.result.decisions
         )

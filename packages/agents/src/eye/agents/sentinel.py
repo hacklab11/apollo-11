@@ -15,10 +15,12 @@ from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.messages import ModelResponse, ToolCallPart
 
 from agent_runtime import (
+    Budget,
     KillSwitch,
     PriceTable,
     RunLimits,
     RunScope,
+    RunUsageSummary,
     end_state_outputs,
     run_agent,
 )
@@ -302,6 +304,9 @@ class Sentinel:
         open_incidents: Sequence[Incident | IncidentV2] = (),
         on_step: Callable[[TrailStep], Awaitable[None]] = _discard_step,
         previous_decisions: Sequence[SentinelDecision] | None = None,
+        budget: Budget | None = None,
+        scope: RunScope | None = None,
+        on_usage: Callable[[RunUsageSummary], None] | None = None,
     ) -> list[SentinelDecision]:
         if previous_decisions is None:
             previous = self._watched if self._watch_tick == ts - _HOUR else set()
@@ -323,7 +328,7 @@ class Sentinel:
         outcome = await run_agent(
             self._agent(run_id, on_step),
             content,
-            scope=RunScope(run_id=run_id, tenant_id="eye"),
+            scope=scope or RunScope(run_id=run_id, tenant_id="eye"),
             limits=RunLimits(
                 max_steps=5,
                 max_tool_calls=16,
@@ -333,7 +338,10 @@ class Sentinel:
             ),
             prices=self._prices,
             kill_switch=self._kill_switch,
+            budget=budget,
         )
+        if on_usage is not None:
+            on_usage(outcome.result.usage)
         await on_step(
             TrailStep(
                 id=str(uuid4()),
