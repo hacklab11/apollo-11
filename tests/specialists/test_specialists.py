@@ -149,11 +149,20 @@ async def test_growth_answers_s1(specialists, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", [{}, {"start": "invalid"}, {"country": "XX"}])
+@pytest.mark.parametrize(
+    "agent, tool, invalid",
+    [
+        ("growth", "marketing", {}),
+        ("growth", "marketing", {"start": "invalid"}),
+        ("growth", "marketing", {"country": "XX"}),
+        ("discovery", "payments", {"platform": "web"}),
+        ("discovery", "payments", {"country": "DE"}),
+    ],
+)
 async def test_invalid_tool_arguments_are_retried(
-    specialists, monkeypatch, invalid
+    specialists, monkeypatch, agent, tool, invalid
 ) -> None:
-    request = s1_request()
+    request = s1_request() if agent == "growth" else s7_request()
     valid = {
         "start": request.window_start_ts.isoformat(),
         "end": request.window_end_ts.isoformat(),
@@ -164,8 +173,10 @@ async def test_invalid_tool_arguments_are_retried(
         nonlocal calls
         calls += 1
         if calls == 1:
+            schema = next(t for t in info.function_tools if t.name == tool)
+            assert schema.parameters_json_schema["additionalProperties"] is False
             args = {} if not invalid else {**valid, **invalid}
-            return ModelResponse(parts=[ToolCallPart("marketing", args)])
+            return ModelResponse(parts=[ToolCallPart(tool, args)])
         if calls == 2:
             assert any(
                 isinstance(part, ToolReturnPart)
@@ -173,12 +184,12 @@ async def test_invalid_tool_arguments_are_retried(
                 and "validation error" in str(part.content)
                 for part in messages[-1].parts
             )
-            return ModelResponse(parts=[ToolCallPart("marketing", valid)])
+            return ModelResponse(parts=[ToolCallPart(tool, valid)])
         assert any(isinstance(part, ToolReturnPart) for part in messages[-1].parts)
         return ModelResponse(
             parts=[
                 ToolCallPart(
-                    "submit", {"agent": "growth", "answered": False, "findings": []}
+                    "submit", {"agent": agent, "answered": False, "findings": []}
                 )
             ]
         )
@@ -188,12 +199,14 @@ async def test_invalid_tool_arguments_are_retried(
         lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
     )
     _, http = specialists
-    task = await send(http, "growth", request)
+    task = await send(http, agent, request)
     assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
         task.status
     )
     assert calls == 3
-    assert MessageToDict(task.artifacts[0].metadata)["steps"][0]["tool"] == "marketing"
+    assert [
+        step["tool"] for step in MessageToDict(task.artifacts[0].metadata)["steps"]
+    ] == [tool]
 
 
 @pytest.mark.asyncio

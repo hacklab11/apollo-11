@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
-from pydantic import AwareDatetime, BaseModel, Field, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from pydantic_ai import ModelRetry, RunContext, Tool
 
 from eye.contracts_v2 import Category, Channel, Country, Platform, SellerTier
@@ -19,6 +19,8 @@ Psp = Literal["PSP-1", "PSP-2"]
 
 
 class Window(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     start: AwareDatetime = Field(description="Inclusive window start, ISO 8601 UTC")
     end: AwareDatetime = Field(
         description="Exclusive window end, at most 14 days later"
