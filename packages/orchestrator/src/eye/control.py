@@ -19,6 +19,7 @@ from sqlalchemy import (
     select,
     text,
 )
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.pool import StaticPool
 
 
@@ -192,9 +193,15 @@ class ControlPlane:
                 raise RunKilled(run_id)
 
     def pending(
-        self, run_id: str, incident_id: str | None, tool_name: str, args: dict
+        self,
+        run_id: str,
+        incident_id: str | None,
+        tool_name: str,
+        args: dict,
+        *,
+        identifier: str | None = None,
     ) -> str:
-        identifier = uuid4().hex
+        identifier = identifier or uuid4().hex
         with self.lock, self.engine.begin() as conn:
             conn.execute(
                 self.approvals.insert().values(
@@ -215,6 +222,42 @@ class ControlPlane:
                 detail={"approval_id": identifier, "tool_name": tool_name},
             )
         return identifier
+
+    def approval(self, identifier: str) -> dict | None:
+        with self.lock, self.engine.connect() as conn:
+            row = (
+                conn.execute(
+                    select(self.approvals).where(self.approvals.c.id == identifier)
+                )
+                .mappings()
+                .one_or_none()
+            )
+            return dict(row) if row is not None else None
+
+    def ensure_pending(
+        self, identifier: str, run_id: str, incident_id: str, tool_name: str, args: dict
+    ) -> dict:
+        row = self.approval(identifier)
+        if row is None:
+            try:
+                self.pending(
+                    run_id, incident_id, tool_name, args, identifier=identifier
+                )
+            except IntegrityError:
+                # Another service replica may have registered the same action.
+                row = self.approval(identifier)
+                if row is None:
+                    raise
+            else:
+                row = self.approval(identifier)
+        assert row is not None
+        if (
+            row["tool_name"] != tool_name
+            or row["args"] != args
+            or row["incident_id"] != incident_id
+        ):
+            raise ValueError("approval does not match the requested action")
+        return row
 
     def approval_rows(self) -> list[dict]:
         with self.lock, self.engine.connect() as conn:

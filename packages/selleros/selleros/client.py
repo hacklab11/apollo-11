@@ -1,315 +1,75 @@
-"""Messages transport, replay storage, and process-local usage counters."""
+"""Pinned SellerOS model settings for the shared runtime."""
 
-import asyncio
-import hashlib
-import json
 import os
-import time
-from collections import deque
-from pathlib import Path
-from typing import Any, Literal
+from functools import cache
+from typing import Literal
 
-import httpx
-from anthropic import AnthropicError, AsyncAnthropic
-from anthropic.types.beta import BetaMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai.models import Model
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from agent_runtime import ModelPrice, PriceTable, model_chain
+
+CLAUDE = "claude-opus-5-5"
+OPENROUTER_MODELS = (
+    "openai/gpt-oss-20b",
+    "qwen/qwen3.7-flash",
+    "nvidia/nemotron-3.5-lightning:free",
+)
+PRICES = PriceTable(
+    prices={
+        CLAUDE: ModelPrice(input_per_mtok=5, output_per_mtok=25),
+        OPENROUTER_MODELS[0]: ModelPrice(input_per_mtok=0.017, output_per_mtok=0.085),
+        OPENROUTER_MODELS[1]: ModelPrice(input_per_mtok=0.03, output_per_mtok=0.13),
+        OPENROUTER_MODELS[2]: ModelPrice(input_per_mtok=0, output_per_mtok=0),
+    }
+)
 
 
 class LlmSettings(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     provider: Literal["anthropic", "openai_compatible"] = "anthropic"
     base_url: str = "https://openrouter.ai/api/v1"
-    model: str = Field(default="claude-opus-5-5", min_length=1)
-    api_key_env: str = Field(
-        default="OPENROUTER_API_KEY", pattern=r"^[A-Za-z_][A-Za-z0-9_]*$"
-    )
-    mode: Literal["live", "record", "replay"] = "live"
-    cache_path: Path = Path(__file__).resolve().parents[1] / "data/llm_cache.jsonl"
-    max_calls_per_hour: int = 600
+    model: str | None = None
+    api_key_env: str | None = Field(default=None, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
 
     @classmethod
     def from_env(cls) -> "LlmSettings":
-        fields = ("provider", "base_url", "model", "api_key_env")
         return cls.model_validate(
             {
                 name: os.environ[key]
-                for name in fields
-                if (key := "SELLEROS_" + name.upper()) in os.environ
+                for name in cls.model_fields
+                if (key := f"SELLEROS_{name.upper()}") in os.environ
             }
         )
 
 
-class BudgetExceeded(Exception):
-    """The turn or rolling hourly call budget is exhausted."""
-
-
-class LLMUnavailable(AnthropicError):
-    """The provider could not complete the request."""
-
-
-def _chat_request(request: dict[str, Any]) -> dict[str, Any]:
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": "\n".join(b["text"] for b in request["system"])}
-    ]
-    for message in request["messages"]:
-        content = message["content"]
-        if isinstance(content, str):
-            messages.append({"role": message["role"], "content": content})
-            continue
-        text = "\n".join(b["text"] for b in content if b["type"] == "text")
-        if message["role"] == "assistant":
-            assistant: dict[str, Any] = {"role": "assistant", "content": text or None}
-            calls = [
-                {
-                    "id": b["id"],
-                    "type": "function",
-                    "function": {
-                        "name": b["name"],
-                        "arguments": json.dumps(b["input"], sort_keys=True),
-                    },
-                }
-                for b in content
-                if b["type"] == "tool_use"
-            ]
-            if calls:
-                assistant["tool_calls"] = calls
-            messages.append(assistant)
-        else:
-            for block in content:
-                if block["type"] == "tool_result":
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": block["tool_use_id"],
-                            "content": block["content"],
-                        }
-                    )
-            if text:
-                messages.append({"role": "user", "content": text})
-    return {
-        "model": request["model"],
-        "max_tokens": request["max_tokens"],
-        "messages": messages,
-        "tool_choice": "auto",
-        "tools": [
-            {
-                "type": "function",
-                "function": {
-                    "name": t["name"],
-                    "description": t["description"],
-                    "parameters": t["input_schema"],
-                },
-            }
-            for t in request["tools"]
-        ],
-    }
-
-
-def _chat_response(raw: dict[str, Any], model: str) -> BetaMessage:
-    choice = raw["choices"][0]
-    message = choice["message"]
-    content: list[dict[str, Any]] = []
-    if message.get("content"):
-        content.append({"type": "text", "text": message["content"]})
-    for call in message.get("tool_calls") or []:
-        try:
-            args = json.loads(call["function"]["arguments"])
-            if not isinstance(args, dict):
-                raise TypeError("arguments must be an object")
-        except (ValueError, TypeError):
-            args = {
-                "__invalid_json_arguments__": "Arguments must be a valid JSON object"
-            }
-        content.append(
-            {
-                "type": "tool_use",
-                "id": call["id"],
-                "name": call["function"]["name"],
-                "input": args,
-            }
-        )
-    finish = {
-        "tool_calls": "tool_use",
-        "stop": "end_turn",
-        "length": "max_tokens",
-        "content_filter": "refusal",
-    }[choice["finish_reason"]]
-    if message.get("refusal"):
-        finish = "refusal"
-    usage = raw.get("usage") or {}
-    return BetaMessage.model_validate(
-        {
-            "id": raw["id"],
-            "type": "message",
-            "role": "assistant",
-            "model": raw.get("model", model),
-            "content": content,
-            "stop_reason": finish,
-            "stop_sequence": None,
-            "usage": {
-                "input_tokens": usage.get("prompt_tokens", 0),
-                "output_tokens": usage.get("completion_tokens", 0),
-            },
-        }
+@cache
+def build_model(settings: LlmSettings) -> Model:
+    anthropic = settings.provider == "anthropic"
+    default_name = CLAUDE if anthropic else OPENROUTER_MODELS[0]
+    model_name = settings.model or default_name
+    if model_name not in PRICES.prices:
+        raise ValueError(f"No pinned price for SellerOS model {model_name!r}")
+    key_env = settings.api_key_env or (
+        "ANTHROPIC_API_KEY" if anthropic else "OPENROUTER_API_KEY"
     )
-
-
-def _append_record(path: Path, entry: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as cache:
-        cache.write(json.dumps(entry, sort_keys=True) + "\n")
-
-
-def _read_records(path: Path) -> str:
-    return path.read_text(encoding="utf-8") if path.exists() else ""
-
-
-class LLMClient:
-    def __init__(
-        self,
-        settings: LlmSettings,
-        sdk: AsyncAnthropic | None = None,
-        http_client: httpx.AsyncClient | None = None,
-    ) -> None:
-        self.settings = settings
-        self._sdk = sdk
-        self._http_client = http_client
-        self._calls: deque[float] = deque()
-        self.tokens_in = 0
-        self.tokens_out = 0
-
-    async def _openai_create(self, request: dict[str, Any]) -> BetaMessage:
-        key = os.environ.get(self.settings.api_key_env)
-        if not key:
-            raise LLMUnavailable(
-                f"Missing API key environment variable: {self.settings.api_key_env}"
-            )
-        payload = _chat_request(request)
-        if self._http_client is None:
-            async with httpx.AsyncClient(timeout=120.0) as client:
-                return await self._chat_post(client, key, payload)
-        return await self._chat_post(self._http_client, key, payload)
-
-    async def _chat_post(
-        self, client: httpx.AsyncClient, key: str, payload: dict[str, Any]
-    ) -> BetaMessage:
-        for attempt in range(3):
-            try:
-                response = await client.post(
-                    self.settings.base_url.rstrip("/") + "/chat/completions",
-                    headers={"Authorization": f"Bearer {key}"},
-                    json=payload,
-                )
-            except httpx.TransportError:
-                if attempt == 2:
-                    raise LLMUnavailable(
-                        "Chat Completions connection failed after retries"
-                    ) from None
-            else:
-                if response.status_code < 400:
-                    try:
-                        return _chat_response(response.json(), payload["model"])
-                    except (
-                        ValueError,
-                        KeyError,
-                        TypeError,
-                        IndexError,
-                        AttributeError,
-                    ):
-                        raise LLMUnavailable(
-                            "Invalid Chat Completions response"
-                        ) from None
-                if response.status_code != 429 and response.status_code < 500:
-                    raise LLMUnavailable(
-                        f"Chat Completions HTTP {response.status_code}"
-                    )
-                if attempt == 2:
-                    raise LLMUnavailable(
-                        f"Chat Completions HTTP {response.status_code} after retries"
-                    )
-            await asyncio.sleep(0.1 * (2**attempt))
-        raise AssertionError("retry loop exhausted")
-
-    def status(self) -> dict[str, int | bool]:
-        now = time.monotonic()
-        while self._calls and self._calls[0] <= now - 3600:
-            self._calls.popleft()
-        return {
-            "calls_per_hour": len(self._calls),
-            "tokens_in": self.tokens_in,
-            "tokens_out": self.tokens_out,
-            "budget_paused": len(self._calls) >= self.settings.max_calls_per_hour,
-        }
-
-    async def create(self, request: dict[str, Any]) -> BetaMessage:
-        identity = {
-            "model": request["model"],
-            "system": "".join(b["text"] for b in request["system"]),
-            "tools": [t["name"] for t in request["tools"]],
-            "messages": request["messages"],
-        }
-        if self.settings.provider != "anthropic":
-            identity["provider"] = self.settings.provider
-            identity["base_url"] = self.settings.base_url
-        digest = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        key = hashlib.sha256(digest.encode()).hexdigest()
-        path = Path(self.settings.cache_path)
-        response = None
-        if self.settings.mode == "replay":
-            records = await asyncio.to_thread(_read_records, path)
-            if records:
-                for line in records.splitlines():
-                    entry = json.loads(line)
-                    if entry["key"] == key:
-                        response = BetaMessage.model_validate(entry["response_json"])
-                        break
-            if response is None:
-                print(json.dumps({"event": "replay_miss", "key": key}))
-        if response is None:
-            if self.status()["budget_paused"]:
-                raise BudgetExceeded("hourly call budget exhausted")
-            self._calls.append(time.monotonic())
-            if self.settings.provider == "openai_compatible":
-                response = await self._openai_create(request)
-            else:
-                if self._sdk is None:
-                    self._sdk = AsyncAnthropic(max_retries=2)
-                response = await self._sdk.beta.messages.create(**request)
-            if self.settings.mode == "record":
-                await asyncio.to_thread(
-                    _append_record,
-                    path,
-                    {
-                        "key": key,
-                        "request_digest": key,
-                        "response_json": response.model_dump(mode="json"),
-                    },
-                )
-        usage = response.usage
-        self.tokens_in += (
-            usage.input_tokens
-            + (usage.cache_creation_input_tokens or 0)
-            + (usage.cache_read_input_tokens or 0)
+    key = os.environ.get(key_env)
+    if not key:
+        raise ValueError(f"Missing SellerOS provider credential: {key_env}")
+    if anthropic:
+        return AnthropicModel(
+            model_name,
+            provider=AnthropicProvider(api_key=key),
+            settings={
+                "anthropic_effort": "medium",
+                "anthropic_cache_instructions": True,
+            },
         )
-        self.tokens_out += usage.output_tokens
-        return response
-
-
-_client: LLMClient | None = None
-
-
-def configure_client(client: LLMClient) -> None:
-    """Install the shared transport (also supports offline SDK transports)."""
-    global _client
-    _client = client
-
-
-def get_client() -> LLMClient:
-    global _client
-    if _client is None:
-        _client = LLMClient(LlmSettings.from_env())
-    return _client
-
-
-def budget_status() -> dict[str, int | bool]:
-    """Snapshot for /api/status; replay tokens count, replay hits use no calls."""
-    return get_client().status()
+    provider = OpenAIProvider(base_url=settings.base_url, api_key=key)
+    names = OPENROUTER_MODELS if model_name == default_name else (model_name,)
+    return model_chain(*(OpenAIChatModel(name, provider=provider) for name in names))

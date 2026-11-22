@@ -5,11 +5,13 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from secrets import compare_digest
 from typing import Annotated, Protocol
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from eye.api import chat
@@ -22,6 +24,7 @@ from eye.contracts import (
     Incident,
     IncidentStatus,
     MetricDef,
+    SellerAlert,
     SentinelDecision,
     Series,
     SeriesPoint,
@@ -29,10 +32,14 @@ from eye.contracts import (
 )
 from eye.contracts_v2 import (
     DEFAULT_TENANT,
+    SELLER_REVERT_TOOL,
     IncidentCloseRequest,
     IncidentClosure,
     IncidentV2,
+    SellerPriceRevert,
+    SellerRevertApproval,
 )
+from eye.control import RunKilled
 from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
@@ -44,6 +51,8 @@ from eye.warehouse.queries import LocalQueries
 
 _SEGMENT = TypeAdapter(dict[Dimension, str])
 _PARAMS = TypeAdapter(dict)
+_BEARER = HTTPBearer(auto_error=False)
+Bearer = Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
 
 
 class ApprovalDecision(BaseModel):
@@ -57,6 +66,43 @@ def human_actor(request: Request) -> str:
         actor = request.headers.get("X-Eye-Person")
     if not isinstance(actor, str) or not actor.strip():
         raise HTTPException(401, "authenticated person required")
+    return actor
+
+
+def has_seller_revert_token(
+    credentials: HTTPAuthorizationCredentials | None, *, role: str
+) -> bool:
+    expected = os.environ.get(f"EYE_SELLER_REVERT_{role}_TOKEN")
+    other_role = "OPERATOR" if role == "SERVICE" else "SERVICE"
+    return bool(
+        expected
+        and expected != os.environ.get(f"EYE_SELLER_REVERT_{other_role}_TOKEN")
+        and credentials
+        and compare_digest(credentials.credentials.encode(), expected.encode())
+    )
+
+
+def seller_revert_actor(
+    request: Request, credentials: HTTPAuthorizationCredentials | None
+) -> str | None:
+    actor = getattr(request.state, "person", None)
+    if isinstance(actor, str) and actor.strip():
+        return actor
+    if has_seller_revert_token(credentials, role="OPERATOR"):
+        return "seller-revert-operator"
+    if os.environ.get("EYE_TRUST_PROXY_PERSON_HEADER") == "1":
+        actor = request.headers.get("X-Eye-Person")
+        if actor and actor.strip():
+            return actor
+    return None
+
+
+def kill_actor(request: Request, credentials: Bearer) -> str:
+    if not os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN"):
+        return human_actor(request)
+    actor = seller_revert_actor(request, credentials)
+    if actor is None:
+        raise HTTPException(401, "Operator credential required")
     return actor
 
 
@@ -265,46 +311,120 @@ def create_app(
         return orchestrator.control.audit_rows()
 
     @app.get("/api/approvals")
-    async def approvals() -> list[dict]:
-        return orchestrator.control.approval_rows()
+    async def approvals(request: Request, credentials: Bearer) -> list[dict]:
+        rows = orchestrator.control.approval_rows()
+        if seller_revert_actor(request, credentials) is not None:
+            return rows
+        return [row for row in rows if row["tool_name"] != SELLER_REVERT_TOOL]
+
+    def check_seller_revert_running(run_id: str) -> None:
+        try:
+            orchestrator.control.check(run_id, DEFAULT_TENANT)
+        except RunKilled as exc:
+            raise HTTPException(409, "SellerOS price reverts are stopped") from exc
+
+    @app.put("/api/approvals/seller-revert")
+    async def request_seller_revert(
+        action: SellerPriceRevert, credentials: Bearer
+    ) -> SellerRevertApproval:
+        if not has_seller_revert_token(credentials, role="SERVICE"):
+            raise HTTPException(401, "SellerOS service credential required")
+        key = action.idempotency_key()
+        run_id = f"selleros:{action.incident_id}"
+        check_seller_revert_running(run_id)
+        try:
+            row = orchestrator.control.ensure_pending(
+                key,
+                run_id,
+                action.incident_id,
+                SELLER_REVERT_TOOL,
+                action.model_dump(mode="json"),
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return SellerRevertApproval(
+            id=row["id"],
+            tool_name=row["tool_name"],
+            args=row["args"],
+            status=row["status"],
+            decided_by=row["decided_by"],
+        )
+
+    @app.get("/api/approvals/seller-revert/{id}/permission", status_code=204)
+    async def seller_revert_permission(id: str, credentials: Bearer) -> Response:
+        if not has_seller_revert_token(credentials, role="SERVICE"):
+            raise HTTPException(401, "SellerOS service credential required")
+        row = orchestrator.control.approval(id)
+        if row is None or row["tool_name"] != SELLER_REVERT_TOOL:
+            raise HTTPException(404, "Price revert approval not found")
+        if row["status"] != "approved" or not row["decided_by"]:
+            raise HTTPException(409, "Price revert is not approved")
+        check_seller_revert_running(row["run_id"])
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/approvals/{id}")
     async def decide_approval(
-        id: str, decision: ApprovalDecision, actor: str = Depends(human_actor)
+        id: str, decision: ApprovalDecision, request: Request, credentials: Bearer
     ) -> dict:
+        row = orchestrator.control.approval(id)
+        seller_revert = row is not None and row["tool_name"] == SELLER_REVERT_TOOL
+        if seller_revert:
+            actor = seller_revert_actor(request, credentials)
+            if actor is None:
+                raise HTTPException(401, "SellerOS operator credential required")
+        else:
+            actor = human_actor(request)
+        if row is None:
+            raise HTTPException(409, "unknown or already decided approval")
+        if decision.approve and seller_revert:
+            check_seller_revert_running(row["run_id"])
         try:
             orchestrator.control.decide(id, decision.approve, actor)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
+        if decision.approve and seller_revert:
+            action = SellerPriceRevert.model_validate(row["args"])
+            ack = await orchestrator.directory.notify_seller_os(
+                SellerAlert(
+                    incident_id=action.incident_id,
+                    seller_ids=[action.seller_id],
+                    skus=[action.sku],
+                    summary="Human-approved SellerOS price revert.",
+                    recommended_action="revert manual price",
+                ),
+                approval_id=id,
+            )
+            if not ack.received:
+                raise HTTPException(502, "Approval recorded; SellerOS delivery failed.")
         return {"id": id, "approved": decision.approve}
 
     @app.post("/api/runs/{id}/kill")
-    async def kill_run(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def kill_run(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("run", id, True, actor)
         return {"active": True}
 
     @app.delete("/api/runs/{id}/kill")
-    async def clear_run(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def clear_run(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("run", id, False, actor)
         return {"active": False}
 
     @app.post("/api/tenants/{id}/kill")
-    async def kill_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def kill_tenant(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("tenant", id, True, actor)
         return {"active": True}
 
     @app.delete("/api/tenants/{id}/kill")
-    async def clear_tenant(id: str, actor: str = Depends(human_actor)) -> dict:
+    async def clear_tenant(id: str, actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("tenant", id, False, actor)
         return {"active": False}
 
     @app.post("/api/kill")
-    async def kill_system(actor: str = Depends(human_actor)) -> dict:
+    async def kill_system(actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("system", DEFAULT_TENANT, True, actor)
         return {"active": True}
 
     @app.delete("/api/kill")
-    async def clear_system(actor: str = Depends(human_actor)) -> dict:
+    async def clear_system(actor: str = Depends(kill_actor)) -> dict:
         orchestrator.control.set_kill("system", DEFAULT_TENANT, False, actor)
         return {"active": False}
 

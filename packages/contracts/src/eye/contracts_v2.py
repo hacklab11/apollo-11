@@ -1,10 +1,18 @@
 """Tenant-scoped wire contracts; v1 remains available in eye.contracts."""
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
+from uuid import NAMESPACE_URL, uuid5
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from eye.contracts import (
     AddMetricRequest,
@@ -44,6 +52,8 @@ __all__ = [
     "ReportRequest",
     "ReportResult",
     "RunUsageSummary",
+    "SellerPriceRevert",
+    "SellerRevertApproval",
     "SkepticResult",
     "TaskMetadata",
     "TenantId",
@@ -51,6 +61,43 @@ __all__ = [
 ]
 
 EndState = Literal["done", "needs_input", "failed", "gave_up"]
+
+SELLER_REVERT_TOOL = "revert_manual_price"
+SELLER_REVERT_APPROVAL_METADATA_KEY = "seller_revert_approval_id"
+
+
+class SellerPriceRevert(BaseModel):
+    """The exact price change a human can authorize SellerOS to revert."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    incident_id: str = Field(min_length=1, max_length=256)
+    seller_id: str = Field(pattern=r"^S-[0-9]+$", max_length=32)
+    sku: str = Field(min_length=1, max_length=64)
+    changed_at: AwareDatetime
+    price: float = Field(gt=0, allow_inf_nan=False)
+    restore_price: float = Field(gt=0, allow_inf_nan=False)
+
+    @field_validator("changed_at")
+    @classmethod
+    def utc(cls, value: datetime) -> datetime:
+        return value.astimezone(UTC)
+
+    def idempotency_key(self) -> str:
+        return uuid5(
+            NAMESPACE_URL, f"SellerOS:{SELLER_REVERT_TOOL}:{self.model_dump_json()}"
+        ).hex
+
+
+class SellerRevertApproval(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    tool_name: Literal["revert_manual_price"]
+    args: SellerPriceRevert
+    status: Literal["pending", "approved", "rejected"]
+    decided_by: str | None
+
 
 A2A_TASK_STATES: dict[EndState, str] = {
     "done": "completed",

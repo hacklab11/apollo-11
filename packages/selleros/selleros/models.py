@@ -5,8 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Actor = Literal["selleros"]
-StepAction = Literal["llm_call", "tool_call", "a2a_call", "decision", "note"]
 CauseType = Literal[
     "release",
     "model_change",
@@ -30,23 +28,6 @@ CauseType = Literal[
     "seasonality",
     "unknown",
 ]
-
-
-class TrailStep(BaseModel):
-    id: str
-    investigation_id: str
-    n: int
-    real_ts: datetime
-    actor: Actor
-    action: StepAction
-    tool: str | None = None
-    input: dict = Field(default_factory=dict)
-    output_summary: str = Field(max_length=500)
-    output: dict | None = None
-    reason: str = ""
-    duration_ms: int = 0
-    tokens_in: int = 0
-    tokens_out: int = 0
 
 
 class SpecialistRequest(BaseModel):

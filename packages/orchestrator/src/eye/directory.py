@@ -23,7 +23,11 @@ from pydantic import BaseModel
 
 from eye.config import A2aSettings
 from eye.contracts import SellerAlert, SellerAlertAck
-from eye.contracts_v2 import AgentResult, TaskMetadata
+from eye.contracts_v2 import (
+    SELLER_REVERT_APPROVAL_METADATA_KEY,
+    AgentResult,
+    TaskMetadata,
+)
 
 
 class AgentDirectory:
@@ -116,7 +120,9 @@ class AgentDirectory:
                 MessageToDict(task.artifacts[0].parts[0].data)
             )
 
-    async def notify_seller_os(self, alert: SellerAlert) -> SellerAlertAck:
+    async def notify_seller_os(
+        self, alert: SellerAlert, *, approval_id: str | None = None
+    ) -> SellerAlertAck:
         try:
             with self.tracer.start_as_current_span("agent.selleros"):
                 headers = {"A2A-Version": "1.0"}
@@ -143,7 +149,15 @@ class AgentDirectory:
                                     ),
                                     Part(text=alert.summary),
                                 ],
-                            )
+                            ),
+                            metadata=(
+                                ParseDict(
+                                    {SELLER_REVERT_APPROVAL_METADATA_KEY: approval_id},
+                                    Struct(),
+                                )
+                                if approval_id is not None
+                                else None
+                            ),
                         )
                     )
                 task = response.task
