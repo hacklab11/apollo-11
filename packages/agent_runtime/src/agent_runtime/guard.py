@@ -19,6 +19,7 @@ from agent_runtime.idempotency import (
 )
 from agent_runtime.kill_switch import KillSwitch, RunScope
 from agent_runtime.limits import PriceTable
+from agent_runtime.models import serving_model
 
 
 @dataclass
@@ -62,7 +63,11 @@ class RunGuard(AbstractCapability[Any]):
         self.requests += 1
         self.input_tokens += response.usage.input_tokens
         self.output_tokens += response.usage.output_tokens
-        self.cost_usd += self.prices.cost(response.model_name or "", response.usage)
+        self.cost_usd += self.prices.cost(
+            response.model_name or "",
+            response.usage,
+            requested=serving_model(request_context.model, response),
+        )
         if self.cost_usd > self.max_cost_usd:
             raise CostLimitExceeded(
                 f"cost ${self.cost_usd:.6f} exceeds cap ${self.max_cost_usd:.6f}"
