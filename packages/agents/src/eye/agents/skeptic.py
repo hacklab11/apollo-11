@@ -47,6 +47,8 @@ from eye.contracts_v2 import SkepticResult
 from eye.registry.loader import Registry
 from eye.tools.models import (
     BaselineCompareOutput,
+    CheckFreshnessOutput,
+    CompareSegmentsOutput,
     ListEventsOutput,
     PlannedEffectCheckInput,
     PlannedEffectCheckOutput,
@@ -71,16 +73,15 @@ class _Deps:
     data: DataQueries
     tools: _WindowTools
     entry: _MetricInput
-    checks: dict[str, PlannedEffectCheckOutput] = field(default_factory=dict)
-    seasonal: bool = False
-
-
-@dataclass
-class _Trail(AbstractCapability[_Deps]):
+    freshness: SentinelSettings
     investigation_id: str
     on_step: Callable[[TrailStep], Awaitable[None]]
+    checks: dict[str, PlannedEffectCheckOutput] = field(default_factory=dict)
+    seasonal: bool = False
     n: int = 0
 
+
+class _Trail(AbstractCapability[_Deps]):
     async def after_model_request(
         self,
         ctx: RunContext[_Deps],
@@ -88,15 +89,15 @@ class _Trail(AbstractCapability[_Deps]):
         request_context: ModelRequestContext,
         response: ModelResponse,
     ) -> ModelResponse:
-        self.n += 1
+        ctx.deps.n += 1
         text = " ".join(
             part.content for part in response.parts if isinstance(part, TextPart)
         )
-        await self.on_step(
+        await ctx.deps.on_step(
             TrailStep(
                 id=str(uuid4()),
-                investigation_id=self.investigation_id,
-                n=self.n,
+                investigation_id=ctx.deps.investigation_id,
+                n=ctx.deps.n,
                 real_ts=datetime.now(UTC),
                 actor="skeptic",
                 action="llm_call",
@@ -146,12 +147,12 @@ class _Trail(AbstractCapability[_Deps]):
             summary = f"{type(exc).__name__}: tool {call.tool_name} failed"
             raise
         finally:
-            self.n += 1
-            await self.on_step(
+            ctx.deps.n += 1
+            await ctx.deps.on_step(
                 TrailStep(
                     id=str(uuid4()),
-                    investigation_id=self.investigation_id,
-                    n=self.n,
+                    investigation_id=ctx.deps.investigation_id,
+                    n=ctx.deps.n,
                     real_ts=datetime.now(UTC),
                     actor="skeptic",
                     action="tool_call",
@@ -189,6 +190,77 @@ class _PlanInput(BaseModel):
     event_id: str
 
 
+def list_events(ctx: RunContext[_Deps], args: _EventsInput) -> ListEventsOutput:
+    try:
+        return ctx.deps.tools.events(args, planned_only=True)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+def planned_effect_check(
+    ctx: RunContext[_Deps], args: _PlanInput
+) -> PlannedEffectCheckOutput:
+    deps = ctx.deps
+    try:
+        events = list_events(
+            ctx, _EventsInput(country=deps.entry.segment.get("country"))
+        )
+        if not any(
+            event.id == args.event_id
+            and all(
+                deps.entry.segment.get(dim) in value
+                if isinstance(value, list)
+                else deps.entry.segment.get(dim) == value
+                for dim, value in event.scope.items()
+            )
+            for event in events.events
+        ):
+            raise ValueError("Plan is outside the entry segment or evidence window")
+        result = deps.data.read(
+            ops.PLANNED,
+            PlannedEffectCheckInput(
+                event_id=args.event_id,
+                **deps.entry.model_dump(),
+                **deps.tools.window.bounds(),
+            ),
+        )
+        deps.checks[args.event_id] = result
+        return result
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+def check_freshness(ctx: RunContext[_Deps], args: _MetricInput) -> CheckFreshnessOutput:
+    try:
+        return ctx.deps.tools.freshness(args)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+def baseline_compare(
+    ctx: RunContext[_Deps], args: _MetricInput
+) -> BaselineCompareOutput:
+    try:
+        result = ctx.deps.tools.baseline(args)
+        if args == ctx.deps.entry:
+            ctx.deps.seasonal = bool(result.points) and all(
+                point.z is not None and abs(point.z) < ctx.deps.freshness.z_threshold
+                for point in result.points
+            )
+        return result
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+def compare_segments(
+    ctx: RunContext[_Deps], args: _ControlInput
+) -> CompareSegmentsOutput:
+    try:
+        return ctx.deps.tools.controls(args)
+    except ValueError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
 class Skeptic:
     def __init__(
         self,
@@ -207,6 +279,39 @@ class Skeptic:
             data = LocalQueries(con, registry, settings=self._freshness)
         self._data = data
         self.kill_switch = kill_switch or InMemoryKillSwitch()
+        outputs = end_state_outputs(SkepticResult)
+        outputs[0] = ToolOutput(SkepticResult, name="submit")
+        self._agent = Agent(
+            _model(self._llm),
+            name="skeptic",
+            deps_type=_Deps,
+            instructions=_PROMPT.read_text(),
+            output_type=outputs,
+            model_settings={
+                "max_tokens": self._llm.max_tokens,
+                "anthropic_effort": "medium",
+            },
+            capabilities=[_Trail()],
+            tools=[
+                Tool(list_events, description="List planned events only."),
+                Tool(
+                    planned_effect_check,
+                    description="Compare this plan to the entry metric and segment.",
+                ),
+                Tool(
+                    check_freshness,
+                    description="Check metric completeness.",
+                ),
+                Tool(
+                    baseline_compare,
+                    description="Compare to the seasonal baseline.",
+                ),
+                Tool(
+                    compare_segments,
+                    description="Compare affected and control segments.",
+                ),
+            ],
+        )
 
     async def review(
         self,
@@ -219,104 +324,10 @@ class Skeptic:
         window = _Window.from_anomaly(anomaly)
         tools = _WindowTools(self._data, window)
         entry = _MetricInput(metric=anomaly.metric, segment=anomaly.segment)
-        deps = _Deps(self._data, tools, entry)
-        checks = deps.checks
-
-        def baseline(args: _MetricInput) -> BaselineCompareOutput:
-            result = tools.baseline(args)
-            if args == entry:
-                deps.seasonal = bool(result.points) and all(
-                    point.z is not None and abs(point.z) < self._freshness.z_threshold
-                    for point in result.points
-                )
-            return result
-
-        def plans(args: _EventsInput) -> ListEventsOutput:
-            return tools.events(args, planned_only=True)
-
-        def check_plan(args: _PlanInput) -> PlannedEffectCheckOutput:
-            scoped_events = plans(_EventsInput(country=anomaly.segment.get("country")))
-            if not any(
-                event.id == args.event_id
-                and all(
-                    entry.segment.get(dim) in value
-                    if isinstance(value, list)
-                    else entry.segment.get(dim) == value
-                    for dim, value in event.scope.items()
-                )
-                for event in scoped_events.events
-            ):
-                raise ValueError("Plan is outside the entry segment or evidence window")
-            result = self._data.read(
-                ops.PLANNED,
-                PlannedEffectCheckInput(
-                    event_id=args.event_id, **entry.model_dump(), **window.bounds()
-                ),
-            )
-            checks[args.event_id] = result
-            return result
-
-        def tool(
-            name: str, description: str, schema: type[BaseModel], fn: Callable
-        ) -> Tool:
-            async def execute(ctx: RunContext[_Deps], **kwargs: Any) -> BaseModel:
-                try:
-                    args = schema.model_validate(kwargs, extra="forbid")
-                    if isinstance(ctx.deps.data, LocalQueries):
-                        return fn(args)
-                    return await asyncio.to_thread(fn, args)
-                except ValueError as exc:
-                    raise ModelRetry(str(exc)) from exc
-
-            return Tool.from_schema(
-                execute,
-                name=name,
-                description=description,
-                json_schema=schema.model_json_schema(),
-                takes_ctx=True,
-            )
-
-        outputs = end_state_outputs(SkepticResult)
-        outputs[0] = ToolOutput(SkepticResult, name="submit")
-        agent = Agent(
-            _model(self._llm),
-            name="skeptic",
-            deps_type=_Deps,
-            instructions=_PROMPT.read_text(),
-            output_type=outputs,
-            model_settings={
-                "max_tokens": self._llm.max_tokens,
-                "anthropic_effort": "medium",
-            },
-            capabilities=[_Trail(investigation_id, on_step)],
-            tools=[
-                tool("list_events", "List planned events only.", _EventsInput, plans),
-                tool(
-                    "planned_effect_check",
-                    "Compare this plan to the entry metric and segment.",
-                    _PlanInput,
-                    check_plan,
-                ),
-                tool(
-                    "check_freshness",
-                    "Check metric completeness.",
-                    _MetricInput,
-                    tools.freshness,
-                ),
-                tool(
-                    "baseline_compare",
-                    "Compare to the seasonal baseline.",
-                    _MetricInput,
-                    baseline,
-                ),
-                tool(
-                    "compare_segments",
-                    "Compare affected and control segments.",
-                    _ControlInput,
-                    tools.controls,
-                ),
-            ],
+        deps = _Deps(
+            self._data, tools, entry, self._freshness, investigation_id, on_step
         )
+        checks = deps.checks
         payload = {
             "entry": anomaly.model_dump(mode="json"),
             "hypothesis": hypothesis.model_dump(mode="json") if hypothesis else None,
@@ -325,7 +336,7 @@ class Skeptic:
             "evidence_start": window.lookback.isoformat(),
         }
         outcome = await run_agent(
-            agent,
+            self._agent,
             json.dumps(payload, sort_keys=True),
             deps=deps,
             scope=RunScope(run_id=investigation_id, tenant_id="marketplace"),

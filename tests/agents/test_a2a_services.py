@@ -48,7 +48,7 @@ def metadata() -> TaskMetadata:
     )
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
     turns: deque[list[dict[str, Any]]] = deque()
 

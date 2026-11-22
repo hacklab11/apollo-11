@@ -1,17 +1,27 @@
 from collections.abc import Iterator
 from contextlib import closing
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import duckdb
 import pytest
-from pydantic_ai import models
+from pydantic_ai import Tool, models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 from test_detective import START, anomaly, seed
 
 from agent_runtime import UnpricedModel
-from eye.agents.skeptic import Skeptic, _prices
+from eye.agents.investigation_tools import _ControlInput, _EventsInput, _MetricInput
+from eye.agents.skeptic import (
+    Skeptic,
+    _PlanInput,
+    _prices,
+    baseline_compare,
+    check_freshness,
+    compare_segments,
+    list_events,
+    planned_effect_check,
+)
 from eye.config import LlmSettings
 from eye.registry.loader import load_registry
 from eye.sim.store import Store
@@ -39,6 +49,59 @@ def test_configured_prices() -> None:
         prices.cost("skeptic", RequestUsage())
     with pytest.raises(UnpricedModel):
         prices.cost("unconfigured:free", RequestUsage())
+
+
+@pytest.mark.parametrize(
+    ("fn", "schema"),
+    [
+        (list_events, _EventsInput),
+        (planned_effect_check, _PlanInput),
+        (check_freshness, _MetricInput),
+        (baseline_compare, _MetricInput),
+        (compare_segments, _ControlInput),
+    ],
+)
+def test_flattened_tool_schema(fn: object, schema: type) -> None:
+    generated = Tool(fn).function_schema.json_schema
+    assert (
+        generated["properties"].keys()
+        == schema.model_json_schema()["properties"].keys()
+    )
+    assert "args" not in generated["properties"]
+
+
+@pytest.mark.asyncio
+async def test_agent_reused_with_fresh_trail_state(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit",
+                    {
+                        "verdict": "not_innocent",
+                        "explained_share": 0,
+                        "reasons": [],
+                        "evidence": [],
+                    },
+                )
+            ]
+        )
+
+    model = FunctionModel(respond, model_name="claude-opus-5-5")
+    factory = Mock(return_value=model)
+    monkeypatch.setattr("eye.agents.skeptic._model", factory)
+    skeptic = Skeptic(world, load_registry(world))
+    agent = skeptic._agent
+    for run_id in ("first", "second"):
+        callback = AsyncMock()
+        await skeptic.review(anomaly("s7"), run_id, callback)
+        assert skeptic._agent is agent
+        steps = [call.args[0] for call in callback.call_args_list]
+        assert [step.n for step in steps] == [1, 2]
+        assert all(step.investigation_id == run_id for step in steps)
+    assert factory.call_count == 1
 
 
 @pytest.mark.asyncio
