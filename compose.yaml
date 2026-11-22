@@ -75,6 +75,9 @@ services:
   eye-mcp:
     <<: *service
     command: [eye-mcp]
+    environment:
+      <<: *environment
+      EYE_MCP_ALLOWED_HOSTS: eye-mcp:8100
     depends_on:
       eye-core:
         condition: service_healthy

@@ -18,4 +18,20 @@ check "$(url selleros 8300)/healthz"
 check "$(url eye-mcp 8100)/healthz"
 check "$core/api/metrics"
 check "$core/"
+docker compose exec -T eye-core python - <<'PY'
+import asyncio
+import os
+
+from mcp import Client
+
+
+async def main():
+    async with Client(os.environ["EYE_MCP_URL"]) as client:
+        tools = (await client.list_tools()).tools
+        assert "system_status" in {tool.name for tool in tools}, tools
+        print(f"OK Core -> MCP tools/list ({len(tools)} tools)")
+
+
+asyncio.run(main())
+PY
 printf 'Compose smoke passed (health, public metrics API, web UI).\n'

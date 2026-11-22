@@ -36,6 +36,8 @@ warning without preventing startup; this is not an agent-quality eval.
 resume it through the UI/API when ready. Containers bind
 `EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
 `EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
+`EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
+allowlist (Compose adds `eye-mcp:8100`), retaining DNS-rebinding protection;
 the A2A URLs live in settings. SellerOS uses `SELLEROS_DATA_DIR` for its shared
 export directory. Compose uses host port ranges and no fixed container names,
 so services can be independently replicated (for example,
