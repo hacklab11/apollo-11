@@ -22,6 +22,8 @@ from eye.contracts import (
     Event,
     Incident,
     InvestigationResult,
+    SellerAlert,
+    SellerAlertAck,
     SentinelDecision,
     TrailStep,
 )
@@ -364,6 +366,28 @@ class Orchestrator(DBOSConfiguredInstance):
     async def record_step(self, step: TrailStep, ts: datetime | None = None) -> None:
         self.incidents.add_step(step)
         self.emit("trail_step", step, ts)
+
+    async def notify_seller_os(self, alert: SellerAlert) -> SellerAlertAck:
+        run_id = DBOS.workflow_id
+        if run_id is None:
+            raise RuntimeError("SellerOS notifications require a workflow")
+        audit = {
+            "actor": "orchestrator",
+            "run_id": run_id,
+            "incident_id": alert.incident_id,
+            "agent": "selleros",
+        }
+        try:
+            self.control.check(run_id, DEFAULT_TENANT)
+        except RunKilled:
+            self.control.audit(action="agent_blocked", **audit)
+            raise
+        self.control.audit(action="agent_requested", **audit)
+        result = await self.directory.notify_seller_os(alert)
+        self.control.audit(
+            action="agent_done" if result.received else "agent_failed", **audit
+        )
+        return result
 
     @DBOS.step()
     def previous_decisions(self, ts: datetime) -> list[SentinelDecision]:

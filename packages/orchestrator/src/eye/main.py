@@ -75,7 +75,7 @@ def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[Fas
             z_lookup,
             invalidate=engine.invalidate if engine else lambda: None,
         )
-        incidents.notify = orchestrator.directory.notify_seller_os
+        incidents.notify = orchestrator.notify_seller_os
         yield create_app(orchestrator, connection, registry, graph, engine, data=client)
 
 

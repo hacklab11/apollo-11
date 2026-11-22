@@ -7,7 +7,7 @@ from factories import make_anomaly, make_incident_s7, make_trail_s7
 from scripted_agents import ScriptedAgents
 
 from eye.config import Settings
-from eye.contracts import InvestigationResult, SentinelDecision
+from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision
 from eye.contracts_v2 import (
     AgentResult,
     DetectRequest,
@@ -351,3 +351,81 @@ async def test_terminal_or_deferred_incidents_are_not_sent_as_open(
     await core.step_once()
     payload = scripted.requests[0][1]["params"]["message"]["parts"][0]["data"]
     assert payload["open_incidents"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scope", ["run", "tenant", "system", "unrelated", "none", "failed"]
+)
+async def test_selleros_notification_respects_kills_and_audits(
+    workflow, scope: str
+) -> None:
+    core, scripted = workflow
+    anomaly = make_anomaly().model_copy(update={"ts": core.sim.now})
+    decision = SentinelDecision(
+        anomaly=anomaly, action="investigate", reason="Seller impact"
+    )
+    scripted.executors["detect"].result = AgentResult(
+        status="done", result=DetectResult(decisions=[decision])
+    )
+    scripted.executors["investigate"].result = AgentResult(
+        status="done",
+        result=InvestigateResult(
+            investigation=InvestigationResult(
+                investigation_id="inv_sellers",
+                entry=anomaly,
+                verdict="HYPOTHESIS",
+                summary="Seller impact requires review",
+                root_cause=None,
+                hypotheses=[],
+                contributions=[],
+                open_questions=[],
+                suggested_actions=[],
+                steps_used=0,
+                stop_reason="budget",
+                affected_sellers=["S-01"],
+            )
+        ),
+    )
+    sent = []
+
+    async def notify(alert):
+        sent.append(alert)
+        return SellerAlertAck(received=scope != "failed", actions_taken=[])
+
+    core.directory.notify_seller_os = notify
+    core.incidents.notify = core.notify_seller_os
+    call = core.directory.call
+    run_id = f"hour-default-{core.sim.now.isoformat()}"
+
+    async def call_then_kill(skill, payload, metadata, result_type):
+        result = await call(skill, payload, metadata, result_type)
+        if skill == "investigate" and scope not in {"none", "failed"}:
+            target = {
+                "run": run_id,
+                "tenant": "default",
+                "system": "",
+                "unrelated": "another-run",
+            }[scope]
+            core.control.set_kill(
+                "run" if scope == "unrelated" else scope, target, True, "reviewer"
+            )
+        return result
+
+    core.directory.call = call_then_kill
+    await core.step_once()
+    blocked = scope in {"run", "tenant", "system"}
+    assert len(sent) == (0 if blocked else 1)
+    assert any(
+        row["agent"] == "selleros"
+        and row["run_id"] == run_id
+        and row["action"]
+        == (
+            "agent_blocked"
+            if blocked
+            else "agent_failed"
+            if scope == "failed"
+            else "agent_done"
+        )
+        for row in core.control.audit_rows()
+    )
