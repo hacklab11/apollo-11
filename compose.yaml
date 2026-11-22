@@ -127,7 +127,8 @@ services:
       OTEL_SERVICE_NAME: sim
       SIM_HOST: 0.0.0.0
       SIM_PORT: "8100"
-      SIM_SECONDS_PER_SIM_HOUR:
+      # Slightly slower than Core's measured pace (~4.3 s/hour) so Core never falls behind.
+      SIM_SECONDS_PER_SIM_HOUR: ${SIM_SECONDS_PER_SIM_HOUR:-4}
       SIM_WORLD_DB: /app/data/world.duckdb
       SIM_LAKE_DIR: /app/data/lake
       EYE_AUTH_CLIENT_ID: sim
