@@ -4,12 +4,14 @@ from collections.abc import Iterator
 import pytest
 from e2e import provider
 from fastapi.testclient import TestClient
+from httpx import Response
 
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
     provider.calls.clear()
     provider.errors.clear()
+    provider.investigate_after = None
     with TestClient(provider.app) as client:
         yield client
 
@@ -28,7 +30,7 @@ def completion(model: str, payload: dict, outputs: list[dict] | None = None) -> 
     }
 
 
-def post(client: TestClient, body: dict):
+def post(client: TestClient, body: dict) -> Response:
     return client.post(
         "/v1/chat/completions",
         json=body,
@@ -56,6 +58,58 @@ def test_reporter_returns_narrative_without_tools(client: TestClient) -> None:
         == "Electronics price-change investigation"
     )
     assert "tool_calls" not in message
+
+
+@pytest.mark.parametrize(
+    ("ts", "completeness", "expected"),
+    [
+        ("2026-11-27T09:00:00Z", 1, "ignore"),
+        ("2026-11-27T10:00:00Z", 1, "investigate"),
+        ("2026-11-27T10:00:00Z", 0.5, "defer"),
+    ],
+)
+def test_sentinel_follows_injected_schedule(
+    client: TestClient, ts: str, completeness: float, expected: str
+) -> None:
+    payload = {
+        "ts": ts,
+        "min_completeness": 0.9,
+        "open_incidents": [],
+        "candidates": [
+            {
+                "completeness": completeness,
+                "anomaly": {
+                    "metric": "aov",
+                    "segment": {"category": "electronics"},
+                    "delta": -1,
+                },
+            }
+        ],
+    }
+    body = completion("sentinel", payload)
+    response = post(client, body)
+    call = response.json()["choices"][0]["message"]["tool_calls"][0]
+    action = json.loads(call["function"]["arguments"])["decisions"][0]["action"]
+    assert action == ("defer" if completeness < 0.9 else "ignore")
+    assert (
+        client.post(
+            "/scenario", json={"investigate_after": "2026-11-27T10:00:00Z"}
+        ).status_code
+        == 200
+    )
+    response = post(client, body)
+    call = response.json()["choices"][0]["message"]["tool_calls"][0]
+    assert (
+        json.loads(call["function"]["arguments"])["decisions"][0]["action"] == expected
+    )
+
+
+def test_rejects_invalid_scenario_schedule(client: TestClient) -> None:
+    assert (
+        client.post("/scenario", json={"investigate_after": "not-a-date"}).status_code
+        == 422
+    )
+    assert provider.investigate_after is None
 
 
 @pytest.mark.parametrize(

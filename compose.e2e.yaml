@@ -27,21 +27,18 @@ services:
   sim-generate:
     <<: *offline
 
+  sim:
+    <<: *offline
+    ports: !override ["127.0.0.1::8100"]
+
   eye-data:
     <<: *offline
 
   eye-core:
     <<: *offline
-    command: [sh, -ec, 'if [ ! -s data/world.duckdb ]; then cp /app/baseline/world.duckdb data/world.duckdb; fi; exec eye-core']
-    environment:
-      <<: *offline-environment
-      EYE_DATA_URL: ""
     volumes:
       - ./tests/e2e/settings.yaml:/app/config/settings.yaml:ro
       - ./tests/e2e:/e2e:ro
-      - seller-data:/app/packages/selleros/data
-      - e2e-core-data:/app/data
-      - eye-data:/app/baseline:ro
     depends_on:
       scripted-model:
         condition: service_healthy
@@ -60,6 +57,3 @@ services:
       SELLEROS_BASE_URL: http://scripted-model:8400/v1
       SELLEROS_API_KEY_ENV: EYE_E2E_TOKEN
       SELLEROS_MODEL: unsupported
-
-volumes:
-  e2e-core-data:

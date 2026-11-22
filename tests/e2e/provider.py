@@ -6,11 +6,16 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 app = FastAPI()
 calls: Counter[str] = Counter()
 errors: list[str] = []
+investigate_after: datetime | None = None
+
+
+class ScenarioSchedule(BaseModel):
+    investigate_after: AwareDatetime
 
 
 class CompletionRequest(BaseModel):
@@ -110,7 +115,8 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             elif (
                 not selected
                 and not payload["open_incidents"]
-                and datetime.fromisoformat(payload["ts"]).hour >= 11
+                and investigate_after is not None
+                and datetime.fromisoformat(payload["ts"]) >= investigate_after
                 and anomaly["metric"]
                 in {"aov", "first_party_margin", "contribution_margin"}
                 and anomaly["segment"].get("category", "electronics") == "electronics"
@@ -186,6 +192,13 @@ async def healthz() -> dict[str, str]:
 @app.get("/stats")
 async def stats() -> dict[str, Any]:
     return {"calls": dict(calls), "errors": errors}
+
+
+@app.post("/scenario")
+async def scenario(schedule: ScenarioSchedule) -> dict[str, str]:
+    global investigate_after
+    investigate_after = schedule.investigate_after
+    return {"investigate_after": investigate_after.isoformat()}
 
 
 @app.post("/v1/chat/completions")
