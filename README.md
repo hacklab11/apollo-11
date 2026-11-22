@@ -12,6 +12,7 @@ The [Compose stack](compose.yaml) runs:
 - `eye-specialists`: Growth, Marketplace and Discovery A2A endpoints; `selleros`: independent seller-side service.
 - `web`: React workspace behind nginx; `eye-mcp`: MCP facade over Core.
 - `lgtm`: Grafana, logs, metrics and traces; `egress-proxy`: allowlisted agent internet access.
+- `auth`: OAuth client-credentials issuer and signing authority for A2A agent cards.
 
 See the [architecture](docs/specs/architecture.md) and [documentation index](docs/README.md).
 
@@ -47,6 +48,27 @@ docker compose down
 
 Named volumes retain data on shutdown. The S8 test requires a fresh project with no prior incidents;
 use a separate project name rather than deleting a live project's volumes.
+
+## Service authentication
+
+Every A2A JSON-RPC call requires a short-lived RS256 JWT from `auth`. Scopes are
+`<agent>:<skill_id>`; Core's seller price-revert endpoints require `selleros:revert`
+instead of a static service token. The human operator token is unchanged. Missing or
+invalid JWTs return 401; insufficient scopes return 403 (or a failed multi-skill task).
+Agent cards and health endpoints remain public. Services enroll signed cards at startup;
+callers verify signatures against the issuer's JWKS before routing and reject unsigned
+or tampered cards. Being on a Compose network does not grant access.
+
+Copy the development-only `EYE_AUTH_<CLIENT>_SECRET` values from `.env.example` and
+replace them outside local development. Compose supplies each client only its own secret
+and uses `EYE_AUTH_URL=http://auth:8500`. Standalone callers set `EYE_AUTH_CLIENT_ID` and
+`EYE_AUTH_CLIENT_SECRET`; client scope grants and secret environment names live in
+`config/auth.yaml` (`EYE_AUTH_CONFIG` overrides the path). The issuer persists its key in
+the `auth-keys` volume (`EYE_AUTH_KEY_PATH` overrides the file path); retain it across restarts.
+Local Compose explicitly sets `AUTHLIB_INSECURE_TRANSPORT=1` for internal HTTP. Shared or
+production deployments must use TLS and remove that exception. See
+[Eye Auth](packages/auth/README.md) for endpoints and library usage. The offline gate below
+also checks missing-token 401, wrong-scope 403, and unsigned/tampered-card rejection.
 
 ## Connect real data
 
