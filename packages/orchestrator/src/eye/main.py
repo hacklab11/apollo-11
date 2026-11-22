@@ -311,7 +311,7 @@ def main() -> None:
     with core_app(settings, data_url=os.environ.get("EYE_DATA_URL")) as app:
         uvicorn.run(
             app,
-            host="127.0.0.1",
+            host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
             port=settings.ports.core,
             access_log=False,
             log_config=None,
