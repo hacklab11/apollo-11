@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from eye.config import SentinelSettings, load_settings
 from eye.contracts import GraphView, MetricDef
 from eye.graph.bootstrap import load_or_bootstrap
-from eye.graph.store import GRAPH_PATH
+from eye.graph.store import GRAPH_PATH, GraphStore
 from eye.registry.loader import CONFIG_DIR, load_registry
 from eye.schema import validate_schema
 from eye.warehouse import operations as ops
@@ -68,11 +68,12 @@ class Warehouse:
                 self.queries.engine.invalidate()
             yield self.queries
 
-    def graph(self, queries: LocalQueries) -> None:
+    def graph(self, queries: LocalQueries) -> GraphStore:
         if queries.graph is None:
             queries.graph = load_or_bootstrap(
                 queries.engine, path=self.graph_path, config_dir=self.config_dir
             )
+        return queries.graph
 
 
 def create_app(warehouse: Warehouse) -> FastAPI:
@@ -80,10 +81,12 @@ def create_app(warehouse: Warehouse) -> FastAPI:
 
     @app.get("/healthz")
     def health() -> ops.PartitionWindow:
-        window = partitions()
-        if window.latest is None:
-            raise HTTPException(503, "no completed warehouse hours")
-        return window
+        with warehouse.snapshot() as queries:
+            window = queries.partitions()
+            if window.latest is None:
+                raise HTTPException(503, "no completed warehouse hours")
+            warehouse.graph(queries)
+            return window
 
     @app.get("/v1/partitions")
     def partitions() -> ops.PartitionWindow:
@@ -93,8 +96,7 @@ def create_app(warehouse: Warehouse) -> FastAPI:
     @app.get("/v1/metrics")
     def metrics() -> list[MetricDef]:
         with warehouse.snapshot() as queries:
-            warehouse.graph(queries)
-            return queries._graph().metrics()
+            return warehouse.graph(queries).metrics()
 
     @app.get("/v1/graph")
     def graph(node: str | None = None, depth: int | None = None) -> GraphView:
