@@ -13,7 +13,7 @@ Three specialist agents and one external agent (SellerOS) over A2A. An MCP serve
 1. `docs/README.md` (index)
 2. Your task card in `docs/tasks/`
 3. The specs your card lists under "Read first"
-4. `docs/specs/02-contracts.md` — all shared data shapes. Use `packages/contracts/src/eye/contracts.py`; do not redefine models.
+4. `docs/specs/02-contracts.md` — all shared data shapes. New code uses `packages/contracts/src/eye/contracts_v2.py`; v1 remains in `contracts.py`. Do not redefine models.
 
 ## Rules
 

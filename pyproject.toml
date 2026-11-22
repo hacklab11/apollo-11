@@ -66,6 +66,7 @@ name = "Production does not import simulator"
 type = "forbidden"
 source_modules = [
     "eye.contracts",
+    "eye.contracts_v2",
     "eye.config",
     "eye.schema",
     "eye.registry",
@@ -92,6 +93,7 @@ name = "Contracts and config are foundational"
 type = "forbidden"
 source_modules = [
     "eye.contracts",
+    "eye.contracts_v2",
     "eye.config",
 ]
 forbidden_modules = [
@@ -116,6 +118,11 @@ forbidden_modules = [
 name = "Contracts and config do not import one another"
 type = "independence"
 modules = ["eye.contracts", "eye.config"]
+
+[[tool.importlinter.contracts]]
+name = "Contracts v2 and config do not import one another"
+type = "independence"
+modules = ["eye.contracts_v2", "eye.config"]
 
 [[tool.importlinter.contracts]]
 name = "Data and LLM stay below agents and orchestration"

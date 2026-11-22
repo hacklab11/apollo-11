@@ -525,12 +525,14 @@ name = "eye-contracts"
 version = "0.1.0"
 source = { editable = "packages/contracts" }
 dependencies = [
+    { name = "agent-runtime" },
     { name = "pydantic" },
     { name = "pyyaml" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-runtime", editable = "packages/agent_runtime" },
     { name = "pydantic", specifier = "==2.14.4" },
     { name = "pyyaml", specifier = "==6.0.4" },
 ]
