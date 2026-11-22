@@ -2,10 +2,7 @@
 
 import argparse
 import asyncio
-import json
-import logging
 import os
-import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,7 +10,6 @@ from threading import Lock
 
 import duckdb
 import httpx
-import logfire
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
@@ -26,7 +22,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from agent_runtime import Budget, RunScope, RunUsageSummary
-from agent_runtime.tracing import instrument_app, setup_telemetry
+from agent_runtime.tracing import configure_logging, instrument_app
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
 from eye.contracts_v2 import (
@@ -360,17 +356,7 @@ def main() -> None:
     parser.add_argument("agent", choices=PORTS)
     name = parser.parse_args().agent
     port = PORTS[name]
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(_JsonLogFormatter())
-    handlers: list[logging.Handler] = [handler]
-    if setup_telemetry():
-        # Also export logs over OTLP so Grafana shows them inside the run's trace.
-        handlers.append(logfire.LogfireLoggingHandler())
-    logging.basicConfig(
-        level=os.environ.get("EYE_LOG_LEVEL", "WARNING").upper(),
-        handlers=handlers,
-        force=True,
-    )
+    configure_logging()
     settings = load_settings()
     uvicorn.run(
         instrument_app(
@@ -385,14 +371,3 @@ def main() -> None:
         access_log=False,
         log_config=None,
     )
-
-
-class _JsonLogFormatter(logging.Formatter):
-    def format(self, record: logging.LogRecord) -> str:
-        return json.dumps(
-            {
-                "level": record.levelname,
-                "logger": record.name,
-                "message": record.getMessage(),
-            }
-        )

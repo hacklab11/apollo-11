@@ -10,6 +10,7 @@ x-service: &service
     EYE_AUTH_URL: http://auth:8500
     OTEL_EXPORTER_OTLP_ENDPOINT: http://lgtm:4318
     OTEL_METRIC_EXPORT_INTERVAL: "5000"
+    EYE_LOG_LEVEL: ${EYE_LOG_LEVEL:-INFO}
   volumes:
     - ./config/compose.yaml:/app/config/settings.yaml:ro
   networks: [eye]

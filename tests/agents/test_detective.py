@@ -765,13 +765,20 @@ async def test_logs_tool_failures_and_outcome(
             ("submit", submission(hypothesis(), "HYPOTHESIS").model_dump(mode="json")),
         ],
     )
-    with caplog.at_level("INFO", logger="eye.agents.detective"):
+    with caplog.at_level("INFO"):
         await Detective(world, registry, make_graph(registry, "s3")).investigate(
             anomaly("s3"), AsyncMock(), investigation_id="inv-log"
         )
-    failed = [r.getMessage() for r in caplog.records if "tool_failed" in r.getMessage()]
+    failed = [
+        r.getMessage() for r in caplog.records if "agent tool_error" in r.getMessage()
+    ]
     assert failed and "tool=mix_rate_split" in failed[0]
     assert "not_a_metric" in failed[0]
     finished = [r for r in caplog.records if "detective finished" in r.getMessage()]
     assert "investigation=inv-log" in finished[0].getMessage()
     assert "verdict=HYPOTHESIS" in finished[0].getMessage()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any(
+        "agent model_response" in m and "call mix_rate_split" in m for m in messages
+    )
+    assert any("agent run_end" in m and "end_state=done" in m for m in messages)
