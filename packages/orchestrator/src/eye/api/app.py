@@ -1,9 +1,9 @@
 """Public HTTP API and static application."""
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-import os
 from pathlib import Path
 from typing import Annotated, Protocol
 

@@ -35,7 +35,7 @@ services:
   eye-specialists:
     <<: *service
     command: [eye-specialists]
-    ports: ["127.0.0.1:${SPECIALISTS_PORT:-8200}:8200"]
+    ports: ["127.0.0.1:${SPECIALISTS_PORT:-8200-8209}:8200"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=2)"]
@@ -54,7 +54,7 @@ services:
         condition: service_completed_successfully
     volumes:
       - seller-data:/app/packages/selleros/data
-    ports: ["127.0.0.1:${SELLEROS_PORT:-8300}:8300"]
+    ports: ["127.0.0.1:${SELLEROS_PORT:-8300-8309}:8300"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8300/healthz', timeout=2)"]
@@ -73,7 +73,7 @@ services:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       - eye-data:/app/data
       - seller-data:/app/packages/selleros/data
-    ports: ["127.0.0.1:${CORE_PORT:-8000}:8000"]
+    ports: ["127.0.0.1:${CORE_PORT:-8000-8009}:8000"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/status', timeout=2)"]
@@ -84,7 +84,7 @@ services:
     depends_on:
       eye-core:
         condition: service_healthy
-    ports: ["127.0.0.1:${MCP_PORT:-8100}:8100"]
+    ports: ["127.0.0.1:${MCP_PORT:-8100-8109}:8100"]
     healthcheck:
       <<: *health
       test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/healthz', timeout=2)"]
@@ -94,5 +94,4 @@ volumes:
   seller-data:
 
 networks:
-  eye:
-    internal: true
+  eye: {}

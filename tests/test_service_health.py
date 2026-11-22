@@ -3,13 +3,17 @@ import pytest
 
 from eye.config import Settings
 from eye.mcp_server import create_server
+from eye.specialists import app as specialists_module
 from eye.specialists.app import create_app as specialists_app
+from eye.specialists.tools import DataClient
 from selleros.server import create_app as selleros_app
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("service", ["specialists", "selleros", "mcp"])
-async def test_health_without_data_or_credentials(service: str, monkeypatch) -> None:
+async def test_health_without_data_or_credentials(
+    service: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     if service == "specialists":
@@ -29,17 +33,15 @@ async def test_health_without_data_or_credentials(service: str, monkeypatch) -> 
 
 
 @pytest.mark.asyncio
-async def test_specialists_configured_core_url(monkeypatch) -> None:
-    from eye.specialists import app as module
+async def test_specialists_configured_core_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    urls: list[str] = []
+    original = specialists_module.DataClient
 
-    urls = []
-    original = module.DataClient
-
-    def capture(http: httpx.AsyncClient, base_url: str):
+    def capture(http: httpx.AsyncClient, base_url: str) -> DataClient:
         urls.append(base_url)
         return original(http, base_url)
 
-    monkeypatch.setattr(module, "DataClient", capture)
+    monkeypatch.setattr(specialists_module, "DataClient", capture)
     monkeypatch.setenv("EYE_CORE_URL", "http://eye-core:8000")
     app = specialists_app(Settings())
     async with app.router.lifespan_context(app):

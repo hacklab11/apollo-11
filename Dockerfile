@@ -6,8 +6,6 @@ COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=0
 WORKDIR /app
 COPY uv.lock pyproject.toml ./
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-dev --no-install-workspace
 COPY packages ./packages
 COPY sim ./sim
 COPY README.md ./
