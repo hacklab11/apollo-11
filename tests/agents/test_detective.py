@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from eye.a2a_client import A2AClient
 from eye.agents.detective import Detective, _Submission
+from eye.agents.skeptic import Skeptic
 from eye.api.data_api import create_router
 from eye.config import A2aSettings, DetectiveSettings, LlmSettings, Settings
 from eye.contracts import (
@@ -217,6 +218,7 @@ async def scenario(
                 registry,
                 make_graph(registry, case),
                 a2a=A2AClient(settings.a2a, http_client=http),
+                review=Skeptic(world, registry).review,
             )
             result = await detective.investigate(
                 anomaly(case), trail, investigation_id=f"inv-{case}"

@@ -16,9 +16,7 @@ import duckdb
 from pydantic import AwareDatetime, BaseModel, Field
 
 from eye.a2a_client import A2AClient
-from eye.agents.skeptic import (
-    Skeptic,
-    SkepticResult,
+from eye.agents.investigation_tools import (
     _ControlInput,
     _EventsInput,
     _MetricInput,
@@ -43,6 +41,7 @@ from eye.contracts import (
     TrailStep,
     Verdict,
 )
+from eye.contracts_v2 import IncidentV2, SkepticResult
 from eye.llm.client import BudgetExceeded, LLMUnavailable
 from eye.llm.runtime import AgentRefused, AgentSpec, ToolSpec, run_agent
 from eye.registry.loader import Registry
@@ -261,6 +260,17 @@ class DetectiveGraph(Protocol):
     def cycles_through(self, node: str) -> list[list[str]]: ...
 
 
+class SkepticReview(Protocol):
+    async def __call__(
+        self,
+        anomaly: Anomaly,
+        investigation_id: str,
+        on_step: Callable[[TrailStep], Awaitable[None]],
+        *,
+        hypothesis: Hypothesis | None = None,
+    ) -> SkepticResult: ...
+
+
 class Detective:
     def __init__(
         self,
@@ -273,6 +283,7 @@ class Detective:
         freshness: SentinelSettings | None = None,
         llm: LlmSettings | None = None,
         data: DataQueries | None = None,
+        review: SkepticReview | None = None,
     ) -> None:
         self._registry = registry
         self._graph = graph
@@ -284,7 +295,7 @@ class Detective:
             assert con is not None and registry is not None
             data = LocalQueries(con, registry, settings=self._freshness)
         self._data = data
-        self._skeptic = Skeptic(data=data, freshness=self._freshness, llm=self._llm)
+        self._review = review
 
     def _metrics(self) -> dict[str, MetricDef]:
         if self._registry is not None:
@@ -424,7 +435,7 @@ class Detective:
         on_step: Callable[[TrailStep], Awaitable[None]],
         *,
         investigation_id: str | None = None,
-        open_incidents: Iterable[Incident] = (),
+        open_incidents: Iterable[Incident | IncidentV2] = (),
     ) -> InvestigationResult:
         investigation_id = investigation_id or uuid4().hex
         window = _Window.from_anomaly(anomaly)
@@ -579,7 +590,9 @@ class Detective:
             )
             if hypothesis is None:
                 raise ValueError("Unknown hypothesis; call update_hypotheses first")
-            review = await self._skeptic.review(
+            if self._review is None:
+                raise ValueError("Skeptic is unavailable")
+            review = await self._review(
                 anomaly, investigation_id, emit, hypothesis=hypothesis
             )
             reviews[hypothesis.id] = review
@@ -704,7 +717,7 @@ class Detective:
         active_incidents = [
             incident
             for incident in open_incidents
-            if incident.status in {"investigating", "open", "persisting"}
+            if incident.status in {"investigating", "open", "persisting", "mitigating"}
         ]
         payload = {
             "entry": anomaly.model_dump(mode="json"),

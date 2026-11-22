@@ -20,6 +20,7 @@ from fastapi import FastAPI
 from eye.a2a_client import A2AClient
 from eye.agents.reporter import Reporter
 from eye.agents.sentinel import Sentinel
+from eye.agents.skeptic import Skeptic
 from eye.api.app import create_app
 from eye.config import Settings, load_settings
 from eye.contracts import InvestigationResult, TrailStep
@@ -252,6 +253,9 @@ def core_app(settings: Settings, *, data_url: str | None = None) -> Iterator[Fas
                 freshness=settings.sentinel,
                 llm=settings.llm,
                 data=queries,
+                review=Skeptic(
+                    data=queries, freshness=settings.sentinel, llm=settings.llm
+                ).review,
             ).investigate
             if detective is not None
             else None
