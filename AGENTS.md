@@ -9,10 +9,9 @@ Read [README.md](README.md), the [documentation index](docs/README.md), and the 
 | `packages/contracts` | `eye.contracts_v2` shared wire shapes and shared configuration |
 | `packages/data` | schema, registry, graph, deterministic tools, warehouse HTTP API/client |
 | `packages/agent_runtime` | shared PydanticAI execution guards, budgets, resilience and tracing |
-| `packages/llm` | shared core-agent and specialist prompt resources only |
-| `packages/agents` | five core agents and their A2A service |
+| `packages/agents` | five core agents, their prompts and A2A service |
 | `packages/orchestrator` | DBOS orchestration, directory, incident/control stores and public API |
-| `packages/specialists` | Growth, Marketplace, Discovery A2A service |
+| `packages/specialists` | Growth, Marketplace, Discovery prompts and A2A service |
 | `packages/selleros` | independent seller-side agent, data and approved actions |
 | `packages/mcp` | MCP facade over Core |
 | `packages/demo` | standalone HTTP-only `demo` CLI |

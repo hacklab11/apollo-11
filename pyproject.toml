@@ -9,7 +9,6 @@ dependencies = [
     "agent-runtime",
     "eye-contracts",
     "eye-data",
-    "eye-llm",
     "eye-agents",
     "eye-orchestrator",
     "eye-specialists",
@@ -37,7 +36,6 @@ paths = [
     "packages/contracts/src",
     "packages/data/src",
     "packages/demo/src",
-    "packages/llm/src",
     "packages/mcp/src",
     "packages/orchestrator/src",
     "packages/selleros/selleros",
@@ -84,7 +82,6 @@ eye-auth = { workspace = true }
 agent-runtime = { workspace = true }
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
-eye-llm = { workspace = true }
 eye-agents = { workspace = true }
 eye-orchestrator = { workspace = true }
 eye-specialists = { workspace = true }
@@ -124,7 +121,6 @@ forbidden_modules = [
     "eye.registry",
     "eye.graph",
     "eye.tools",
-    "eye.llm",
     "eye.agents",
     "eye.specialists",
     "eye.orchestrator",
@@ -149,7 +145,6 @@ forbidden_modules = [
     "eye.registry",
     "eye.graph",
     "eye.tools",
-    "eye.llm",
     "eye.agents",
     "eye.specialists",
     "eye.orchestrator",
@@ -175,7 +170,6 @@ source_modules = [
     "eye.graph",
     "eye.tools",
     "eye.warehouse",
-    "eye.llm",
     "eye.agents",
     "eye.specialists",
     "eye.orchestrator",
@@ -204,7 +198,6 @@ forbidden_modules = [
     "eye.graph",
     "eye.tools",
     "eye.warehouse",
-    "eye.llm",
     "eye.agents",
     "eye.specialists",
     "eye.orchestrator",

@@ -72,7 +72,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
-_PROMPT = files("eye.llm").joinpath("prompts/detective.md")
+_PROMPT = files("eye.agents").joinpath("prompts/detective.md")
 _WEEK = timedelta(weeks=1)
 
 

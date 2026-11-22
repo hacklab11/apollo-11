@@ -21,6 +21,6 @@ See [Compose](../../compose.yaml) for networks, mounts and entrypoints.
 Core does not import agent implementations. Contract validation, remaining budgets, incident context
 and trace context cross service boundaries; private model message histories do not.
 Core agents and specialists execute PydanticAI agents through the shared `agent_runtime` harness.
-`packages/llm` contains only shared prompt resources.
+Core and specialist prompts ship as package resources next to their implementations.
 
 See [deployment](deployment.md), [orchestrator](orchestrator.md) and [production criteria](agent-criteria.md).

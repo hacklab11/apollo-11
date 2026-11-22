@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from importlib.metadata import version
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -103,12 +104,14 @@ def digest(value: Any) -> str:
 
 
 def prompt_for(agent: str) -> str:
-    path = (
-        ROOT / "packages/selleros/selleros/prompt.md"
-        if agent == "selleros"
-        else ROOT / f"packages/llm/src/eye/llm/prompts/{agent}.md"
+    if agent == "selleros":
+        return files("selleros").joinpath("prompt.md").read_text()
+    package = (
+        "eye.specialists"
+        if agent in {specialist.NAME for specialist in SPECIALISTS}
+        else "eye.agents"
     )
-    return path.read_text()
+    return files(package).joinpath(f"prompts/{agent}.md").read_text()
 
 
 def load_cases(directory: Path = CASES) -> Dataset:

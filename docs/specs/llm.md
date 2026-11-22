@@ -1,7 +1,9 @@
 # Prompts and model configuration
 
-`packages/llm/src/eye/llm/prompts/` owns shared core-agent and specialist prompt
-resources only. All agents execute through PydanticAI and [`agent_runtime`](agent-runtime.md).
+Core prompts live in `packages/agents/src/eye/agents/prompts/`; specialist prompts live
+in `packages/specialists/src/eye/specialists/prompts/`. Both ship with their implementation
+packages and load through `importlib.resources`. All agents execute through PydanticAI
+and [`agent_runtime`](agent-runtime.md).
 
 - `agent_runtime/configured_models.py` builds Anthropic or OpenAI-compatible models,
   explicit fallback chains and pinned price tables from structural configuration.

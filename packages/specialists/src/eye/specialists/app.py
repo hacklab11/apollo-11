@@ -100,7 +100,7 @@ async def healthz(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-PROMPTS = files("eye.llm").joinpath("prompts")
+PROMPTS = files("eye.specialists").joinpath("prompts")
 MAX_STEPS = 8
 
 

@@ -183,7 +183,7 @@ class Cartographer:
         *,
         end: datetime | None = None,
     ) -> T:
-        prompt = files("eye.llm").joinpath("prompts/cartographer.md").read_text()
+        prompt = files("eye.agents").joinpath("prompts/cartographer.md").read_text()
         agent = Agent(
             self.model or build_model(self.llm, "cartographer"),
             name="cartographer",

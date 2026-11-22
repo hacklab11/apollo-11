@@ -56,7 +56,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
-_PROMPT = files("eye.llm").joinpath("prompts/skeptic.md")
+_PROMPT = files("eye.agents").joinpath("prompts/skeptic.md")
 _MAX_STEPS = 6
 
 

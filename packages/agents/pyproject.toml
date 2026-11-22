@@ -10,7 +10,6 @@ dependencies = [
     "duckdb==2.0.1",
     "eye-contracts",
     "eye-data",
-    "eye-llm",
     "httpx==0.28.1",
     "protobuf==7.36.2",
     "pydantic==2.14.4",
@@ -33,4 +32,3 @@ eye-auth = { workspace = true }
 agent-runtime = { workspace = true }
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
-eye-llm = { workspace = true }

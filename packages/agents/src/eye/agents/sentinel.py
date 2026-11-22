@@ -49,7 +49,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.queries import DataQueries, LocalQueries
 
 _HOUR = timedelta(hours=1)
-_PROMPT = files("eye.llm").joinpath("prompts/sentinel.md")
+_PROMPT = files("eye.agents").joinpath("prompts/sentinel.md")
 # Compact ASCII JSON at roughly 3 characters per token; counting via the API costs a call.
 _MAX_CONTEXT_CHARS = 18_000
 _OPEN = {"investigating", "open", "persisting", "mitigating"}

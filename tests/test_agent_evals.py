@@ -4,6 +4,7 @@ import json
 import socket
 import sys
 from datetime import datetime
+from importlib.resources import files
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,6 +25,32 @@ SPEC = importlib.util.spec_from_file_location(
 evals = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = evals
 SPEC.loader.exec_module(evals)
+
+
+@pytest.mark.parametrize("agent", sorted(evals.AGENTS))
+def test_prompt_pins_use_implementation_resources(
+    agent: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if agent == "selleros":
+        resource = files("selleros").joinpath("prompt.md")
+    else:
+        package = (
+            "eye.specialists"
+            if agent in {s.NAME for s in evals.SPECIALISTS}
+            else "eye.agents"
+        )
+        resource = files(package).joinpath(f"prompts/{agent}.md")
+    monkeypatch.setattr(evals, "ROOT", tmp_path)
+    assert evals.prompt_for(agent) == resource.read_text()
+    assert evals.pins(agent, "offline")["prompt_sha256"] == evals.digest(
+        resource.read_text()
+    )
+
+
+@pytest.mark.parametrize("agent", ["", "unknown"])
+def test_missing_prompt_fails_closed(agent: str) -> None:
+    with pytest.raises(FileNotFoundError):
+        evals.prompt_for(agent)
 
 
 def test_every_production_pydantic_agent_is_covered() -> None:

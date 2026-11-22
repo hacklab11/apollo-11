@@ -1,6 +1,7 @@
 # Agent prompts
 
-Store one Markdown file per agent here, under 1,500 words. Use these headings:
+Core prompts live here; specialist prompts live in `eye.specialists/prompts/`.
+Keep one Markdown file per agent, under 1,500 words. Use these headings:
 
 - Role
 - What you know about the marketplace
