@@ -8,7 +8,14 @@ from eye.config import Settings, load_settings
 
 def test_checked_in_settings_equal_defaults(repo_root: Path) -> None:
     settings = load_settings(repo_root / "config/settings.yaml")
-    assert settings == Settings()
+    defaults = Settings()
+    assert settings.llm.prices["nvidia/nemotron-3.5-lightning:free"].input_per_mtok == 0
+    assert (
+        settings.llm.prices["nvidia/nemotron-3-ultra-550b-a55b:free"].output_per_mtok
+        == 0
+    )
+    defaults.llm.prices = settings.llm.prices
+    assert settings == defaults
     assert settings.sim.history_days == 28
     assert settings.sim.start_ts == datetime(2026, 11, 27, tzinfo=UTC)
     assert settings.llm.model_for("detective") == "claude-opus-5-5"

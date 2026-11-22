@@ -172,6 +172,10 @@ uv sync --locked
 ```yaml
 llm:
   provider: openai_compatible
+  prices:
+    claude-opus-5-5: {input_per_mtok: 5.0, output_per_mtok: 25.0}
+    nvidia/nemotron-3.5-lightning:free: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    nvidia/nemotron-3-ultra-550b-a55b:free: {input_per_mtok: 0.0, output_per_mtok: 0.0}
   models:
     default: nvidia/nemotron-3.5-lightning:free
 ```
