@@ -14,15 +14,17 @@ supply their own store to `create_app`.
 
 For a price-revert alert, SellerOS registers each eligible price change with
 the orchestrator at `EYE_CORE_URL` (default `http://127.0.0.1:8000`).
-Set distinct bearer credentials: `EYE_SELLER_REVERT_SERVICE_TOKEN` on Core
-and SellerOS, and `EYE_SELLER_REVERT_OPERATOR_TOKEN` on Core only. With
-Compose, export these in the launch environment, not the shared `.env`.
+Set distinct bearer credentials: `EYE_SELLER_REVERT_SERVICE_TOKEN` on Core,
+SellerOS and the demo simulator; `EYE_SELLER_REVERT_OPERATOR_TOKEN` on Core only.
+With Compose, export these in the launch environment, not the shared `.env`.
 An operator reviews the exact offer and prices in `GET /api/approvals`, then
 uses `POST /api/approvals/{id}` with `{"approve": true}` to apply it. Both
 calls require the operator bearer credential or a trusted authenticated
 person; a caller-supplied identity header is not sufficient. SellerOS
 verifies the recorded human decision and current price at the tool boundary.
 Pending, rejected, unavailable or stale approvals cannot change prices.
+The simulator rechecks permission when consuming a queued revert, so a stop
+holds the action and resuming only applies it if the price change is still current.
 If delivery fails after the decision was saved, retry the original A2A alert;
 the journal deduplicates by approval key across retries and restarts.
 

@@ -59,6 +59,7 @@ services:
       SIM_PORT: "8100"
       SIM_WORLD_DB: /app/data/world.duckdb
       SIM_LAKE_DIR: /app/data/lake
+      EYE_SELLER_REVERT_SERVICE_TOKEN: ${EYE_SELLER_REVERT_SERVICE_TOKEN:-}
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
       - sim-world:/app/data

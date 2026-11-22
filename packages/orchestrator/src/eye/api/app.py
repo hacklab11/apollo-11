@@ -10,7 +10,7 @@ from typing import Annotated, Protocol
 
 import duckdb
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import AwareDatetime, BaseModel, ConfigDict, TypeAdapter, ValidationError
 
@@ -345,6 +345,18 @@ def create_app(
             status=row["status"],
             decided_by=row["decided_by"],
         )
+
+    @app.get("/api/approvals/seller-revert/{id}/permission", status_code=204)
+    async def seller_revert_permission(id: str, credentials: Bearer) -> Response:
+        if not has_seller_revert_token(credentials, role="SERVICE"):
+            raise HTTPException(401, "SellerOS service credential required")
+        row = orchestrator.control.approval(id)
+        if row is None or row["tool_name"] != SELLER_REVERT_TOOL:
+            raise HTTPException(404, "Price revert approval not found")
+        if row["status"] != "approved" or not row["decided_by"]:
+            raise HTTPException(409, "Price revert is not approved")
+        check_seller_revert_running(row["run_id"])
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
 
     @app.post("/api/approvals/{id}")
     async def decide_approval(

@@ -187,6 +187,7 @@ async def test_seller_revert_requires_exact_human_approval(
         assert all(row["status"] == "pending" for row in approvals)
         by_sku = {row["args"]["sku"]: row["id"] for row in approvals}
         approve_url = f"/api/approvals/{by_sku['E02']}"
+        permission_url = f"/api/approvals/seller-revert/{by_sku['E02']}/permission"
         bogus = dict(approvals[0]["args"], incident_id="not-the-approved-incident")
         for untrusted in ({}, {"X-Eye-Person": "reviewer"}, operator):
             assert (
@@ -201,6 +202,9 @@ async def test_seller_revert_requires_exact_human_approval(
                 )
             ).status_code == 401
         assert len((await client.get("/api/approvals", headers=operator)).json()) == 2
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 409
         assert not journal.exists()
         (
             await client.post(
@@ -237,6 +241,15 @@ async def test_seller_revert_requires_exact_human_approval(
         (
             await client.post(approve_url, json={"approve": True}, headers=operator)
         ).raise_for_status()
+        assert (await client.get(permission_url, headers=operator)).status_code == 401
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 204
+        (await client.post("/api/kill", headers=operator)).raise_for_status()
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 409
+        (await client.delete("/api/kill", headers=operator)).raise_for_status()
         if stale:
             assert not journal.exists()
         else:

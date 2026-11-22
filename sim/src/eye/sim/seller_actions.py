@@ -3,11 +3,15 @@
 import fcntl
 import hashlib
 import json
+import os
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Literal, Protocol, Self
+from urllib.parse import quote
 
+import httpx
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 
@@ -57,9 +61,32 @@ class _JournalRecord(BaseModel):
         return self
 
 
+def core_allows_revert(approval_id: str) -> bool:
+    token = os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN")
+    if not token:
+        return False
+    core_url = os.environ.get("EYE_CORE_URL", "http://127.0.0.1:8000").rstrip("/")
+    try:
+        response = httpx.get(
+            f"{core_url}/api/approvals/seller-revert/{quote(approval_id, safe='')}/permission",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=2.0,
+            trust_env=False,
+        )
+    except httpx.HTTPError:
+        return False
+    return response.status_code == 204
+
+
 class JournalSellerActionFeed:
-    def __init__(self, path: Path) -> None:
+    def __init__(
+        self,
+        path: Path,
+        *,
+        authorize_revert: Callable[[str], bool] = core_allows_revert,
+    ) -> None:
         self.path = path
+        self._authorize_revert = authorize_revert
         self._acked: set[str] = set()
         self._lock = Lock()
 
@@ -94,6 +121,12 @@ class JournalSellerActionFeed:
                     json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
                 if key in self._acked:
+                    continue
+                if (
+                    record.status == "reverted"
+                    and record.idempotency_key is not None
+                    and not self._authorize_revert(record.idempotency_key)
+                ):
                     continue
                 actions.append(
                     SellerAction(

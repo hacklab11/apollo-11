@@ -94,6 +94,16 @@ def test_feed_skips_legacy_revert_without_restore_price(tmp_path: Path) -> None:
     ]
 
 
+def test_feed_holds_revert_until_authorized(tmp_path: Path) -> None:
+    path = tmp_path / "actions.jsonl"
+    allowed: set[str] = set()
+    feed = JournalSellerActionFeed(path, authorize_revert=allowed.__contains__)
+    write_records(path, journal_record(idempotency_key="queued"))
+    assert feed.pending() == []
+    allowed.add("queued")
+    assert [action.kind for action in feed.pending()] == ["set_price"]
+
+
 @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan")])
 def test_feed_rejects_invalid_price(tmp_path: Path, price: float) -> None:
     path = tmp_path / "actions.jsonl"
@@ -175,7 +185,9 @@ def test_file_store_revert_reaches_marketplace(
     data = importlib.import_module("selleros.data")
     directory = tmp_path / "selleros"
     directory.mkdir()
-    feed = JournalSellerActionFeed(directory / "actions.jsonl")
+    feed = JournalSellerActionFeed(
+        directory / "actions.jsonl", authorize_revert=lambda _: True
+    )
     with closing(
         Simulator(small_sim_settings, db_path=":memory:", seller_action_feed=feed)
     ) as sim:
