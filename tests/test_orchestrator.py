@@ -1,5 +1,10 @@
 import asyncio
+import json
+import os
+import subprocess
+import sys
 import threading
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,6 +49,124 @@ class Clock:
 
     def step(self) -> None:
         self.now += HOUR
+
+
+@pytest.mark.parametrize("version", [None, "", "compatible-deploys-v2"])
+def test_pending_workflow_recovers_after_code_change(
+    tmp_path: Path, version: str | None
+) -> None:
+    worker = tmp_path / "restart_worker.py"
+    source = """
+import json
+import sys
+import time
+from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+
+from dbos import DBOS, SetWorkflowID
+from dbos._dbos import _get_or_create_dbos_registry
+
+from eye.config import Settings
+from eye.incidents.store import IncidentStore
+from eye.orchestrator import Orchestrator
+
+root = Path(sys.argv[1])
+
+@DBOS.step()
+def wait_for_release() -> None:
+    (root / "entered").touch()
+    while not (root / "release").exists():
+        time.sleep(0.05)
+
+@DBOS.workflow()
+def restart_workflow() -> str:
+    wait_for_release()
+    return "before-rebuild"
+
+now = datetime(2026, 11, 27, tzinfo=UTC)
+store = IncidentStore(":memory:")
+core = Orchestrator(
+    Settings(sim={"autostart": False}),
+    SimpleNamespace(now=now, live_start=now),
+    store,
+    lambda *_: 0,
+    database_url=f"sqlite:///{root}/control.sqlite",
+)
+code_hash = _get_or_create_dbos_registry().compute_app_version("eye-orchestrator")
+DBOS.launch()
+try:
+    if sys.argv[2] == "start":
+        with SetWorkflowID("restart-regression"):
+            handle = DBOS.start_workflow(restart_workflow)
+        while not (root / "entered").exists():
+            time.sleep(0.05)
+        status = DBOS.get_workflow_status(handle.workflow_id)
+        (root / "ready.json").write_text(json.dumps({
+            "hash": code_hash,
+            "version": DBOS.application_version,
+            "status": status.status,
+        }))
+        handle.get_result()
+    else:
+        handle = DBOS.retrieve_workflow("restart-regression")
+        result = handle.get_result()
+        status = DBOS.get_workflow_status(handle.workflow_id)
+        print(json.dumps({
+            "hash": code_hash,
+            "version": DBOS.application_version,
+            "status": status.status,
+            "result": result,
+        }), flush=True)
+finally:
+    DBOS.destroy()
+    core.control.close()
+    store.close()
+"""
+    worker.write_text(source)
+    env = os.environ.copy()
+    env.pop("DBOS__APPVERSION", None)
+    env.pop("EYE_DBOS_APPLICATION_VERSION", None)
+    if version is not None:
+        env["EYE_DBOS_APPLICATION_VERSION"] = version
+    with (tmp_path / "first-launch.log").open("w+") as log:
+        process = subprocess.Popen(
+            [sys.executable, str(worker), str(tmp_path), "start"],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=env,
+        )
+        try:
+            deadline = time.monotonic() + 25
+            while not (tmp_path / "ready.json").exists():
+                if process.poll() is not None or time.monotonic() > deadline:
+                    log.seek(0)
+                    pytest.fail(f"Workflow did not become pending:\n{log.read()}")
+                time.sleep(0.05)
+            before = json.loads((tmp_path / "ready.json").read_text())
+            assert before["status"] == "PENDING"
+        finally:
+            process.kill()
+            process.wait(timeout=10)
+
+    worker.write_text(
+        source.replace('return "before-rebuild"', 'return "after-rebuild"')
+    )
+    (tmp_path / "release").touch()
+    restarted = subprocess.run(
+        [sys.executable, str(worker), str(tmp_path), "recover"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+    )
+    assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+    after = json.loads(restarted.stdout.strip().splitlines()[-1])
+    assert before["hash"] != after["hash"]
+    assert before["version"] == after["version"] == (version or "eye-orchestrator-v1")
+    assert after["status"] == "SUCCESS"
+    assert after["result"] == "after-rebuild"
 
 
 @pytest.mark.asyncio
