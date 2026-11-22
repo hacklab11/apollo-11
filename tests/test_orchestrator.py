@@ -155,6 +155,7 @@ finally:
     (tmp_path / "release").touch()
     restarted = subprocess.run(
         [sys.executable, str(worker), str(tmp_path), "recover"],
+        check=False,
         capture_output=True,
         text=True,
         timeout=30,
