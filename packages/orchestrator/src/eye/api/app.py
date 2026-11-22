@@ -10,7 +10,7 @@ from typing import Annotated, Protocol
 import duckdb
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import AwareDatetime, BaseModel, TypeAdapter, ValidationError
+from pydantic import AwareDatetime, TypeAdapter, ValidationError
 
 from eye.api import chat
 from eye.contracts import (

@@ -27,7 +27,9 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
         assert not any(v.startswith("sim-world:") for v in services[name]["volumes"])
     data = services["eye-data"]
     assert data["environment"]["EYE_WAREHOUSE_PATH"] == "/app/world/world.duckdb"
-    assert data["depends_on"]["sim-generate"] == {"condition": "service_completed_successfully"}
+    assert data["depends_on"]["sim-generate"] == {
+        "condition": "service_completed_successfully"
+    }
     assert "eye-data:/app/world:ro" in data["volumes"]
     core = services["eye-core"]
     assert core["environment"]["EYE_DATA_URL"] == "http://eye-data:8150"
