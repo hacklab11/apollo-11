@@ -194,8 +194,7 @@ class Cartographer:
             name="cartographer",
             deps_type=CartographerDeps,
             output_type=end_state_outputs(output),
-            instructions=prompt
-            + "\nFinish using the structured output tool for the requested mode.",
+            instructions=prompt,
             model_settings={"max_tokens": self.llm.max_tokens},
             retries=3,
         )
