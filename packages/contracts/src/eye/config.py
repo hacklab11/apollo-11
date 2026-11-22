@@ -144,6 +144,7 @@ class DemoSettings(_Section):
 class A2aSettings(_Section):
     sentinel_url: AgentUrl = "http://sentinel:8210/"
     detective_url: AgentUrl = "http://detective:8220/"
+    skeptic_url: AgentUrl = "http://skeptic:8230/"
     reporter_url: AgentUrl = "http://reporter:8240/"
     cartographer_url: AgentUrl = "http://cartographer:8250/"
     growth_url: AgentUrl = "http://localhost:8200/growth"

@@ -1,6 +1,7 @@
 """Durable deterministic clock workflows; agents execute exclusively over A2A."""
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from eye.contracts import (
     AddMetricRequest,
     AddMetricResult,
     Event,
+    Incident,
     SentinelDecision,
     TrailStep,
 )
@@ -103,7 +105,6 @@ class Orchestrator(DBOSConfiguredInstance):
         database_url: str | None = None,
         invalidate: Callable[[], None] = lambda: None,
     ) -> None:
-        super().__init__("orchestrator")
         self.settings, self.sim, self.incidents, self.z_lookup = (
             settings,
             sim,
@@ -113,6 +114,16 @@ class Orchestrator(DBOSConfiguredInstance):
         self.directory = directory or AgentDirectory(settings.a2a)
         self.database_url = database_url or os.environ.get(
             "EYE_DATABASE_URL", "sqlite:///data/control.sqlite"
+        )
+        DBOS(
+            config={
+                "name": "eye-orchestrator",
+                "system_database_url": self.database_url,
+            }
+        )
+        super().__init__(
+            "orchestrator-"
+            + hashlib.sha256(self.database_url.encode()).hexdigest()[:16]
         )
         self.control = control or ControlPlane(self.database_url)
         self.invalidate = invalidate
@@ -145,12 +156,6 @@ class Orchestrator(DBOSConfiguredInstance):
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
-        DBOS(
-            config={
-                "name": "eye-orchestrator",
-                "system_database_url": self.database_url,
-            }
-        )
         await asyncio.to_thread(DBOS.launch)
         self.queue = await asyncio.to_thread(
             DBOS.register_queue,
@@ -239,7 +244,7 @@ class Orchestrator(DBOSConfiguredInstance):
         )
 
     async def step_once(self, *, wait_for_analysis: bool = True) -> Status:
-        if self._stepping:
+        if self._stepping or self._pending:
             raise StepInProgress("The previous clock step is still processing.")
         self._stepping = True
         try:
@@ -353,9 +358,29 @@ class Orchestrator(DBOSConfiguredInstance):
             self.incidents.add_step(step)
             self.emit("trail_step", step)
 
+    async def record_step(self, step: TrailStep, ts: datetime | None = None) -> None:
+        self.incidents.add_step(step)
+        self.emit("trail_step", step, ts)
+
     @DBOS.step()
     def previous_decisions(self, ts: datetime) -> list[SentinelDecision]:
-        return [item for item in self.decisions if item.anomaly.ts == ts - HOUR]
+        return self.incidents.decisions_at(ts - HOUR)
+
+    @DBOS.step()
+    def record_decisions(self, ts: datetime, decisions: list[SentinelDecision]) -> None:
+        self.incidents.save_decisions(ts, decisions)
+        self.decisions.extend(decisions)
+        for decision in decisions:
+            self.emit("anomaly", decision.anomaly)
+            self.emit("sentinel_decision", decision)
+
+    @DBOS.step()
+    def prepare_investigation(self, decision: SentinelDecision) -> Incident | None:
+        incident = self.incidents.match(decision)
+        if incident is not None and not incident.investigation_ids:
+            incident.investigation_ids.append(f"inv_{uuid4().hex}")
+            self.incidents._save(incident)
+        return incident
 
     @DBOS.workflow()
     async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
@@ -372,6 +397,7 @@ class Orchestrator(DBOSConfiguredInstance):
                 DetectResult,
             )
             if detected is not None:
+                self.record_decisions(ts, detected.decisions)
                 await self._process_decisions(run_id, detected, metadata)
             self.update_lifecycle(ts)
         except RunKilled:
@@ -382,12 +408,9 @@ class Orchestrator(DBOSConfiguredInstance):
     ) -> None:
         self.save_trail(detected.trail)
         for decision in detected.decisions:
-            self.decisions.append(decision)
-            self.emit("anomaly", decision.anomaly)
-            self.emit("sentinel_decision", decision)
             if decision.action != "investigate":
                 continue
-            incident = self.incidents.match(decision)
+            incident = self.prepare_investigation(decision)
             if incident is None:
                 continue
             metadata = metadata.model_copy(update={"context_id": incident.id})
@@ -395,6 +418,7 @@ class Orchestrator(DBOSConfiguredInstance):
                 "investigation_started",
                 {
                     "incident_id": incident.id,
+                    "investigation_id": incident.investigation_ids[-1],
                     "anomaly": decision.anomaly.model_dump(mode="json"),
                 },
             )
@@ -433,7 +457,7 @@ class Orchestrator(DBOSConfiguredInstance):
             )
 
     @DBOS.step()
-    async def upsert(self, result: InvestigateResult):
+    async def upsert(self, result: InvestigateResult) -> Incident:
         return await self.incidents.upsert(result.investigation)
 
     @DBOS.step()

@@ -6,6 +6,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import duckdb
+from pydantic import TypeAdapter
 
 from eye.config import ReporterSettings
 from eye.contracts import (
@@ -62,6 +63,9 @@ class IncidentStore:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS incident_closures (id VARCHAR PRIMARY KEY, closure JSON)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS tick_decisions (ts TIMESTAMPTZ PRIMARY KEY, decisions JSON)"
+        )
         self.path_exists = path_exists
         self.reporter = reporter
         self.notify = notify
@@ -104,6 +108,18 @@ class IncidentStore:
             [incident_id, closure.model_dump_json()],
         )
         return self.as_v2(incident)
+
+    def save_decisions(self, ts: datetime, decisions: list[SentinelDecision]) -> None:
+        self.db.execute(
+            "INSERT INTO tick_decisions VALUES (?, ?) ON CONFLICT (ts) DO UPDATE SET decisions = excluded.decisions",
+            [ts, TypeAdapter(list[SentinelDecision]).dump_json(decisions).decode()],
+        )
+
+    def decisions_at(self, ts: datetime) -> list[SentinelDecision]:
+        row = self.db.execute(
+            "SELECT decisions FROM tick_decisions WHERE ts = ?", [ts]
+        ).fetchone()
+        return TypeAdapter(list[SentinelDecision]).validate_json(row[0]) if row else []
 
     def all(self) -> list[Incident]:
         return [
@@ -337,6 +353,7 @@ class IncidentStore:
                 for i in items
                 if i.merged_into is None
                 and i.status == "resolved"
+                and self.as_v2(i).status != "closed"
                 and i.fingerprint == final
                 and i.resolved_ts is not None
                 and timedelta(0)

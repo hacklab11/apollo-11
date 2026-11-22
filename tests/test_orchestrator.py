@@ -17,6 +17,7 @@ from eye.contracts_v2 import (
     RunUsageSummary,
     TaskMetadata,
 )
+from eye.control import audit_hash
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator
 
@@ -129,6 +130,13 @@ async def test_s8_workflow(tmp_path: Path) -> None:
         await orchestrator.step_once()
         assert len(scripted.requests) == 3
         assert orchestrator.control.audit_rows()[-1]["action"] == "run_killed"
+        previous = "0" * 64
+        for row in orchestrator.control.audit_rows():
+            assert row.pop("prev_hash") == previous
+            digest = row.pop("hash")
+            row.pop("id")
+            assert digest == audit_hash(previous, row)
+            previous = digest
     finally:
         await orchestrator.close()
         store.close()
@@ -153,3 +161,46 @@ async def test_directory_unknown_skill() -> None:
             orchestrator_metadata,
             DetectResult,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["needs_input", "failed", "gave_up", "empty"])
+async def test_non_success_and_empty_detection(tmp_path: Path, state: str) -> None:
+    clock = Clock()
+    settings = Settings(sim={"autostart": False})
+    if state == "empty":
+        result = AgentResult(status="done", result=DetectResult(decisions=[]))
+    elif state == "needs_input":
+        result = AgentResult(status=state, question="Review source freshness?")
+    else:
+        result = AgentResult(status=state, reason="No usable evidence")
+    scripted = ScriptedAgents({"detect": result})
+    store = IncidentStore(":memory:")
+    core = Orchestrator(
+        settings,
+        clock,
+        store,
+        lambda *_: 0,
+        directory=scripted.directory(settings.a2a),
+        database_url=f"sqlite:///{tmp_path}/control.sqlite",
+    )
+    await core.start()
+    try:
+        await core.step_once()
+        assert store.all() == []
+        assert len(scripted.requests) == 1
+        assert bool(core.control.approval_rows()) == (state == "needs_input")
+        assert (
+            core.control.audit_rows()[0]["action"]
+            == f"agent_{'done' if state == 'empty' else state}"
+        )
+        await core.step_once()
+        assert (
+            scripted.requests[-1][1]["params"]["message"]["parts"][0]["data"][
+                "previous_decisions"
+            ]
+            == []
+        )
+    finally:
+        await core.close()
+        store.close()

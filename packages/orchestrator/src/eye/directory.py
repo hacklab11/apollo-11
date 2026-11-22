@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import httpx
 from a2a.client.card_resolver import A2ACardResolver
+from a2a.client.errors import AgentCardResolutionError
 from a2a.client.transports.jsonrpc import JsonRpcTransport
 from a2a.types.a2a_pb2 import AgentCard, Message, Part, Role, SendMessageRequest
 from google.protobuf.json_format import MessageToDict, ParseDict
@@ -40,7 +41,7 @@ class AgentDirectory:
                 url = getattr(self.settings, f"{name}_url")
                 try:
                     card = await A2ACardResolver(client, url).get_agent_card()
-                except httpx.HTTPError:
+                except (httpx.HTTPError, AgentCardResolutionError):
                     continue
                 for skill in card.skills:
                     if skill.id in cards:
@@ -55,6 +56,8 @@ class AgentDirectory:
         metadata: TaskMetadata,
         result_type: type[T],
     ) -> AgentResult[T]:
+        if skill not in self.cards:
+            await self.resolve()
         if skill not in self.cards:
             raise ValueError(f"unknown A2A skill: {skill}")
         parent = propagate.extract({"traceparent": metadata.traceparent})

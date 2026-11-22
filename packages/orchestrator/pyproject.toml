@@ -9,7 +9,6 @@ dependencies = [
     "dbos==3.6.0",
     "opentelemetry-api==1.45.1",
     "opentelemetry-sdk==1.45.1",
-    "eye-agents",
     "eye-contracts",
     "eye-data",
     "eye-llm",
@@ -33,7 +32,6 @@ build-backend = "hatchling.build"
 packages = ["src/eye"]
 
 [tool.uv.sources]
-eye-agents = { workspace = true }
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
 eye-llm = { workspace = true }
