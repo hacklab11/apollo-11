@@ -7,7 +7,12 @@ from unittest.mock import AsyncMock
 import duckdb
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
-from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agent_runtime import Budget, InMemoryKillSwitch
@@ -25,6 +30,7 @@ from eye.contracts import (
 from eye.graph.store import GraphStore
 from eye.registry.loader import Registry, load_registry
 from eye.sim.store import Store
+from eye.warehouse.client import DataUnavailable
 
 START = datetime(2026, 11, 27, 3, tzinfo=UTC)
 HOUR = timedelta(hours=1)
@@ -218,6 +224,56 @@ def scripted(
     model = FunctionModel(respond, model_name="detective")
     monkeypatch.setattr("eye.agents.detective.build_model", lambda *_: model)
     return model
+
+
+@pytest.mark.asyncio
+async def test_data_unavailable_retries_and_preserves_board(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    def unavailable(*args: object) -> None:
+        raise DataUnavailable("Warehouse request failed")
+
+    monkeypatch.setattr("eye.agents.detective._WindowTools.baseline", unavailable)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        turn = sum(isinstance(message, ModelResponse) for message in messages)
+        if turn == 0:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "update_hypotheses",
+                        {"hypotheses": [hypothesis().model_dump(mode="json")]},
+                    )
+                ]
+            )
+        if turn == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("baseline_compare", {"metric": "search_conversion"})
+                ]
+            )
+        assert any(
+            isinstance(part, ToolReturnPart)
+            and part.outcome == "retried"
+            and part.content == "Warehouse request failed"
+            for message in messages
+            for part in message.parts
+        )
+        name = next(t.name for t in info.output_tools if t.name.endswith("GaveUp"))
+        return ModelResponse(parts=[ToolCallPart(name, {"reason": "Data unavailable"})])
+
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(respond, model_name="detective"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "budget"
+    assert result.verdict == "HYPOTHESIS"
+    assert result.hypotheses[0].statement == hypothesis().statement
 
 
 @pytest.mark.asyncio

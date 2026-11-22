@@ -68,6 +68,7 @@ from eye.tools.models import (
     ToolOutput,
 )
 from eye.warehouse import operations as ops
+from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
 _PROMPT = files("eye.llm").joinpath("prompts/detective.md")
@@ -527,7 +528,7 @@ class Detective:
                     else:
                         result = fn(args)
                     output = await result if isawaitable(result) else result
-                except (ValueError, KeyError) as exc:
+                except (ValueError, KeyError, DataUnavailable) as exc:
                     raise ModelRetry(str(exc)) from exc
                 if name != "update_hypotheses":
                     reference = f"ref-{next(references)}"
