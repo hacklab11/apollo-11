@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from eye.config import SentinelSettings, load_settings
 from eye.contracts import GraphView, MetricDef
 from eye.graph.bootstrap import load_or_bootstrap
-from eye.graph.store import GRAPH_PATH, GraphStore
+from eye.graph.store import GraphStore
 from eye.registry.loader import CONFIG_DIR, load_registry
 from eye.schema import validate_schema
 from eye.warehouse import operations as ops
@@ -28,6 +28,8 @@ from eye.warehouse.domain import (
 from eye.warehouse.landing import ParquetLanding
 from eye.warehouse.queries import LocalQueries
 
+WAREHOUSE_GRAPH_PATH = Path("data/warehouse-graph.json")
+
 
 class Warehouse:
     def __init__(
@@ -36,7 +38,7 @@ class Warehouse:
         settings: SentinelSettings,
         *,
         lake: Path | None = None,
-        graph_path: Path = GRAPH_PATH,
+        graph_path: Path = WAREHOUSE_GRAPH_PATH,
         config_dir: Path = CONFIG_DIR,
     ) -> None:
         self.connection = connection

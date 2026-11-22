@@ -115,12 +115,14 @@ def test_reads_only_published_hours_and_refreshes(tmp_path: Path, monkeypatch) -
             assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(34.0,)]
 
 
-def test_warehouse_graph_and_validated_queries(tmp_path: Path) -> None:
+def test_warehouse_graph_and_validated_queries(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    local_graph = tmp_path / "data" / "graph.json"
+    local_graph.parent.mkdir()
+    local_graph.write_text("local Core graph")
     with duckdb.connect() as reader:
         create_tables(reader)
-        warehouse = Warehouse(
-            reader, SentinelSettings(), graph_path=tmp_path / "graph.json"
-        )
+        warehouse = Warehouse(reader, SentinelSettings(), config_dir=CONFIG)
         with TestClient(create_app(warehouse)) as client:
             graph = client.get("/v1/graph")
             assert graph.status_code == 200, graph.text
@@ -136,6 +138,7 @@ def test_warehouse_graph_and_validated_queries(tmp_path: Path) -> None:
                 "end": (TS + timedelta(days=61)).isoformat(),
             }
             assert client.post("/v1/series", json=long_window).status_code == 422
+    assert local_graph.read_text() == "local Core graph"
 
 
 @contextmanager
