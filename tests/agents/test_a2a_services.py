@@ -73,6 +73,19 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
 
     monkeypatch.setattr("eye.llm.client._client", Scripted())
 
+    def sentinel_response(messages, info):
+        content = turns.popleft()
+        return ModelResponse(
+            parts=[ToolCallPart(item["name"], item["input"]) for item in content],
+            model_name="claude-opus-5-5",
+            usage=RequestUsage(input_tokens=7, output_tokens=5),
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.sentinel.build_model",
+        lambda *_: FunctionModel(sentinel_response, model_name="claude-opus-5-5"),
+    )
+
     def detective_response(messages: list, info: AgentInfo) -> ModelResponse:
         content = turns.popleft()
         return ModelResponse(
@@ -190,6 +203,7 @@ async def test_sentinel_watch_crosses_replicas(
         )
         assert response.result.trail[0].actor == "sentinel"
         assert response.usage.total_tokens == 12
+        assert response.usage.cost_usd == pytest.approx(0.00016)
         request = DetectRequest(
             ts=anm.ts + HOUR, previous_decisions=response.result.decisions
         )

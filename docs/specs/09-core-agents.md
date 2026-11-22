@@ -35,7 +35,16 @@ Decision rules in the prompt (the LLM applies them; code does not override excep
 - `ignore` with a reason (for example "known baseline release noise, no effect on metrics").
 - Planned events do not cause `ignore` here. The Skeptic decides innocence with numbers.
 
-Effort `low`. Max steps 4.
+Sentinel runs as a PydanticAI agent through `agent_runtime.run_agent`, with
+four tool turns plus a final submission request (five requests maximum), 16 tool
+calls, 64,000 total tokens, a $1 cost cap and a 60-second deadline. The harness
+checks repeated calls and an optional kill switch. Provider errors fall back to
+the models in `llm.fallback_models.sentinel`; pinned `llm.prices` cap cost.
+Schema-validated `submit` output
+is post-processed deterministically; gave-up states raise `BudgetExceeded` and
+other non-done states raise an error. The A2A executor returns its existing
+gave-up or failed result, never a successful empty triage.
+Sentinel no longer uses the legacy record/replay loop.
 
 ## 3. Lead Detective (T14)
 
