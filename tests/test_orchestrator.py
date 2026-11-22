@@ -230,9 +230,20 @@ async def workflow(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("exhausted", [False, True])
+@pytest.mark.parametrize(
+    "outcome",
+    [
+        "failed",
+        "gave_up",
+        "needs_input",
+        "transport_error",
+        "malformed",
+        "tokens",
+        "cost",
+    ],
+)
 async def test_incomplete_investigation_leaves_pending_state(
-    workflow, exhausted: bool
+    workflow, outcome: str
 ) -> None:
     core, scripted = workflow
     decision = SentinelDecision(
@@ -243,14 +254,53 @@ async def test_incomplete_investigation_leaves_pending_state(
     scripted.executors["detect"].result = AgentResult(
         status="done",
         result=DetectResult(decisions=[decision]),
-        usage=RunUsageSummary(input_tokens=core.settings.orchestrator.run_tokens)
-        if exhausted
-        else RunUsageSummary(),
+        usage=RunUsageSummary(
+            input_tokens=core.settings.orchestrator.run_tokens
+            if outcome == "tokens"
+            else 0,
+            cost_usd=core.settings.orchestrator.run_cost_usd
+            if outcome == "cost"
+            else 0,
+        ),
     )
+    if outcome in {"failed", "gave_up", "needs_input"}:
+        scripted.executors["investigate"].result = AgentResult(
+            status=outcome,
+            reason="Investigation unavailable",
+            question="Human input needed",
+        )
+    elif outcome == "malformed":
+        scripted.executors["investigate"].result = AgentResult(
+            status="done",
+            result=ReportResult(
+                title="Wrong skill result", summary="Invalid investigation"
+            ),
+        )
+    elif outcome == "transport_error":
+        call = core.directory.call
+
+        async def timeout(skill, payload, metadata, result_type):
+            if skill == "investigate":
+                raise TimeoutError("Detective timed out")
+            return await call(skill, payload, metadata, result_type)
+
+        core.directory.call = timeout
     await core.step_once()
     (incident,) = core.incidents.all()
     assert incident.status == "open"
     assert incident.verdict == "HYPOTHESIS"
+    action = (
+        "budget_exhausted"
+        if outcome in {"tokens", "cost"}
+        else "agent_error"
+        if outcome in {"transport_error", "malformed"}
+        else f"agent_{outcome}"
+    )
+    assert any(
+        row["agent"] == "investigate" and row["action"] == action
+        for row in core.control.audit_rows()
+    )
+    assert bool(core.control.approval_rows()) == (outcome == "needs_input")
     scripted.executors["detect"].result = AgentResult(
         status="done", result=DetectResult(decisions=[])
     )
