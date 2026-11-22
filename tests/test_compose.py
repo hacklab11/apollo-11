@@ -7,9 +7,7 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
     compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
     services = compose["services"]
     sim = services["sim"]
-    generator = services["sim-generate"]
-    assert "eye-data:/app/data" in generator["volumes"]
-    assert "seller-data:/app/packages/selleros/data" not in generator["volumes"]
+    assert "sim-generate" not in services
     assert sim["image"] == compose["x-service"]["image"]
     assert sim["env_file"] == compose["x-service"]["env_file"]
     assert sim["command"] == ["eye-sim", "serve"]
@@ -23,21 +21,21 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
     assert "sim-lake:/app/data/lake" in sim["volumes"]
     assert {"sim-world", "sim-lake"} <= compose["volumes"].keys()
     assert services["selleros"]["depends_on"]["sim"] == {"condition": "service_healthy"}
-    for name in ("eye-core", "selleros", "eye-data", "sim-generate"):
+    for name in ("eye-core", "selleros", "eye-data"):
         assert not any(v.startswith("sim-world:") for v in services[name]["volumes"])
     data = services["eye-data"]
-    assert data["environment"]["EYE_WAREHOUSE_PATH"] == "/app/world/world.duckdb"
-    assert data["depends_on"]["sim-generate"] == {
-        "condition": "service_completed_successfully"
-    }
-    assert "eye-data:/app/world:ro" in data["volumes"]
+    assert "EYE_WAREHOUSE_PATH" not in data["environment"]
+    assert data["environment"]["SIM_LAKE_DIR"] == sim["environment"]["SIM_LAKE_DIR"]
+    assert data["depends_on"]["sim"] == {"condition": "service_healthy"}
+    assert "sim-lake:/app/data/lake:ro" in data["volumes"]
+    assert data["networks"] == ["warehouse"]
+    assert "ports" not in data
     core = services["eye-core"]
     assert core["environment"]["EYE_DATA_URL"] == "http://eye-data:8150"
     assert core["depends_on"]["eye-data"] == {"condition": "service_healthy"}
     assert core["networks"] == ["eye", "warehouse"]
     assert "eye-data:/app/data" in core["volumes"]
-    for service in (core, data, generator):
-        assert not any(v.startswith("sim-lake:") for v in service["volumes"])
+    assert not any(v.startswith("sim-lake:") for v in core["volumes"])
     assert "seller-data:/app/packages/selleros/data" in sim["volumes"]
     assert (
         "seller-data:/app/packages/selleros/data" not in services["eye-core"]["volumes"]

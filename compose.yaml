@@ -20,13 +20,6 @@ x-health: &health
   start_period: 30s
 
 services:
-  sim-generate:
-    <<: *service
-    command: [sh, -c, 'if [ ! -s data/world.duckdb ]; then eye-sim generate --days 28 --seed 42; fi']
-    volumes:
-      - ./config/compose.yaml:/app/config/settings.yaml:ro
-      - eye-data:/app/data
-
   sim:
     <<: *service
     command: [eye-sim, serve]
@@ -52,13 +45,13 @@ services:
     env_file: []
     environment:
       EYE_DATA_HOST: 0.0.0.0
-      EYE_WAREHOUSE_PATH: /app/world/world.duckdb
+      SIM_LAKE_DIR: /app/data/lake
     depends_on:
-      sim-generate:
-        condition: service_completed_successfully
+      sim:
+        condition: service_healthy
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
-      - eye-data:/app/world:ro
+      - sim-lake:/app/data/lake:ro
       - warehouse-data:/app/data
     networks: [warehouse]
     healthcheck:
