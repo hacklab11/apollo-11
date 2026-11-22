@@ -40,6 +40,7 @@ from eye.contracts_v2 import (
 from eye.control import ControlPlane, RunKilled
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
+from eye.warehouse.client import DataUnavailable
 
 HOUR = timedelta(hours=1)
 log = logging.getLogger(__name__)
@@ -487,7 +488,11 @@ class Orchestrator(DBOSConfiguredInstance):
         incident.title, incident.summary = report.title, report.summary
         self.incidents._save(incident)
 
-    @DBOS.step()
+    @DBOS.step(
+        retries_allowed=True,
+        max_attempts=3,
+        should_retry=lambda exc: isinstance(exc, DataUnavailable),
+    )
     def update_lifecycle(self, ts: datetime) -> None:
         for incident in self.incidents.lifecycle(ts, self.z_lookup):
             self.emit("incident_upserted", incident, ts)

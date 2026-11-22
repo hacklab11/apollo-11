@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from factories import make_anomaly, make_trail_s7
+from factories import make_anomaly, make_incident_s7, make_trail_s7
 from scripted_agents import ScriptedAgents
 
 from eye.config import Settings
@@ -21,6 +21,7 @@ from eye.contracts_v2 import (
 from eye.control import audit_hash
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator
+from eye.warehouse.client import DataUnavailable
 
 
 class Clock:
@@ -256,3 +257,25 @@ async def test_incomplete_investigation_leaves_pending_state(
     for _ in range(core.incidents.settings.resolve_after_ticks):
         await core.step_once()
     assert core.incidents.get(incident.id).status == "resolved"
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_retries_the_same_hour_after_unavailable_data(workflow) -> None:
+    core, _ = workflow
+    item = make_incident_s7()
+    item.status = "open"
+    item.opened_ts = core.sim.now - HOUR
+    core.incidents._save(item)
+    attempts = []
+
+    def reading(metric, segment, ts):
+        attempts.append(ts)
+        if len(attempts) == 1:
+            raise DataUnavailable("temporary warehouse outage")
+        return 0
+
+    core.z_lookup = reading
+    ts = core.sim.now
+    await core.step_once()
+    assert attempts == [ts, ts]
+    assert core.incidents.get(item.id).normal_ticks == 1
