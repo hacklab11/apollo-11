@@ -1,4 +1,4 @@
-"""Regenerate the UI mock responses from the test factories."""
+"""Regenerate contract and MCP test fixtures from the test factories."""
 
 import sys
 from pathlib import Path

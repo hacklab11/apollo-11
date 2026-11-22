@@ -54,12 +54,8 @@ llm:
     reporter: medium
     cartographer: high
     specialists: medium
-    chat: medium
   max_tokens: 16000
   max_calls_per_hour: 600
-
-demo:
-  show_truth: false
 
 a2a:
   growth_url: http://localhost:8200/growth

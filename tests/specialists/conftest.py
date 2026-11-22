@@ -17,7 +17,7 @@ from google.protobuf.json_format import ParseDict
 from google.protobuf.struct_pb2 import Value
 from starlette.applications import Starlette
 
-from eye.api.data_api import create_router
+from eye.warehouse.domain import create_router
 from eye.config import A2aSettings, Settings
 from eye.contracts import SpecialistRequest
 from eye.sim.store import Store
