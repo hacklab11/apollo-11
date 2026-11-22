@@ -11,7 +11,7 @@ check() {
   printf 'OK %s\n' "$1"
 }
 
-core=$(url eye-core 8000)
+core=$(url web 8080)
 check "$core/api/status"
 check "$(url sim 8100)/health"
 check "$(url eye-specialists 8200)/healthz"
@@ -20,7 +20,10 @@ check "$(url eye-mcp 8100)/healthz"
 check "$core/api/metrics"
 check "$core/api/metrics/sessions"
 check "$core/api/graph"
+check "$core/api/ui/status"
+check "$core/api/ui/incidents"
 check "$core/"
+curl --fail --silent --show-error "$core/" | grep -q 'Eye of the System'
 docker compose exec -T eye-data python - <<'PY'
 import urllib.request
 

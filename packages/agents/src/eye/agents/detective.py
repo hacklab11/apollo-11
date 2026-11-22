@@ -666,6 +666,9 @@ class Detective:
                 else SpecialistResponse(agent=args.agent, answered=False, findings=[])
             )
             summary = f"{args.agent}: {len(response.findings)} findings."
+            if args.agent == "selleros" and response.answered:
+                findings = "; ".join(f.claim for f in response.findings)
+                summary = f"Eye: {args.question[:180]}\nSellerOS: {findings[:280]}"
             if not response.answered:
                 summary = f"{args.agent}: agent unavailable (0 findings)."
                 await record("note", summary, tool="ask_specialist")

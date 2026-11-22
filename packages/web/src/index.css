@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #ffffff;
+  --color-foreground: #172b3a;
+  --color-primary: #176b67;
+  --color-primary-foreground: #ffffff;
+  --color-muted: #eef1f5;
+  --color-muted-foreground: #617080;
+  --color-border: #e1e6ec;
+  --color-input: #ccd4de;
+  --color-ring: #238b85;
+  --color-destructive: #a12635;
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply m-0 text-foreground antialiased; background: #f7f8fa; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  button, textarea { font: inherit; }
+  button:focus-visible, textarea:focus-visible { outline: 2px solid #238b85; outline-offset: 3px; }
+  ::selection { background: #d8efeb; }
+}
+
+@layer components {
+  .app-header { @apply flex flex-wrap items-center justify-between gap-x-5 gap-y-4 border-b bg-white px-7 py-4; }
+  .brand-icon { @apply flex size-10 items-center justify-center rounded-xl bg-primary text-white; }
+  .clock { @apply flex flex-wrap items-center gap-3 text-xs text-muted-foreground; }
+  .clock strong { @apply font-medium text-foreground; }
+  .workspace { @apply grid; grid-template-columns: 290px minmax(0, 1fr); min-height: calc(100vh - 88px); }
+  .incident-sidebar { @apply border-r bg-white; }
+  .sidebar-heading { @apply flex items-center justify-between gap-2 px-5 py-6 border-b; }
+  .group-heading { @apply flex items-center justify-between px-5 pt-6 pb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground; }
+  .group-heading span { @apply rounded bg-muted px-1.5 py-0.5 text-[10px]; }
+  .incident-row { @apply block w-full border-l-[3px] border-l-transparent px-5 py-4 text-left transition-colors hover:bg-muted/50 cursor-pointer; }
+  .incident-row[aria-current="true"] { @apply border-l-primary; background: #edf6f4; }
+  .status-dot { @apply inline-block size-2 rounded-full; }
+  .status-dot.open { @apply bg-amber-600; }
+  .status-dot.recovered { @apply bg-primary; }
+  .status-dot.closed { @apply bg-slate-400; }
+  .needs-you { @apply font-medium text-amber-800; }
+  .incident-main { @apply min-w-0; }
+  .detail-container { @apply mx-auto max-w-6xl px-8 py-8; }
+  .eyebrow { @apply text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground; }
+  .incident-title { @apply mt-4 mb-3 text-[28px] leading-tight font-semibold tracking-tight; }
+  .state-badge { @apply rounded-full px-3 py-1 text-[11px] font-semibold capitalize; }
+  .state-badge.open { @apply bg-amber-100 text-amber-900; }
+  .state-badge.recovered { @apply bg-teal-100 text-teal-900; }
+  .state-badge.closed { @apply bg-slate-200 text-slate-700; }
+  .cause-card { @apply mt-7 border rounded-xl bg-white p-6; border-top: 3px solid #176b67; }
+  .chain-node { @apply rounded-md border bg-slate-50 px-2.5 py-1.5 text-xs; }
+  .ruled-out { @apply mt-5 flex gap-2.5 border-t pt-4 text-primary; }
+  .section-heading { @apply mb-4 flex items-center justify-between gap-3; }
+  .section-heading h3 { @apply text-sm font-semibold; }
+  .section-heading > span { @apply text-xs text-muted-foreground; }
+  .charts-grid { @apply grid gap-4; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .chart-card { @apply min-w-0 rounded-xl border bg-white p-4; }
+  .chart-message { @apply flex h-48 items-center justify-center text-sm text-muted-foreground; }
+  .seller-card { @apply rounded-xl border bg-white p-5; }
+  .external-badge { @apply ml-auto rounded border px-2 py-0.5 text-[10px] font-medium text-muted-foreground; }
+  .exchange-message { @apply mt-4 border-l-2 border-primary/30 pl-4 text-sm leading-6 whitespace-pre-line; }
+  .action-card { @apply mt-6 rounded-xl border bg-white p-5; }
+  .approval-row { @apply flex flex-wrap items-center justify-between gap-4 border-b pb-5 mb-5; }
+  .close-row { @apply flex items-end gap-5; }
+  .close-input { @apply block w-full resize-y rounded-md border border-input px-3 py-2 text-sm disabled:bg-muted/50 disabled:cursor-not-allowed; }
+  .error-banner { @apply bg-red-50 text-destructive px-6 py-3 text-sm border-b border-red-100; }
+  .empty-state { @apply mx-auto max-w-lg px-8 py-24 text-center text-muted-foreground; }
+  .graph-panel { @apply overflow-hidden rounded-xl border bg-white; }
+}
+
+@media (min-width: 1600px) { .workspace { grid-template-columns: 320px minmax(0, 1fr); } }
+@media (max-width: 1100px) { .clock { order: 3; width: 100%; } .detail-container { padding: 24px; } }
+@media (max-width: 700px) {
+  .app-header { padding: 16px; }
+  .workspace { display: block; }
+  .incident-sidebar { border-right: 0; border-bottom: 1px solid #e1e6ec; max-height: 330px; overflow-y: auto; }
+  .sidebar-heading { padding: 16px 20px; }
+  .detail-container { padding: 24px 16px; }
+  .incident-title { font-size: 24px; }
+  .cause-card { padding: 20px; }
+  .close-row { flex-direction: column; align-items: stretch; }
+}
