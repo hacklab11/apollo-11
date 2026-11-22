@@ -756,3 +756,24 @@ async def test_reporter_reuses_agent_with_per_run_grounding(caplog):
     assert second.usage.requests == 2
     assert reporter.agent is agent
     assert len(caplog.records) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider,key_env",
+    [
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai_compatible", "REPORTER_TEST_API_KEY"),
+    ],
+)
+async def test_reporter_missing_credentials_falls_back(
+    provider, key_env, monkeypatch, caplog
+):
+    monkeypatch.delenv(key_env, raising=False)
+    reporter = Reporter(settings=LlmSettings(provider=provider, api_key_env=key_env))
+    written = await reporter.write(result())
+    assert (written.title, written.summary) == reporter.template(result())
+    assert written.usage.requests == 0
+    assert len(caplog.records) == 1
+    assert "end_state=failed" in caplog.text
+    assert f"Missing credential: {key_env}" in caplog.text
