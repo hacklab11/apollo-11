@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -58,6 +59,47 @@ async def test_tenant_limits_and_backpressure(workflow) -> None:
         await core._check_backlog("other-tenant")
     finally:
         await DBOS.cancel_workflow_async(handle.workflow_id)
+
+
+@pytest.mark.asyncio
+async def test_tenant_concurrency_queues_without_blocking_other_tenants(
+    workflow,
+) -> None:
+    core, _ = workflow
+    entered, release = threading.Event(), threading.Event()
+    call = core.directory.call
+
+    async def hold(skill, payload, metadata, result_type):
+        if metadata.context_id == "first":
+            entered.set()
+            await asyncio.to_thread(release.wait, 15)
+        return await call(skill, payload, metadata, result_type)
+
+    core.directory.call = hold
+    handles = []
+    try:
+        for name, tenant in (
+            ("first", "default"),
+            ("second", "default"),
+            ("other", "other"),
+        ):
+            with SetEnqueueOptions(queue_partition_key=tenant):
+                handles.append(
+                    await core.queue.enqueue_async(
+                        core.run_hour,
+                        name,
+                        core.sim.now,
+                        core._metadata(name).model_copy(update={"tenant_id": tenant}),
+                    )
+                )
+            if name == "first":
+                assert await asyncio.to_thread(entered.wait, 10)
+        await asyncio.wait_for(handles[2].get_result(), timeout=10)
+        status = await DBOS.get_workflow_status_async(handles[1].workflow_id)
+        assert status.status == "ENQUEUED"
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*(h.get_result() for h in handles)), 15)
 
 
 @pytest.mark.asyncio
