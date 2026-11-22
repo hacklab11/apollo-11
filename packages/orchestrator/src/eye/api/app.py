@@ -39,6 +39,7 @@ from eye.contracts_v2 import (
     SellerPriceRevert,
     SellerRevertApproval,
 )
+from eye.control import RunKilled
 from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
@@ -303,6 +304,12 @@ def create_app(
             return rows
         return [row for row in rows if row["tool_name"] != SELLER_REVERT_TOOL]
 
+    def check_seller_revert_running(run_id: str) -> None:
+        try:
+            orchestrator.control.check(run_id, DEFAULT_TENANT)
+        except RunKilled as exc:
+            raise HTTPException(409, "SellerOS price reverts are stopped") from exc
+
     @app.put("/api/approvals/seller-revert")
     async def request_seller_revert(
         action: SellerPriceRevert, credentials: Bearer
@@ -310,10 +317,12 @@ def create_app(
         if not has_seller_revert_token(credentials, role="SERVICE"):
             raise HTTPException(401, "SellerOS service credential required")
         key = action.idempotency_key()
+        run_id = f"selleros:{action.incident_id}"
+        check_seller_revert_running(run_id)
         try:
             row = orchestrator.control.ensure_pending(
                 key,
-                f"selleros:{action.incident_id}",
+                run_id,
                 action.incident_id,
                 SELLER_REVERT_TOOL,
                 action.model_dump(mode="json"),
@@ -342,6 +351,8 @@ def create_app(
             actor = human_actor(request)
         if row is None:
             raise HTTPException(409, "unknown or already decided approval")
+        if decision.approve and seller_revert:
+            check_seller_revert_running(row["run_id"])
         try:
             orchestrator.control.decide(id, decision.approve, actor)
         except ValueError as exc:
