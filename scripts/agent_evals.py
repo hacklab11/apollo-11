@@ -35,7 +35,7 @@ from eye.agents.reporter import Reporter
 from eye.agents.sentinel import Sentinel
 from eye.agents.skeptic import Skeptic
 from eye.config import LlmSettings
-from eye.contracts import Anomaly, InvestigationResult, MetricDef
+from eye.contracts import Anomaly, Hypothesis, InvestigationResult, MetricDef
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
@@ -256,7 +256,12 @@ async def run_case(inputs: Inputs, model: Model, model_id: str) -> dict[str, Any
         return {"decisions": [item.model_dump(mode="json") for item in decisions]}
     if inputs.agent == "skeptic":
         result = await Skeptic(data=data, llm=settings, model=model).review(
-            Anomaly.model_validate(inputs.payload["entry"]), "eval-s8", discard
+            Anomaly.model_validate(inputs.payload["entry"]),
+            "eval-s8",
+            discard,
+            hypothesis=Hypothesis.model_validate(inputs.payload["hypothesis"])
+            if inputs.payload.get("hypothesis") is not None
+            else None,
         )
         return result.model_dump(mode="json")
     if inputs.agent == "detective":

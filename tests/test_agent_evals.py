@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, ToolCallPart, UserPromptPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.tools import ToolDefinition
@@ -163,6 +163,42 @@ async def test_namespaced_serving_route_is_priced(agent: str) -> None:
     )
     if agent == "skeptic":
         assert output["reasons"] == case.inputs.responses[-1]["reasons"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_hypothesis", [True, False])
+async def test_skeptic_hypothesis_reaches_model_request(has_hypothesis: bool) -> None:
+    case = next(
+        case for case in evals.load_cases().cases if case.inputs.agent == "skeptic"
+    )
+    inputs = case.inputs.model_copy(deep=True)
+    if not has_hypothesis:
+        inputs.payload.pop("hypothesis")
+    expected = (
+        evals.Hypothesis.model_validate(inputs.payload["hypothesis"]).model_dump(
+            mode="json"
+        )
+        if has_hypothesis
+        else None
+    )
+    recorded = evals.replay(inputs, evals.CLAUDE)
+    requests = []
+
+    def respond(messages, info):
+        payload = next(
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart)
+        )
+        requests.append(json.loads(payload)["hypothesis"])
+        return recorded.function(messages, info)
+
+    await evals.run_case(
+        inputs, FunctionModel(respond, model_name=evals.CLAUDE), evals.CLAUDE
+    )
+    assert requests
+    assert all(hypothesis == expected for hypothesis in requests)
 
 
 def test_recorded_submissions_match_s8_finite_provider(
