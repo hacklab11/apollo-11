@@ -5,6 +5,7 @@ description = "Agentic monitoring for a simulated marketplace"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "eye-auth",
     "agent-runtime",
     "eye-contracts",
     "eye-data",
@@ -79,6 +80,7 @@ members = ["packages/*", "sim"]
 exclude = ["packages/web"]
 
 [tool.uv.sources]
+eye-auth = { workspace = true }
 agent-runtime = { workspace = true }
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
@@ -92,7 +94,13 @@ eye-demo = { workspace = true }
 selleros = { workspace = true }
 
 [tool.importlinter]
-root_packages = ["eye", "selleros", "agent_runtime", "eye_demo"]
+root_packages = ["eye", "selleros", "agent_runtime", "eye_demo", "eye_auth"]
+
+[[tool.importlinter.contracts]]
+name = "Auth is a leaf library"
+type = "forbidden"
+source_modules = ["eye_auth"]
+forbidden_modules = ["eye", "selleros", "agent_runtime", "eye_demo"]
 
 [[tool.importlinter.contracts]]
 name = "Demo CLI is isolated from application packages"
@@ -137,6 +145,7 @@ name = "Contracts import nothing in the workspace"
 type = "forbidden"
 source_modules = ["eye.contracts", "eye.contracts_v2"]
 forbidden_modules = [
+    "eye_auth",
     "eye.config",
     "eye.schema",
     "eye.registry",

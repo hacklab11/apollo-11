@@ -19,6 +19,7 @@ from a2a.server.routes.agent_card_routes import create_agent_card_routes
 from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -46,6 +47,8 @@ from eye.registry.engine import MetricEngine
 from eye.registry.loader import load_registry
 from eye.warehouse.client import DataClient, RemoteGraph
 from eye.warehouse.landing import ParquetLanding
+from eye_auth.client import sign_card
+from eye_auth.trust import A2AAuthMiddleware
 
 PORTS = {
     "sentinel": 8210,
@@ -319,6 +322,7 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
         try:
+            await sign_card(card, name)
             yield
         finally:
             if warehouse is not None:
@@ -340,6 +344,11 @@ def create_app(
             *create_jsonrpc_routes(handler, "/"),
         ],
         lifespan=lifespan,
+        middleware=[
+            Middleware(
+                A2AAuthMiddleware, services={"/": (name, {f"{name}:{skill.id}"})}
+            )
+        ],
     )
 
 

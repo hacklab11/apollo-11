@@ -29,7 +29,7 @@ def request() -> SpecialistRequest:
 def settings() -> A2aSettings:
     return A2aSettings(
         **{
-            f"{agent}_url": "http://stub"
+            f"{agent}_url": f"http://{agent}"
             for agent in ("growth", "marketplace", "discovery", "selleros")
         }
     )
@@ -37,8 +37,18 @@ def settings() -> A2aSettings:
 
 @pytest.mark.asyncio
 async def test_round_trip_and_health() -> None:
-    app, executor = stub_server()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
+    _, executor = stub_server()
+    apps = {
+        name: stub_server(executor, name=name)[0]
+        for name in ("growth", "marketplace", "discovery", "selleros")
+    }
+
+    async def handle(req: httpx.Request) -> httpx.Response:
+        return await httpx.ASGITransport(app=apps[req.url.host]).handle_async_request(
+            req
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         client = A2AClient(settings(), http_client=http)
         cards = await client.fetch_cards()
         assert set(cards) == {"growth", "marketplace", "discovery", "selleros"}
@@ -136,7 +146,7 @@ async def test_owned_http_client_closed() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed", [False, True])
 async def test_directory_delivers_seller_alerts(failed: bool) -> None:
-    app, executor = stub_server(EchoExecutor(failed=failed))
+    app, executor = stub_server(EchoExecutor(failed=failed), name="selleros")
     directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
     alert = SellerAlert(
         incident_id="inc_1",
@@ -148,3 +158,66 @@ async def test_directory_delivers_seller_alerts(failed: bool) -> None:
     ack = await directory.notify_seller_os(alert)
     assert ack.received == (not failed)
     assert executor.requests == [alert]
+
+
+@pytest.mark.asyncio
+async def test_directory_skips_invalid_card_and_keeps_healthy_agent(caplog) -> None:
+    apps = {name: stub_server(name=name)[0] for name in ("sentinel", "detective")}
+
+    async def handle(req: httpx.Request) -> httpx.Response:
+        if req.url.host not in apps:
+            return httpx.Response(404)
+        response = await httpx.ASGITransport(
+            app=apps[req.url.host]
+        ).handle_async_request(req)
+        if req.url.host == "detective":
+            await response.aread()
+            body = response.json()
+            body.pop("signatures", None)
+            return httpx.Response(200, json=body)
+        return response
+
+    directory = AgentDirectory(
+        A2aSettings(
+            **{
+                f"{name}_url": f"http://{name}"
+                for name in (
+                    "sentinel",
+                    "detective",
+                    "skeptic",
+                    "reporter",
+                    "cartographer",
+                )
+            }
+        ),
+        transport=httpx.MockTransport(handle),
+    )
+    await directory.resolve()
+    assert set(directory.cards) == {"echo"}
+    assert directory.cards["echo"].name == "sentinel"
+    assert "Skipping untrusted A2A card for detective" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["missing", "rejected"])
+async def test_seller_delivery_returns_failure_on_oauth_error(
+    failure, monkeypatch
+) -> None:
+    app, executor = stub_server(name="selleros")
+    if failure == "missing":
+        monkeypatch.delenv("EYE_AUTH_EYE_CORE_SECRET", raising=False)
+        monkeypatch.delenv("EYE_AUTH_CLIENT_SECRET", raising=False)
+    else:
+        monkeypatch.setenv("EYE_AUTH_EYE_CORE_SECRET", "invalid-test-only")
+    directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
+    ack = await directory.notify_seller_os(
+        SellerAlert(
+            incident_id="inc_1",
+            seller_ids=[],
+            skus=[],
+            summary="Check",
+            recommended_action="Review",
+        )
+    )
+    assert not ack.received and not ack.actions_taken
+    assert not executor.requests

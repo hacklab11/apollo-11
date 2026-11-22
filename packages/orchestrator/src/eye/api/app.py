@@ -45,6 +45,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.client import DataClient, DataUnavailable
 from eye.warehouse.domain import create_router
 from eye.warehouse.queries import LocalQueries
+from eye_auth.trust import require_scopes
 
 _SEGMENT = TypeAdapter(dict[Dimension, str])
 _PARAMS = TypeAdapter(dict)
@@ -79,14 +80,12 @@ def human_actor(request: Request) -> str:
     return actor
 
 
-def has_seller_revert_token(
-    credentials: HTTPAuthorizationCredentials | None, *, role: str
+def has_seller_revert_operator_token(
+    credentials: HTTPAuthorizationCredentials | None,
 ) -> bool:
-    expected = os.environ.get(f"EYE_SELLER_REVERT_{role}_TOKEN")
-    other_role = "OPERATOR" if role == "SERVICE" else "SERVICE"
+    expected = os.environ.get("EYE_SELLER_REVERT_OPERATOR_TOKEN")
     return bool(
         expected
-        and expected != os.environ.get(f"EYE_SELLER_REVERT_{other_role}_TOKEN")
         and credentials
         and compare_digest(credentials.credentials.encode(), expected.encode())
     )
@@ -98,7 +97,7 @@ def seller_revert_actor(
     actor = getattr(request.state, "person", None)
     if isinstance(actor, str) and actor.strip():
         return actor
-    if has_seller_revert_token(credentials, role="OPERATOR"):
+    if has_seller_revert_operator_token(credentials):
         return "seller-revert-operator"
     if os.environ.get("EYE_TRUST_PROXY_PERSON_HEADER") == "1":
         actor = request.headers.get("X-Eye-Person")
@@ -108,8 +107,6 @@ def seller_revert_actor(
 
 
 def kill_actor(request: Request, credentials: Bearer) -> str:
-    if not os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN"):
-        return human_actor(request)
     actor = seller_revert_actor(request, credentials)
     if actor is None:
         raise HTTPException(401, "Operator credential required")
@@ -376,10 +373,9 @@ def create_app(
 
     @app.put("/api/approvals/seller-revert")
     async def request_seller_revert(
-        action: SellerPriceRevert, credentials: Bearer
+        action: SellerPriceRevert, request: Request
     ) -> SellerRevertApproval:
-        if not has_seller_revert_token(credentials, role="SERVICE"):
-            raise HTTPException(401, "SellerOS service credential required")
+        await require_scopes(request, "eye-core", {"selleros:revert"})
         key = action.idempotency_key()
         run_id = f"selleros:{action.incident_id}"
         check_seller_revert_running(run_id)
@@ -402,9 +398,8 @@ def create_app(
         )
 
     @app.get("/api/approvals/seller-revert/{id}/permission", status_code=204)
-    async def seller_revert_permission(id: str, credentials: Bearer) -> Response:
-        if not has_seller_revert_token(credentials, role="SERVICE"):
-            raise HTTPException(401, "SellerOS service credential required")
+    async def seller_revert_permission(id: str, request: Request) -> Response:
+        await require_scopes(request, "eye-core", {"selleros:revert"})
         row = orchestrator.control.approval(id)
         if row is None or row["tool_name"] != SELLER_REVERT_TOOL:
             raise HTTPException(404, "Price revert approval not found")

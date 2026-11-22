@@ -10,6 +10,7 @@ from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.models import Model
 
 from agent_runtime import PriceTable, RunLimits, RunScope, end_state_outputs, run_agent
+from eye_auth.trust import SkillGuard
 from selleros.client import PRICES, LlmSettings, build_model
 from selleros.data import ScopedData, Selection, SellerStore
 from selleros.data import ToolOutput as ReadResult
@@ -25,10 +26,21 @@ READ_TOOLS = {
     "get_supplier_eta": "Read scoped expected seller restock dates.",
     "price_intent_check": "Read the scoped last price change, unit cost and computed verdict.",
 }
+TOOL_SKILLS = {
+    "get_repricer": "repricer_status",
+    "get_costs": "below_cost_check",
+    "get_price_history": "repricer_status",
+    "get_supplier_eta": "supplier_eta",
+    "price_intent_check": "price_intent_check",
+}
 
 
-def read_tool(name: str, description: str) -> Tool[ScopedData]:
+def read_tool(
+    name: str, description: str, guard: SkillGuard | None = None
+) -> Tool[ScopedData]:
     def query(ctx: RunContext[ScopedData], selection: Selection) -> ReadResult:
+        if guard is not None:
+            guard.check(TOOL_SKILLS[name])
         return ctx.deps.query(name, selection)
 
     return Tool(query, name=name, description=description)
@@ -57,7 +69,12 @@ async def answer(
     *,
     model: Model | None = None,
     prices: PriceTable = PRICES,
+    scopes: frozenset[str] | None = None,
 ) -> SpecialistResponse:
+    if scopes is not None and not any(
+        f"selleros:{s}" in scopes for s in TOOL_SKILLS.values()
+    ):
+        raise PermissionError("Insufficient SellerOS read scope")
     scope = scope_for(request)
     if not scope.seller_ids and not scope.skus:
         return SpecialistResponse(
@@ -68,13 +85,15 @@ async def answer(
         )
     snapshot = await asyncio.to_thread(store.read)
     data = ScopedData(store, snapshot, scope, request.window_end_ts)
+    guard = SkillGuard("selleros", scopes) if scopes is not None else None
     agent = Agent(
         model or build_model(LlmSettings.from_env()),
         name="selleros",
         instructions=PROMPT,
         deps_type=ScopedData,
         tools=[
-            read_tool(name, description) for name, description in READ_TOOLS.items()
+            read_tool(name, description, guard)
+            for name, description in READ_TOOLS.items()
         ],
         output_type=end_state_outputs(
             ToolOutput(SpecialistResponse, name="submit", strict=False)
@@ -90,6 +109,8 @@ async def answer(
         deps=data,
     )
     result = outcome.result
+    if guard is not None:
+        guard.finish()
     if result.status == "needs_input":
         return SpecialistResponse(agent="selleros", answered=False, findings=[])
     if result.status != "done" or not isinstance(result.result, SpecialistResponse):

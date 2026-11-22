@@ -1,7 +1,21 @@
 x-offline-environment: &offline-environment
   ANTHROPIC_API_KEY: ""
   OPENROUTER_API_KEY: ""
+  EYE_MODEL_API_KEY: ""
   EYE_E2E_TOKEN: offline-test-only
+
+x-offline-auth: &offline-auth
+  EYE_AUTH_EYE_CORE_SECRET: &core-secret offline-core-only
+  EYE_AUTH_SENTINEL_SECRET: &sentinel-secret offline-sentinel-only
+  EYE_AUTH_DETECTIVE_SECRET: &detective-secret offline-detective-only
+  EYE_AUTH_SKEPTIC_SECRET: &skeptic-secret offline-skeptic-only
+  EYE_AUTH_REPORTER_SECRET: &reporter-secret offline-reporter-only
+  EYE_AUTH_CARTOGRAPHER_SECRET: &cartographer-secret offline-cartographer-only
+  EYE_AUTH_GROWTH_SECRET: &growth-secret offline-growth-only
+  EYE_AUTH_MARKETPLACE_SECRET: &marketplace-secret offline-marketplace-only
+  EYE_AUTH_DISCOVERY_SECRET: &discovery-secret offline-discovery-only
+  EYE_AUTH_SELLEROS_SECRET: &selleros-secret offline-selleros-only
+  EYE_AUTH_SIM_SECRET: &sim-secret offline-sim-only
 
 x-offline: &offline
   env_file: !reset []
@@ -13,6 +27,9 @@ services:
   egress-proxy:
     volumes:
       - ./tests/e2e/proxy-allowlist.txt:/etc/squid/allowlist.txt:ro
+
+  auth:
+    environment: *offline-auth
 
   scripted-model:
     image: eye-system:local
@@ -32,7 +49,8 @@ services:
   sim:
     <<: *offline
     environment:
-      EYE_SELLER_REVERT_SERVICE_TOKEN: offline-seller-service
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *sim-secret
     ports: !override ["127.0.0.1::8100"]
 
   eye-data:
@@ -41,7 +59,8 @@ services:
   eye-core:
     <<: *offline
     environment:
-      EYE_SELLER_REVERT_SERVICE_TOKEN: offline-seller-service
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *core-secret
     volumes:
       - ./tests/e2e/settings.yaml:/app/config/settings.yaml:ro
       - ./tests/e2e:/e2e:ro
@@ -51,22 +70,42 @@ services:
 
   eye-specialists:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_GROWTH_SECRET: *growth-secret
+      EYE_AUTH_MARKETPLACE_SECRET: *marketplace-secret
+      EYE_AUTH_DISCOVERY_SECRET: *discovery-secret
 
   sentinel:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *sentinel-secret
 
   detective:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *detective-secret
     scale: 3
 
   skeptic:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *skeptic-secret
 
   reporter:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *reporter-secret
 
   cartographer:
     <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_AUTH_CLIENT_SECRET: *cartographer-secret
 
   eye-mcp:
     <<: *offline
@@ -75,7 +114,7 @@ services:
     env_file: !reset []
     environment:
       <<: *offline-environment
-      EYE_SELLER_REVERT_SERVICE_TOKEN: offline-seller-service
+      EYE_AUTH_CLIENT_SECRET: *selleros-secret
       SELLEROS_PROVIDER: openai_compatible
       SELLEROS_BASE_URL: http://scripted-model:8400/v1
       SELLEROS_API_KEY_ENV: EYE_E2E_TOKEN

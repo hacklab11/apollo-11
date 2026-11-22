@@ -1,9 +1,11 @@
 """One ASGI app serving the Growth, Marketplace, and Discovery A2A specialists."""
 
+import inspect
 import json
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from importlib.resources import files
 from types import ModuleType
 from typing import Any
@@ -24,7 +26,9 @@ from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from google.protobuf.json_format import MessageToDict
+from pydantic import BaseModel
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import BaseRoute, Route
@@ -32,11 +36,59 @@ from starlette.routing import BaseRoute, Route
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import Settings, load_settings
 from eye.contracts import SpecialistRequest, SpecialistResponse, TrailStep
-from eye.llm.runtime import AgentSpec, run_agent
+from eye.llm.runtime import AgentSpec, ToolSpec, run_agent
 from eye.specialists import discovery, growth, marketplace
 from eye.specialists.tools import DataApiUnavailable, DataClient
+from eye_auth.client import sign_card
+from eye_auth.trust import A2AAuthMiddleware, SkillGuard, granted_scopes
 
 SPECIALISTS: tuple[ModuleType, ...] = (growth, marketplace, discovery)
+TOOL_SKILLS = {
+    "growth": {
+        "ads_pacing": "ads_pacing",
+        "ads_auction": "auction_health",
+        "marketing": "traffic_sources",
+        "discounts": "discounts",
+    },
+    "marketplace": {
+        "offers": "pricing",
+        "buybox": "buybox",
+        "stock": "availability",
+        "purchase_orders": "purchasing",
+        "capacity": "availability",
+        "new_sellers": "new_sellers",
+    },
+    "discovery": {
+        "search_quality": "search_quality",
+        "feed_exposure": "feed_exposure",
+        "checkout_funnel": "checkout_funnel",
+        "payments": "checkout_funnel",
+        "errors": "client_errors",
+        "app_components": "components",
+    },
+}
+
+
+def authorized_tools(
+    specialist: ModuleType, client: DataClient, guard: SkillGuard | None
+) -> list[ToolSpec]:
+    tools = specialist.tools(client)
+    if guard is None:
+        return tools
+
+    def authorize(tool: ToolSpec) -> ToolSpec:
+        async def invoke(args: BaseModel) -> BaseModel:
+            skill = TOOL_SKILLS[specialist.NAME].get(tool.name)
+            if skill is not None:
+                guard.check(skill)
+            elif tool.name not in {"metric", "changes"}:
+                raise PermissionError("Unmapped specialist tool")
+            result = tool.fn(args)
+            return await result if inspect.isawaitable(result) else result
+
+        return replace(tool, fn=invoke)
+
+    return [authorize(tool) for tool in tools]
 
 
 async def healthz(_: Request) -> JSONResponse:
@@ -56,11 +108,13 @@ async def answer(
     client: DataClient,
     request: SpecialistRequest,
     settings: Settings,
+    scopes: frozenset[str] | None = None,
 ) -> tuple[SpecialistResponse, list[dict[str, str]]]:
     """Run one specialist turn; returns the response and its `{tool, summary}` steps."""
     await client.check(request.window_start_ts, request.window_end_ts)
     steps: list[dict[str, str]] = []
     used: set[str] = set()
+    guard = SkillGuard(specialist.NAME, scopes) if scopes is not None else None
 
     async def on_step(step: TrailStep) -> None:
         if step.action == "tool_call" and step.tool != "submit":
@@ -71,7 +125,7 @@ async def answer(
     spec = AgentSpec(
         name=specialist.NAME,
         system_prompt_file=str(PROMPTS / f"{specialist.NAME}.md"),
-        tools=specialist.tools(client),
+        tools=authorized_tools(specialist, client, guard),
         submit_model=SpecialistResponse,
         effort=settings.llm.effort["specialists"],
         model=settings.llm.model_for(specialist.NAME),
@@ -81,6 +135,8 @@ async def answer(
     # Protobuf Struct does not preserve key order; sorting keeps replay keys stable.
     content = json.dumps(request.model_dump(mode="json"), indent=2, sort_keys=True)
     result = await run_agent(spec, content, request.investigation_id, on_step)
+    if guard is not None:
+        guard.finish()
     response = SpecialistResponse.model_validate(result.model_dump()).model_copy(
         update={"agent": specialist.NAME, "data_used": sorted(used)}
     )
@@ -101,6 +157,9 @@ class SpecialistExecutor(AgentExecutor):
             await event_queue.enqueue_event(new_task_from_user_message(context.message))
         name = self.specialist.NAME
         try:
+            scopes = granted_scopes()
+            if not any(f"{name}:{skill}" in scopes for skill in self.specialist.SKILLS):
+                raise PermissionError("Insufficient specialist scope")
             parts = [part for part in context.message.parts if part.HasField("data")]
             if len(parts) != 1:
                 raise ValueError("expected exactly one JSON data part")
@@ -108,7 +167,7 @@ class SpecialistExecutor(AgentExecutor):
                 MessageToDict(parts[0].data), extra="forbid"
             )
             response, steps = await answer(
-                self.specialist, self.client, request, self.settings
+                self.specialist, self.client, request, self.settings, scopes
             )
         except DataApiUnavailable as exc:
             await self._fail(updater, f"{self.specialist.TITLE} failed: {exc}")
@@ -136,7 +195,7 @@ class SpecialistExecutor(AgentExecutor):
 
 def agent_card(specialist: ModuleType, url: str) -> AgentCard:
     return AgentCard(
-        name=specialist.TITLE,
+        name=specialist.NAME,
         description=specialist.DESCRIPTION,
         version="0.1.0",
         capabilities=AgentCapabilities(),
@@ -153,11 +212,15 @@ def agent_card(specialist: ModuleType, url: str) -> AgentCard:
 
 
 def specialist_routes(
-    specialist: ModuleType, client: DataClient, settings: Settings
+    specialist: ModuleType,
+    client: DataClient,
+    settings: Settings,
+    cards: list[AgentCard],
 ) -> list[BaseRoute]:
     # Prefixed routes, not Mount: clients POST to /growth with no trailing slash.
     prefix = f"/{specialist.NAME}"
     card = agent_card(specialist, getattr(settings.a2a, f"{specialist.NAME}_url"))
+    cards.append(card)
     handler = DefaultRequestHandler(
         SpecialistExecutor(specialist, client, settings), InMemoryTaskStore(), card
     )
@@ -178,9 +241,12 @@ def create_app(
             os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{settings.ports.core}")
             + "/data",
         )
+    cards: list[AgentCard] = []
 
     @asynccontextmanager
     async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        for card in cards:
+            await sign_card(card, card.name)
         yield
         if owned:
             await client.http.aclose()
@@ -190,9 +256,15 @@ def create_app(
         + [
             route
             for specialist in SPECIALISTS
-            for route in specialist_routes(specialist, client, settings)
+            for route in specialist_routes(specialist, client, settings, cards)
         ],
         lifespan=lifespan,
+        middleware=[
+            Middleware(
+                A2AAuthMiddleware,
+                services={f"/{s.NAME}": (s.NAME, set()) for s in SPECIALISTS},
+            )
+        ],
     )
 
 

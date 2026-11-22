@@ -1,5 +1,7 @@
 """Typed, skill-routed A2A calls across the process boundary."""
 
+import logging
+from contextlib import AsyncExitStack
 from uuid import uuid4
 
 import httpx
@@ -15,6 +17,7 @@ from a2a.types.a2a_pb2 import (
     TaskState,
 )
 from a2a.utils.errors import A2AError
+from authlib.integrations.base_client.errors import OAuthError
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Struct, Value
 from opentelemetry import propagate, trace
@@ -27,6 +30,10 @@ from eye.contracts_v2 import (
     AgentResult,
     TaskMetadata,
 )
+from eye_auth.client import oauth_client
+from eye_auth.trust import verify_card
+
+logger = logging.getLogger(__name__)
 
 
 class AgentDirectory:
@@ -58,7 +65,11 @@ class AgentDirectory:
                 url = getattr(self.settings, f"{name}_url")
                 try:
                     card = await A2ACardResolver(client, url).get_agent_card()
+                    await verify_card(card, name)
                 except (httpx.HTTPError, AgentCardResolutionError):
+                    continue
+                except ValueError:
+                    logger.warning("Skipping untrusted A2A card for %s", name)
                     continue
                 for skill in card.skills:
                     if skill.id in cards:
@@ -101,10 +112,23 @@ class AgentDirectory:
                 transport=self.transport,
                 timeout=self.settings.timeout_s,
                 headers=headers,
-            ) as client:
-                response = await JsonRpcTransport(
-                    client, self.cards[skill], self.urls[skill], is_shared_httpx=True
-                ).send_message(request)
+            ) as raw:
+                card, url = self.cards[skill], self.urls[skill]
+                name = card.name
+                try:
+                    await verify_card(card, name)
+                except ValueError:
+                    card = await A2ACardResolver(raw, url).get_agent_card()
+                    await verify_card(card, name)
+                    if skill not in {item.id for item in card.skills}:
+                        raise ValueError(f"unknown A2A skill: {skill}")
+                    self.cards[skill] = card
+                async with oauth_client(
+                    {f"{name}:{skill}"}, client_id="eye-core", http=raw
+                ) as client:
+                    response = await JsonRpcTransport(
+                        client, card, url, is_shared_httpx=True
+                    ).send_message(request)
             if not response.HasField("task"):
                 raise ValueError("expected blocking A2A task")
             task = response.task
@@ -125,15 +149,26 @@ class AgentDirectory:
             with self.tracer.start_as_current_span("agent.selleros"):
                 headers = {"A2A-Version": "1.0"}
                 propagate.inject(headers)
-                async with httpx.AsyncClient(
-                    transport=self.transport,
-                    timeout=self.settings.timeout_s,
-                    headers=headers,
-                ) as client:
+                async with (
+                    AsyncExitStack() as stack,
+                    httpx.AsyncClient(
+                        transport=self.transport,
+                        timeout=self.settings.timeout_s,
+                        headers=headers,
+                    ) as client,
+                ):
                     url = self.settings.selleros_url
                     card = await A2ACardResolver(client, url).get_agent_card()
+                    await verify_card(card, "selleros")
+                    authenticated = await stack.enter_async_context(
+                        oauth_client(
+                            {"selleros:receive_alert"},
+                            client_id="eye-core",
+                            http=client,
+                        )
+                    )
                     response = await JsonRpcTransport(
-                        client, card, url, is_shared_httpx=True
+                        authenticated, card, url, is_shared_httpx=True
                     ).send_message(
                         SendMessageRequest(
                             message=Message(
@@ -172,5 +207,5 @@ class AgentDirectory:
                 return SellerAlertAck.model_validate(
                     MessageToDict(task.artifacts[0].parts[0].data)
                 )
-        except (A2AError, httpx.HTTPError, ValueError):
+        except (A2AError, httpx.HTTPError, ValueError, KeyError, OAuthError):
             return SellerAlertAck(received=False, actions_taken=[])

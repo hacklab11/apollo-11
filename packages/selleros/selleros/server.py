@@ -1,6 +1,8 @@
 """Standalone A2A JSON-RPC service."""
 
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
@@ -19,6 +21,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.protobuf.json_format import MessageToDict
 from pydantic_ai.models import Model
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -26,6 +29,8 @@ from starlette.routing import Route
 from agent_runtime import PriceTable
 from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.contracts_v2 import SELLER_REVERT_APPROVAL_METADATA_KEY
+from eye_auth.client import sign_card
+from eye_auth.trust import A2AAuthMiddleware, check_skill, granted_scopes
 from selleros.actions import receive_alert
 from selleros.agent import answer
 from selleros.client import PRICES
@@ -67,6 +72,7 @@ class Executor(AgentExecutor):
                 raise ValueError("expected exactly one JSON data part")
             payload = MessageToDict(parts[0].data)
             if "incident_id" in payload:
+                check_skill("selleros", "receive_alert", granted_scopes())
                 alert = SellerAlert.model_validate(payload, extra="forbid")
                 approval_id = context.metadata.get(SELLER_REVERT_APPROVAL_METADATA_KEY)
                 if approval_id is not None and not isinstance(approval_id, str):
@@ -81,7 +87,11 @@ class Executor(AgentExecutor):
             else:
                 request = SpecialistRequest.model_validate(payload, extra="forbid")
                 output = await answer(
-                    self.store, request, model=self.model, prices=self.prices
+                    self.store,
+                    request,
+                    model=self.model,
+                    prices=self.prices,
+                    scopes=granted_scopes(),
                 )
             await updater.add_artifact([new_data_part(output.model_dump(mode="json"))])
             await updater.complete()
@@ -107,7 +117,7 @@ def create_app(
     approvals_transport: httpx.AsyncBaseTransport | None = None,
 ) -> Starlette:
     card = AgentCard(
-        name="SellerOS Partner Agent",
+        name="selleros",
         description="Third-party repricing and inventory assistant for small marketplace sellers",
         version="0.1.0",
         capabilities=AgentCapabilities(),
@@ -137,12 +147,20 @@ def create_app(
         InMemoryTaskStore(),
         card,
     )
+
+    @asynccontextmanager
+    async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        await sign_card(card, "selleros")
+        yield
+
     return Starlette(
+        lifespan=lifespan,
+        middleware=[Middleware(A2AAuthMiddleware, services={"/": ("selleros", set())})],
         routes=[
             Route("/healthz", healthz),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/", enable_v0_3_compat=True),
-        ]
+        ],
     )
 
 

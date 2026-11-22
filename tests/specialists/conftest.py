@@ -23,6 +23,8 @@ from eye.sim.store import Store
 from eye.specialists.app import create_app
 from eye.specialists.tools import DataClient
 from eye.warehouse.domain import create_router
+from eye_auth.client import oauth_client
+from eye_auth.trust import verify_card
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "llm"
 DAY = datetime(2026, 11, 27, tzinfo=UTC)
@@ -181,6 +183,7 @@ def s7_request() -> SpecialistRequest:
 
 async def send(http: httpx.AsyncClient, agent: str, request: SpecialistRequest) -> Task:
     card = await A2ACardResolver(http, f"http://specialists/{agent}").get_agent_card()
+    await verify_card(card, agent)
     message = SendMessageRequest(
         message=Message(
             message_id=uuid4().hex,
@@ -191,8 +194,14 @@ async def send(http: httpx.AsyncClient, agent: str, request: SpecialistRequest) 
             ],
         )
     )
-    factory = ClientFactory(ClientConfig(streaming=False, httpx_client=http))
-    async with factory.create(card) as client:
+    async with (
+        oauth_client(
+            {f"{agent}:{skill.id}" for skill in card.skills}, http=http
+        ) as authenticated,
+        ClientFactory(ClientConfig(streaming=False, httpx_client=authenticated)).create(
+            card
+        ) as client,
+    ):
         async for event in client.send_message(message):
             return event.task
     raise AssertionError("no task returned")

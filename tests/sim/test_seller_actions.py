@@ -3,11 +3,11 @@ import json
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from secrets import token_urlsafe
 from typing import Any
 
 import httpx
 import pytest
+from authlib.integrations.httpx_client import OAuth2Client
 from pydantic import ValidationError
 
 from eye.config import Settings
@@ -17,6 +17,7 @@ from eye.sim.market import Market
 from eye.sim.seller_actions import JournalSellerActionFeed, SellerAction
 from eye.sim.source import _world
 from eye.sim.world import World, build_world
+from eye_auth.trust import decode_token
 
 TS = datetime(2026, 11, 27, tzinfo=UTC)
 
@@ -119,17 +120,16 @@ def test_feed_holds_revert_until_authorized(tmp_path: Path) -> None:
 def test_feed_uses_configured_core_port(
     small_sim_settings: Settings, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    token = token_urlsafe()
-    monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", token)
     monkeypatch.delenv("EYE_CORE_URL", raising=False)
     urls = []
 
-    def verify(url: str, **kwargs: Any) -> httpx.Response:
+    def verify(client: OAuth2Client, url: str, **kwargs: Any) -> httpx.Response:
         urls.append(url)
-        assert kwargs["headers"]["Authorization"] == f"Bearer {token}"
+        claims = decode_token(client.token["access_token"], "eye-core")
+        assert claims["scope"] == "selleros:revert" and claims["sub"] == "sim"
         return httpx.Response(204)
 
-    monkeypatch.setattr(httpx, "get", verify)
+    monkeypatch.setattr(OAuth2Client, "get", verify)
     small_sim_settings.ports.core = 8911
     with closing(Simulator(small_sim_settings, db_path=":memory:")) as sim:
         write_records(

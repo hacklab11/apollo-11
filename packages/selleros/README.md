@@ -15,9 +15,9 @@ supply their own store to `create_app`.
 For a price-revert alert, SellerOS registers each eligible price change with
 the orchestrator at `EYE_CORE_URL` (default `http://127.0.0.1:8000`).
 Set that URL for SellerOS if Core uses a nondefault local port.
-Set distinct bearer credentials: `EYE_SELLER_REVERT_SERVICE_TOKEN` on Core,
-SellerOS and the demo simulator; `EYE_SELLER_REVERT_OPERATOR_TOKEN` on Core only.
-With Compose, export these in the launch environment, not the shared `.env`.
+SellerOS and the simulator use OAuth client-credentials tokens with
+`selleros:revert` scope and audience `eye-core`. Keep
+`EYE_SELLER_REVERT_OPERATOR_TOKEN` on Core only, in the launch environment.
 An operator reviews the exact offer and prices in `GET /api/approvals`, then
 uses `POST /api/approvals/{id}` with `{"approve": true}` to apply it. Both
 calls require the operator bearer credential or a trusted authenticated

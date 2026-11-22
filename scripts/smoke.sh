@@ -12,6 +12,7 @@ check() {
 }
 
 core=$(url web 8080)
+docker compose exec -T auth python - < scripts/check_auth.py
 check "$core/api/status"
 check "$(url sim 8100)/health"
 docker compose exec -T eye-specialists python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=10); print('OK eye-specialists /healthz')"
@@ -52,4 +53,4 @@ async def main():
 
 asyncio.run(main())
 PY
-printf 'Compose smoke passed (health, Core warehouse reads, web UI).\n'
+printf 'Compose smoke passed (OAuth rejection, signed cards, health, Core warehouse reads, web UI).\n'

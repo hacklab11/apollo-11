@@ -3,6 +3,76 @@ from pathlib import Path
 import yaml
 
 
+def test_compose_retains_service_specific_environment(repo_root: Path) -> None:
+    services = yaml.safe_load((repo_root / "compose.yaml").read_text())["services"]
+    seller = services["selleros"]["environment"]
+    for suffix in ("PROVIDER", "BASE_URL", "MODEL", "API_KEY_ENV"):
+        key = f"SELLEROS_{suffix}"
+        assert key in seller
+        assert all(
+            key not in service.get("environment", {})
+            for name, service in services.items()
+            if name != "selleros"
+        )
+    assert "SIM_SECONDS_PER_SIM_HOUR" in services["sim"]["environment"]
+    assert "EYE_AUTH_CONFIG" in services["auth"]["environment"]
+
+
+def test_only_model_callers_receive_model_credentials(repo_root: Path) -> None:
+    services = yaml.safe_load((repo_root / "compose.yaml").read_text())["services"]
+    callers = {
+        "sentinel",
+        "detective",
+        "skeptic",
+        "reporter",
+        "cartographer",
+        "eye-specialists",
+        "selleros",
+    }
+    keys = {"ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "EYE_MODEL_API_KEY"}
+    for name, service in services.items():
+        present = keys.intersection(service.get("environment", {}))
+        assert present == (keys if name in callers else set())
+
+
+def test_compose_auth_credentials_are_isolated(repo_root: Path) -> None:
+    compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
+    services = compose["services"]
+    auth = services["auth"]
+    policy = yaml.safe_load((repo_root / "config/auth.yaml").read_text())
+    secret_names = {client["secret_env"] for client in policy["clients"].values()}
+    assert auth["command"] == ["eye-auth"]
+    assert set(auth["networks"]) == {"eye", "agents"}
+    assert "auth-keys:/app/data/auth" in auth["volumes"]
+    assert auth["environment"]["EYE_AUTH_KEY_PATH"] == "/app/data/auth/key.pem"
+    assert "/healthz" in auth["healthcheck"]["test"][-1]
+    assert "auth-keys" in compose["volumes"]
+    for name in secret_names:
+        assert auth["environment"][name] == "${" + name + ":-}"
+    for name, service in services.items():
+        assert not service.get("env_file")
+        if name == "auth":
+            continue
+        environment = service.get("environment", {})
+        if name == "eye-specialists":
+            assert secret_names.intersection(environment) == {
+                f"EYE_AUTH_{agent}_SECRET"
+                for agent in ("GROWTH", "MARKETPLACE", "DISCOVERY")
+            }
+        else:
+            assert not secret_names.intersection(environment)
+        if "EYE_AUTH_CLIENT_ID" in environment:
+            assert environment["EYE_AUTH_CLIENT_ID"] == name
+            secret = policy["clients"][name]["secret_env"]
+            assert environment["EYE_AUTH_CLIENT_SECRET"] == "${" + secret + ":-}"
+        if "EYE_AUTH_CLIENT_ID" in environment or name == "eye-specialists":
+            assert environment["EYE_AUTH_URL"] == auth["environment"]["EYE_AUTH_URL"]
+            assert service["depends_on"]["auth"] == {"condition": "service_healthy"}
+        if environment.get("HTTPS_PROXY"):
+            assert "auth" in environment["NO_PROXY"].split(",")
+        assert not any(v.startswith("auth-keys:") for v in service.get("volumes", []))
+
+
 def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
     compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
     services = compose["services"]

@@ -1,0 +1,61 @@
+card_clients: [sentinel, detective, skeptic, reporter, cartographer, growth, marketplace, discovery, selleros]
+clients:
+  eye-core:
+    secret_env: EYE_AUTH_EYE_CORE_SECRET
+    scopes:
+      - sentinel:detect
+      - detective:investigate
+      - skeptic:challenge
+      - reporter:report
+      - cartographer:map
+      - selleros:receive_alert
+  detective:
+    secret_env: EYE_AUTH_DETECTIVE_SECRET
+    scopes:
+      - auth:card
+      - skeptic:challenge
+      - growth:ads_pacing
+      - growth:auction_health
+      - growth:traffic_sources
+      - growth:discounts
+      - marketplace:buybox
+      - marketplace:pricing
+      - marketplace:availability
+      - marketplace:purchasing
+      - marketplace:new_sellers
+      - discovery:search_quality
+      - discovery:feed_exposure
+      - discovery:checkout_funnel
+      - discovery:client_errors
+      - discovery:components
+      - selleros:repricer_status
+      - selleros:below_cost_check
+      - selleros:supplier_eta
+      - selleros:price_intent_check
+  sentinel:
+    secret_env: EYE_AUTH_SENTINEL_SECRET
+    scopes: [auth:card]
+  skeptic:
+    secret_env: EYE_AUTH_SKEPTIC_SECRET
+    scopes: [auth:card]
+  reporter:
+    secret_env: EYE_AUTH_REPORTER_SECRET
+    scopes: [auth:card]
+  cartographer:
+    secret_env: EYE_AUTH_CARTOGRAPHER_SECRET
+    scopes: [auth:card]
+  growth:
+    secret_env: EYE_AUTH_GROWTH_SECRET
+    scopes: [auth:card]
+  marketplace:
+    secret_env: EYE_AUTH_MARKETPLACE_SECRET
+    scopes: [auth:card]
+  discovery:
+    secret_env: EYE_AUTH_DISCOVERY_SECRET
+    scopes: [auth:card]
+  selleros:
+    secret_env: EYE_AUTH_SELLEROS_SECRET
+    scopes: [auth:card, selleros:revert]
+  sim:
+    secret_env: EYE_AUTH_SIM_SECRET
+    scopes: [selleros:revert]

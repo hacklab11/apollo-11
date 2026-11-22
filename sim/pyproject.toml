@@ -3,6 +3,7 @@ name = "eye-sim"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "eye-auth",
     "duckdb==2.0.1",
     "eye-contracts",
     "eye-data",
@@ -27,6 +28,7 @@ build-backend = "hatchling.build"
 packages = ["src/eye"]
 
 [tool.uv.sources]
+eye-auth = { workspace = true }
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
 agent-runtime = { workspace = true }

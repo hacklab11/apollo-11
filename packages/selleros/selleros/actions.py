@@ -1,7 +1,6 @@
 """SellerOS alert tools; never exposed to the question model."""
 
 import asyncio
-import os
 import re
 from collections.abc import Iterator
 
@@ -9,6 +8,7 @@ import httpx
 
 from agent_runtime import resilient_client
 from eye.contracts_v2 import SELLER_REVERT_TOOL, SellerPriceRevert, SellerRevertApproval
+from eye_auth.client import oauth_client
 from selleros.data import SKU, PriceIntent, Seller, SellerStore, Snapshot, price_intent
 from selleros.models import SellerAlert, SellerAlertAck
 
@@ -114,12 +114,15 @@ async def receive_alert(
 
     snapshot = await asyncio.to_thread(store.read)
     reverted: dict[str, list[str]] = {}
-    token = os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN")
-    async with resilient_client(
-        base_url=approvals_url,
-        transport=transport,
-        headers={"Authorization": f"Bearer {token}"} if token else None,
-    ) as approvals:
+    async with (
+        resilient_client(transport=transport) as http,
+        oauth_client(
+            {"selleros:revert"},
+            client_id="selleros",
+            http=http,
+            base_url=approvals_url,
+        ) as approvals,
+    ):
         for seller, sku in selected_offers(snapshot, alert):
             action = proposed_revert(alert.incident_id, price_intent(seller, sku))
             if action is None or (

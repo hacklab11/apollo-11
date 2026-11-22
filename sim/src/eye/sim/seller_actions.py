@@ -13,7 +13,10 @@ from typing import Literal, Protocol, Self
 from urllib.parse import quote
 
 import httpx
+from authlib.integrations.base_client.errors import OAuthError
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+
+from eye_auth.client import sync_client
 
 
 class SellerAction(BaseModel):
@@ -63,20 +66,15 @@ class _JournalRecord(BaseModel):
 
 
 def core_allows_revert(approval_id: str, *, core_port: int) -> bool:
-    token = os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN")
-    if not token:
-        return False
     core_url = os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{core_port}").rstrip(
         "/"
     )
     try:
-        response = httpx.get(
-            f"{core_url}/api/approvals/seller-revert/{quote(approval_id, safe='')}/permission",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=2.0,
-            trust_env=False,
-        )
-    except httpx.HTTPError:
+        with sync_client({"selleros:revert"}, client_id="sim", timeout=2.0) as client:
+            response = client.get(
+                f"{core_url}/api/approvals/seller-revert/{quote(approval_id, safe='')}/permission",
+            )
+    except (httpx.HTTPError, OAuthError, KeyError):
         return False
     return response.status_code == 204
 
