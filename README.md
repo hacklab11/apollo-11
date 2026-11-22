@@ -1,5 +1,9 @@
 # Eye of the System
 
+![Eye incident workspace showing the S8 investigation, measured recovery and human closure](docs/images/incident-workspace.png)
+
+The React incident workspace after an offline, scripted S8 run: investigation report, measured evidence, SellerOS exchange and human closure.
+
 Eye of the System monitors a marketplace's metric graph, ranks unusual changes by business impact, investigates explanations with evidence, and publishes incidents for human review. Deterministic warehouse tools compute the numbers; agents decide what to investigate and how to explain it. The included continuous simulator supplies S8: a seller's price typo during a planned electronics coupon day.
 
 ## Architecture
