@@ -38,12 +38,18 @@ def test_every_production_pydantic_agent_is_covered() -> None:
             and node.func.id == "Agent"
             for node in ast.walk(tree)
         ):
-            found.add("selleros" if "selleros" in path.parts else path.stem)
+            if "specialists" in path.parts:
+                found.update(item.NAME for item in evals.SPECIALISTS)
+            else:
+                found.add("selleros" if "selleros" in path.parts else path.stem)
     assert found == evals.AGENTS
 
 
 def test_regressions_auto_discovered(tmp_path: Path) -> None:
     (tmp_path / "base.yaml").write_text((evals.CASES / "s8.yaml").read_text())
+    (tmp_path / "specialists.yaml").write_text(
+        (evals.CASES / "specialists.yaml").read_text()
+    )
     regression = tmp_path / "regressions"
     regression.mkdir()
     original = evals.load_cases().cases[0]
@@ -145,6 +151,16 @@ def test_recording_exhaustion_fails_without_provider() -> None:
     model.function([], info)
     with pytest.raises(ValueError, match="Recording exhausted"):
         model.function([], info)
+
+
+@pytest.mark.asyncio
+async def test_specialist_unrecorded_data_fails_closed() -> None:
+    case = next(
+        case for case in evals.load_cases().cases if case.inputs.agent == "growth"
+    )
+    inputs = case.inputs.model_copy(update={"reads": {}})
+    with pytest.raises(ValueError, match="Unrecorded specialist data operation"):
+        await evals.run_case(inputs, evals.replay(inputs, evals.CLAUDE), evals.CLAUDE)
 
 
 @pytest.mark.asyncio

@@ -232,7 +232,7 @@ type = "independence"
 modules = ["eye.contracts_v2", "eye.config"]
 
 [[tool.importlinter.contracts]]
-name = "Data and LLM stay below agents and orchestration"
+name = "Data stays below agents and orchestration"
 type = "forbidden"
 source_modules = [
     "eye.schema",
@@ -240,7 +240,6 @@ source_modules = [
     "eye.graph",
     "eye.tools",
     "eye.warehouse",
-    "eye.llm",
 ]
 forbidden_modules = [
     "eye.agents",

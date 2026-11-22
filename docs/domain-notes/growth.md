@@ -1,7 +1,7 @@
 # Growth: acquisition, auctions and promotions
 
 Implementation: `packages/specialists/src/eye/specialists/growth.py`;
-A2A endpoint: `/growth`. This read-only specialist uses the legacy LLM runtime.
+A2A endpoint: `/growth`. This read-only specialist uses PydanticAI through `agent_runtime`.
 
 Compare ad spend with cumulative planned spend, not a flat hourly budget.
 Auction bidders, bids, CPC and slot fill distinguish demand/competition from pacing.

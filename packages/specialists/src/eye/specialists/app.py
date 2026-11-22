@@ -25,6 +25,7 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from google.protobuf.json_format import MessageToDict
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
+from pydantic_ai.models import Model
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -113,13 +114,15 @@ async def answer(
     request: SpecialistRequest,
     settings: Settings,
     scopes: frozenset[str] | None = None,
+    *,
+    model: Model | None = None,
 ) -> tuple[SpecialistResponse, list[dict[str, str]]]:
     """Run one specialist turn; returns the response and its `{tool, summary}` steps."""
     await client.check(request.window_start_ts, request.window_end_ts)
     evidence = Evidence()
     guard = SkillGuard(specialist.NAME, scopes) if scopes is not None else None
     agent = Agent(
-        build_model(settings.llm, specialist.NAME, effort_key="specialists"),
+        model or build_model(settings.llm, specialist.NAME, effort_key="specialists"),
         name=specialist.NAME,
         instructions=(PROMPTS / f"{specialist.NAME}.md").read_text(),
         deps_type=Evidence,

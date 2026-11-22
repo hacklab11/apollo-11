@@ -189,9 +189,7 @@ def test_core_reads_from_http_without_opening_warehouse(
         with (
             live_server(app) as url,
             core_app(
-                Settings.model_validate(
-                    {"sim": {"autostart": False}, "llm": {"mode": "replay"}}
-                ),
+                Settings.model_validate({"sim": {"autostart": False}}),
                 data_url=url,
             ) as public_app,
             TestClient(public_app) as core,

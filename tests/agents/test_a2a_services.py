@@ -8,7 +8,6 @@ from typing import Any
 
 import httpx
 import pytest
-from anthropic.types.beta import BetaMessage
 from factories import make_anomaly, make_incident_s7
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -56,27 +55,6 @@ def metadata() -> TaskMetadata:
 @pytest.fixture(autouse=True)
 def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
     turns: deque[list[dict[str, Any]]] = deque()
-
-    class Scripted:
-        async def create(self, request: dict) -> BetaMessage:
-            if not turns:
-                pytest.fail("Unscripted model call")
-            content = turns.popleft()
-            return BetaMessage.model_validate(
-                {
-                    "id": "scripted",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": request["model"],
-                    "content": content,
-                    "stop_reason": "tool_use"
-                    if content[0]["type"] == "tool_use"
-                    else "end_turn",
-                    "usage": {"input_tokens": 7, "output_tokens": 5},
-                }
-            )
-
-    monkeypatch.setattr("eye.llm.client._client", Scripted())
 
     def sentinel_response(messages, info):
         content = turns.popleft()

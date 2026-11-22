@@ -70,7 +70,7 @@ dependencies = [
     { name = "logfire", extra = ["fastapi", "httpx"] },
     { name = "opentelemetry-api" },
     { name = "pydantic" },
-    { name = "pydantic-ai-slim" },
+    { name = "pydantic-ai-slim", extra = ["anthropic", "openai"] },
     { name = "tenacity" },
 ]
 
@@ -89,7 +89,7 @@ requires-dist = [
     { name = "logfire", extras = ["fastapi", "httpx"], specifier = "==6.0.0" },
     { name = "opentelemetry-api", specifier = "==1.45.1" },
     { name = "pydantic", specifier = "==2.14.4" },
-    { name = "pydantic-ai-slim", specifier = "==2.66.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "openai"], specifier = "==2.66.0" },
     { name = "tenacity", specifier = "==9.2.1" },
 ]
 
@@ -725,20 +725,6 @@ requires-dist = [
 name = "eye-llm"
 version = "0.1.0"
 source = { editable = "packages/llm" }
-dependencies = [
-    { name = "anthropic" },
-    { name = "eye-contracts" },
-    { name = "httpx" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anthropic", specifier = "==2.12.0" },
-    { name = "eye-contracts", editable = "packages/contracts" },
-    { name = "httpx", specifier = "==0.28.1" },
-    { name = "pydantic", specifier = "==2.14.4" },
-]
 
 [[package]]
 name = "eye-mcp"

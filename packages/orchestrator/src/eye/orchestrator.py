@@ -229,7 +229,7 @@ class Orchestrator(DBOSConfiguredInstance):
             tick=self.tick,
             running=not self.paused,
             paused=self.paused,
-            llm_mode=self.settings.llm.mode,
+            llm_mode="live",
             llm_calls=self._usage["calls"],
             tokens_in=self._usage["tokens_in"],
             tokens_out=self._usage["tokens_out"],

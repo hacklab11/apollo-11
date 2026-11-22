@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 import duckdb
+import httpx
 import yaml
 from openai import AsyncOpenAI
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,11 +35,15 @@ from eye.agents.detective import Detective
 from eye.agents.reporter import Reporter
 from eye.agents.sentinel import Sentinel
 from eye.agents.skeptic import Skeptic
-from eye.config import LlmSettings
+from eye.config import LlmSettings, Settings
 from eye.contracts import Anomaly, Hypothesis, InvestigationResult, MetricDef
+from eye.contracts import SpecialistRequest as EyeSpecialistRequest
 from eye.graph.store import GraphStore
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
+from eye.specialists.app import SPECIALISTS
+from eye.specialists.app import answer as specialist_answer
+from eye.specialists.tools import DataClient as SpecialistDataClient
 from eye.warehouse import operations as ops
 from selleros.agent import answer
 from selleros.client import CLAUDE, OPENROUTER_MODELS
@@ -47,7 +52,15 @@ from selleros.models import SpecialistRequest
 
 ROOT = Path(__file__).resolve().parents[1]
 CASES = ROOT / "tests/evals/cases"
-AGENTS = {"sentinel", "detective", "skeptic", "reporter", "cartographer", "selleros"}
+AGENTS = {
+    "sentinel",
+    "detective",
+    "skeptic",
+    "reporter",
+    "cartographer",
+    "selleros",
+    *(specialist.NAME for specialist in SPECIALISTS),
+}
 
 
 class Inputs(BaseModel):
@@ -295,6 +308,23 @@ async def run_case(inputs: Inputs, model: Model, model_id: str) -> dict[str, Any
                 engine, GraphStore(None), model=model, llm=settings
             )._propose(
                 Submission, engine, json.dumps(inputs.payload), "eval-s8", discard
+            )
+        return result.model_dump(mode="json")
+    if inputs.agent in {specialist.NAME for specialist in SPECIALISTS}:
+
+        def recorded(request: httpx.Request) -> httpx.Response:
+            endpoint = request.url.path.removeprefix("/data/")
+            if endpoint not in inputs.reads:
+                raise ValueError(f"Unrecorded specialist data operation: {endpoint}")
+            return httpx.Response(200, json=inputs.reads[endpoint])
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(recorded)) as http:
+            result, _ = await specialist_answer(
+                next(item for item in SPECIALISTS if item.NAME == inputs.agent),
+                SpecialistDataClient(http, "http://recorded/data"),
+                EyeSpecialistRequest.model_validate(inputs.payload),
+                Settings(llm=settings),
+                model=model,
             )
         return result.model_dump(mode="json")
     if inputs.snapshot is None:

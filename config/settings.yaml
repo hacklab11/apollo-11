@@ -34,8 +34,6 @@ llm:
   provider: anthropic # or openai_compatible
   base_url: https://openrouter.ai/api/v1
   api_key_env: OPENROUTER_API_KEY
-  mode: live
-  cache_path: data/llm_cache.jsonl
   prices:
     claude-opus-5-5: {input_per_mtok: 5.0, output_per_mtok: 25.0}
     nvidia/nemotron-3.5-lightning:free: {input_per_mtok: 0.0, output_per_mtok: 0.0}
@@ -55,7 +53,6 @@ llm:
     cartographer: high
     specialists: medium
   max_tokens: 16000
-  max_calls_per_hour: 600
 
 a2a:
   growth_url: http://localhost:8200/growth

@@ -20,6 +20,7 @@ See [Compose](../../compose.yaml) for networks, mounts and entrypoints.
 
 Core does not import agent implementations. Contract validation, remaining budgets, incident context
 and trace context cross service boundaries; private model message histories do not.
-Legacy specialist inference still uses `eye.llm.runtime/client`; it is not the core-agent harness.
+Core agents and specialists execute PydanticAI agents through the shared `agent_runtime` harness.
+`packages/llm` contains only shared prompt resources.
 
 See [deployment](deployment.md), [orchestrator](orchestrator.md) and [production criteria](agent-criteria.md).

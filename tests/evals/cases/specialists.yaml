@@ -1,0 +1,44 @@
+cases:
+  - name: growth-empty-evidence
+    metadata: {source: specialist empty-data boundary}
+    inputs:
+      agent: growth
+      payload: &payload
+        investigation_id: eval-specialists
+        question: Are there relevant changes in this window?
+        metric: aov
+        segment: {category: electronics}
+        window_start_ts: '2026-11-27T12:00:00Z'
+        window_end_ts: '2026-11-27T13:00:00Z'
+        baseline_start_ts: '2026-11-20T12:00:00Z'
+        baseline_end_ts: '2026-11-20T13:00:00Z'
+        context: Check for changes without inventing evidence.
+      reads: &reads
+        app_components: {rows: []}
+        changes: {rows: []}
+      responses:
+        - &changes
+          tool: changes
+          arguments: {start: '2026-11-27T12:00:00Z', end: '2026-11-27T13:00:00Z'}
+        - {agent: growth, answered: false, findings: [], data_used: [untrusted]}
+    expected_output: {agent: growth, answered: false, findings: [], data_used: [changes]}
+  - name: marketplace-empty-evidence
+    metadata: {source: specialist empty-data boundary}
+    inputs:
+      agent: marketplace
+      payload: *payload
+      reads: *reads
+      responses:
+        - *changes
+        - {agent: marketplace, answered: false, findings: [], data_used: [untrusted]}
+    expected_output: {agent: marketplace, answered: false, findings: [], data_used: [changes]}
+  - name: discovery-empty-evidence
+    metadata: {source: specialist empty-data boundary}
+    inputs:
+      agent: discovery
+      payload: *payload
+      reads: *reads
+      responses:
+        - *changes
+        - {agent: discovery, answered: false, findings: [], data_used: [untrusted]}
+    expected_output: {agent: discovery, answered: false, findings: [], data_used: [changes]}
