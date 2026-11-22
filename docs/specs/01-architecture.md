@@ -68,8 +68,9 @@ Rules:
 - Core imports no agent implementations. Metric registration calls `map` over
   A2A. Startup does not refine causal seeds. `needs_input` creates a pending human
   task; approval decisions are audited, not implicitly executed as privileged tools.
-- Human mutations require authenticated middleware to populate
-  `request.state.person`; without it they return 401. Closed incidents carry the
+- Human mutations use authenticated `request.state.person`, falling back to the
+  trusted proxy's `X-Eye-Person` header; without either they return 401. The proxy
+  must strip untrusted identity headers. Closed incidents carry the
   person's identity, note and timestamp. The v2 API projects legacy persisted
   lifecycle statuses to mitigating/recovered without rewriting incident history.
 - At most `orchestrator.max_concurrent_investigations` investigations run at the same time.

@@ -14,7 +14,7 @@ from factories import (
     make_metrics,
     make_trail_s7,
 )
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from scripted_agents import ScriptedAgents
@@ -327,6 +327,36 @@ async def test_sse_tick_and_heartbeat(
             assert await anext(stream) == ": heartbeat\n\n"
 
 
+@pytest.mark.parametrize(
+    ("person", "header", "expected"),
+    [
+        (None, None, None),
+        (None, "", None),
+        (None, "   ", None),
+        (None, "proxy-reviewer", "proxy-reviewer"),
+        ("middleware-reviewer", None, "middleware-reviewer"),
+        ("middleware-reviewer", "proxy-reviewer", "middleware-reviewer"),
+    ],
+)
+def test_human_actor(
+    person: str | None, header: str | None, expected: str | None
+) -> None:
+    request = Request(
+        {
+            "type": "http",
+            "headers": [] if header is None else [(b"x-eye-person", header.encode())],
+        }
+    )
+    if person is not None:
+        request.state.person = person
+    if expected is None:
+        with pytest.raises(HTTPException) as exc:
+            human_actor(request)
+        assert exc.value.status_code == 401
+    else:
+        assert human_actor(request) == expected
+
+
 def test_human_control_routes(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
     app, _, core = service
     incident = core.incidents.all()[0]
@@ -335,7 +365,11 @@ def test_human_control_routes(service: tuple[FastAPI, Settings, Orchestrator]) -
         body = {"tenant_id": "default", "note": "Reviewed recovery"}
         assert client.post(close_url, json=body).status_code == 401
         assert client.post("/api/kill").status_code == 401
-        app.dependency_overrides[human_actor] = lambda: "reviewer"
+        assert (
+            client.post("/api/approvals/unknown", json={"approve": True}).status_code
+            == 401
+        )
+        client.headers["X-Eye-Person"] = "reviewer"
         assert client.post(close_url, json=body).status_code == 409
         incident.status = "resolved"
         core.incidents._save(incident)
@@ -354,6 +388,7 @@ def test_human_control_routes(service: tuple[FastAPI, Settings, Orchestrator]) -
             == 200
         )
         assert client.get("/api/approvals").json()[0]["status"] == "rejected"
+        assert client.get("/api/approvals").json()[0]["decided_by"] == "reviewer"
         for endpoint in (
             "/api/kill",
             "/api/tenants/default/kill",

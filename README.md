@@ -21,9 +21,10 @@ ledger in Postgres 17 (`EYE_DATABASE_URL`). Local development defaults to
 Incident history remains compatible with the existing DuckDB operations store.
 The `map` skill returns a validated metric proposal only: the read-only data
 service currently has no registry write endpoint, so Core does not persist it.
-Human mutations (kill/clear, approval decisions, recovered incident close) fail
-closed until authentication middleware provides a verified `request.state.person`.
-No caller-supplied identity header is trusted. Closing requires a note and a
+Human mutations (kill/clear, approval decisions, recovered incident close) use
+`request.state.person`, falling back to the trusted `X-Eye-Person` header.
+The reverse proxy must strip untrusted values and supply the verified identity;
+requests without either identity return 401. Closing requires a note and a
 recovered incident; agents cannot close incidents.
 
 ### Docker Compose (live stack or credential-free wave gate)

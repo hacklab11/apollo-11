@@ -52,6 +52,8 @@ class ApprovalDecision(BaseModel):
 
 def human_actor(request: Request) -> str:
     actor = getattr(request.state, "person", None)
+    if actor is None:
+        actor = request.headers.get("X-Eye-Person")
     if not isinstance(actor, str) or not actor.strip():
         raise HTTPException(401, "authenticated person required")
     return actor
