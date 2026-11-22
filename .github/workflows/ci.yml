@@ -18,10 +18,14 @@ jobs:
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      COMPOSE_FILE: compose.yaml:compose.e2e.yaml
+      COMPOSE_PROJECT_NAME: eye-s8-e2e
+      COMPOSE_DISABLE_ENV_FILE: '1'
     steps:
       - uses: actions/checkout@v4
-      - run: cp .env.example .env
       - run: docker compose up -d --build --wait && ./scripts/smoke.sh
+      - run: ./scripts/e2e-s8.sh
       - run: docker compose ps
       - if: failure()
         run: docker compose logs --no-color

@@ -1,0 +1,59 @@
+x-offline-environment: &offline-environment
+  ANTHROPIC_API_KEY: ""
+  OPENROUTER_API_KEY: ""
+  EYE_E2E_TOKEN: offline-test-only
+
+x-offline: &offline
+  env_file: !reset []
+  environment: *offline-environment
+  volumes:
+    - ./tests/e2e/settings.yaml:/app/config/settings.yaml:ro
+
+services:
+  scripted-model:
+    image: eye-system:local
+    build: .
+    init: true
+    command: [python, -m, uvicorn, provider:app, --app-dir, /e2e, --host, 0.0.0.0, --port, "8400", --no-access-log]
+    volumes:
+      - ./tests/e2e:/e2e:ro
+    networks: [eye]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8400/healthz', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  sim-generate:
+    <<: *offline
+
+  eye-data:
+    <<: *offline
+
+  eye-core:
+    <<: *offline
+    environment:
+      <<: *offline-environment
+      EYE_DATA_URL: ""
+    volumes:
+      - ./tests/e2e/settings.yaml:/app/config/settings.yaml:ro
+      - ./tests/e2e:/e2e:ro
+      - seller-data:/app/packages/selleros/data
+    depends_on:
+      scripted-model:
+        condition: service_healthy
+
+  eye-specialists:
+    <<: *offline
+
+  eye-mcp:
+    <<: *offline
+
+  selleros:
+    env_file: !reset []
+    environment:
+      <<: *offline-environment
+      SELLEROS_PROVIDER: openai_compatible
+      SELLEROS_BASE_URL: http://scripted-model:8400/v1
+      SELLEROS_API_KEY_ENV: EYE_E2E_TOKEN
+      SELLEROS_MODEL: unsupported

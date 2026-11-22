@@ -1,0 +1,21 @@
+sim:
+  autostart: false
+sentinel:
+  top_k: 30
+llm:
+  provider: openai_compatible
+  base_url: http://scripted-model:8400/v1
+  api_key_env: EYE_E2E_TOKEN
+  mode: live
+  models:
+    default: unsupported
+    cartographer: cartographer
+    sentinel: sentinel
+    detective: detective
+    skeptic: skeptic
+    reporter: reporter
+a2a:
+  growth_url: http://eye-specialists:8200/growth
+  marketplace_url: http://eye-specialists:8200/marketplace
+  discovery_url: http://eye-specialists:8200/discovery
+  selleros_url: http://selleros:8300
