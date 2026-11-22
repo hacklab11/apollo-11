@@ -54,6 +54,7 @@ async def run(
     )
 
 
+@pytest.mark.asyncio
 async def test_done_with_validated_output_and_usage(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -71,6 +72,7 @@ async def test_done_with_validated_output_and_usage(
     assert outcome.messages
 
 
+@pytest.mark.asyncio
 async def test_needs_input_end_state(scope: RunScope, prices: PriceTable) -> None:
     agent = agent_with(scripted(finish(NeedsInput, question="Which region?")))
     outcome = await run(agent, scope, prices)
@@ -81,6 +83,7 @@ async def test_needs_input_end_state(scope: RunScope, prices: PriceTable) -> Non
     assert outcome.result.a2a_state == "input-required"
 
 
+@pytest.mark.asyncio
 async def test_agent_can_give_up_explicitly(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -92,6 +95,7 @@ async def test_agent_can_give_up_explicitly(
     )
 
 
+@pytest.mark.asyncio
 async def test_step_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     agent = agent_with(
         scripted(
@@ -111,6 +115,7 @@ async def test_step_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     assert outcome.result.usage.total_tokens > 0
 
 
+@pytest.mark.asyncio
 async def test_token_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     agent = agent_with(
         scripted(
@@ -126,6 +131,7 @@ async def test_token_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     assert "total_tokens_limit" in outcome.result.reason
 
 
+@pytest.mark.asyncio
 async def test_cost_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     agent = agent_with(
         scripted(
@@ -142,6 +148,7 @@ async def test_cost_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     assert outcome.result.usage.cost_usd > 0.0003
 
 
+@pytest.mark.asyncio
 async def test_wall_clock_cap_gives_up(scope: RunScope, prices: PriceTable) -> None:
     async def slow(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         await asyncio.sleep(1)
@@ -158,6 +165,7 @@ async def test_wall_clock_cap_gives_up(scope: RunScope, prices: PriceTable) -> N
     assert "wall-clock" in outcome.result.reason
 
 
+@pytest.mark.asyncio
 async def test_loop_detection_gives_up_on_third_identical_call(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -167,6 +175,7 @@ async def test_loop_detection_gives_up_on_third_identical_call(
     assert "loop detected: lookup called 3 times" in outcome.result.reason
 
 
+@pytest.mark.asyncio
 async def test_varied_calls_are_not_a_loop(scope: RunScope, prices: PriceTable) -> None:
     agent = agent_with(
         scripted(
@@ -181,6 +190,7 @@ async def test_varied_calls_are_not_a_loop(scope: RunScope, prices: PriceTable) 
 
 
 @pytest.mark.parametrize("kill", ["system", "tenant", "run"])
+@pytest.mark.asyncio
 async def test_kill_switch_before_start(
     kill: str, scope: RunScope, prices: PriceTable
 ) -> None:
@@ -197,6 +207,7 @@ async def test_kill_switch_before_start(
     assert outcome.result.usage.requests == 0
 
 
+@pytest.mark.asyncio
 async def test_kill_switch_mid_run_stops_before_next_tool(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -223,6 +234,7 @@ async def test_kill_switch_mid_run_stops_before_next_tool(
     assert executed == ["first"]
 
 
+@pytest.mark.asyncio
 async def test_idempotent_tool_runs_once_across_retried_run(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -253,6 +265,7 @@ async def test_idempotent_tool_runs_once_across_retried_run(
     assert sent == ["incident", "incident"]
 
 
+@pytest.mark.asyncio
 async def test_idempotent_tool_without_store_fails(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -269,6 +282,7 @@ async def test_idempotent_tool_without_store_fails(
         await run(agent, scope, prices)
 
 
+@pytest.mark.asyncio
 async def test_approval_required_tool_pauses_then_resumes(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -308,6 +322,7 @@ async def test_approval_required_tool_pauses_then_resumes(
     assert closed == ["INC-1"]
 
 
+@pytest.mark.asyncio
 async def test_fallback_model_takes_over_on_provider_error(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -325,6 +340,7 @@ async def test_fallback_model_takes_over_on_provider_error(
     assert outcome.result.result == Diagnosis(cause="via backup")
 
 
+@pytest.mark.asyncio
 async def test_all_models_down_fails(scope: RunScope, prices: PriceTable) -> None:
     def down(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         raise ModelAPIError("m", "503")
@@ -338,6 +354,7 @@ async def test_all_models_down_fails(scope: RunScope, prices: PriceTable) -> Non
     assert outcome.result.status == "failed"
 
 
+@pytest.mark.asyncio
 async def test_unpriced_model_fails_instead_of_running_uncapped(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -347,6 +364,7 @@ async def test_unpriced_model_fails_instead_of_running_uncapped(
     assert "no pinned price for model 'mystery'" in outcome.result.reason
 
 
+@pytest.mark.asyncio
 async def test_exhausted_budget_gives_up_without_model_call(
     scope: RunScope, prices: PriceTable
 ) -> None:
@@ -359,6 +377,7 @@ async def test_exhausted_budget_gives_up_without_model_call(
     assert outcome.result.usage.requests == 0
 
 
+@pytest.mark.asyncio
 async def test_budget_tightens_run_limits(scope: RunScope, prices: PriceTable) -> None:
     small = Budget(
         tokens=60, cost_usd=1.0, deadline=datetime.now(UTC) + timedelta(minutes=1)
@@ -380,6 +399,7 @@ def test_real_model_requests_are_blocked_in_tests() -> None:
         check_allow_model_requests()
 
 
+@pytest.mark.asyncio
 async def test_parallel_identical_idempotent_calls_execute_once(
     scope: RunScope, prices: PriceTable
 ) -> None:

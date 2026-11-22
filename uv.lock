@@ -449,6 +449,7 @@ name = "eye"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "agent-runtime" },
     { name = "eye-agents" },
     { name = "eye-contracts" },
     { name = "eye-data" },
@@ -463,6 +464,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "import-linter" },
+    { name = "opentelemetry-sdk" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -470,6 +472,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "agent-runtime", editable = "packages/agent_runtime" },
     { name = "eye-agents", editable = "packages/agents" },
     { name = "eye-contracts", editable = "packages/contracts" },
     { name = "eye-data", editable = "packages/data" },
@@ -484,6 +487,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "import-linter", specifier = "==2.11" },
+    { name = "opentelemetry-sdk", specifier = "==1.45.1" },
     { name = "pytest", specifier = "==9.2.0" },
     { name = "pytest-asyncio", specifier = "==1.5.0" },
     { name = "ruff", specifier = "==0.17.6" },

@@ -24,6 +24,7 @@ namespace without an `eye/__init__.py`. Every member has its own `pyproject.toml
 apollo-11/
   pyproject.toml                 # non-packaged workspace aggregator, Python >=3.13
   packages/
+    agent_runtime/src/agent_runtime/ # reusable harness, no Eye or SellerOS imports
     contracts/src/eye/           # contracts.py, config.py
     data/src/eye/                # schema.py, registry/, graph/, tools/
     llm/src/eye/llm/             # interim runtime, client, prompts/*.md
