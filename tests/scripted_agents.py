@@ -74,6 +74,7 @@ class ScriptedAgents:
         for name, skill in (
             ("sentinel", "detect"),
             ("detective", "investigate"),
+            ("skeptic", "challenge"),
             ("reporter", "report"),
             ("cartographer", "map"),
         ):

@@ -37,7 +37,13 @@ class AgentDirectory:
         async with httpx.AsyncClient(
             transport=self.transport, timeout=self.settings.timeout_s
         ) as client:
-            for name in ("sentinel", "detective", "reporter", "cartographer"):
+            for name in (
+                "sentinel",
+                "detective",
+                "skeptic",
+                "reporter",
+                "cartographer",
+            ):
                 url = getattr(self.settings, f"{name}_url")
                 try:
                     card = await A2ACardResolver(client, url).get_agent_card()

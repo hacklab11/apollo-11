@@ -12,6 +12,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from scripted_agents import ScriptedAgents
 
 from eye.config import SentinelSettings, Settings
 from eye.main import core_app
@@ -182,11 +183,9 @@ def test_core_reads_from_http_without_opening_warehouse(
         def reject_local_source(*args: object) -> None:
             raise AssertionError("core must not open the warehouse")
 
-        async def scripted_sentinel(*args: object, **kwargs: object) -> list:
-            return []
-
+        scripted = ScriptedAgents()
         monkeypatch.setattr("eye.main.open_source", reject_local_source)
-        monkeypatch.setattr("eye.main.Sentinel.run", scripted_sentinel)
+        monkeypatch.setattr("eye.orchestrator.AgentDirectory", scripted.directory)
         with (
             live_server(app) as url,
             core_app(
