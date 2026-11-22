@@ -1,12 +1,13 @@
 # Use the normal live LLM defaults; CI supplies no credentials.
 sim:
   autostart: false
+  seconds_per_sim_hour: 1 # demo pace: one simulated day in about a minute plus analysis time
 llm:
   provider: openai_compatible # OpenRouter; key from OPENROUTER_API_KEY
   models:
-    default: deepseek/deepseek-v4.1-flash
+    default: deepseek/deepseek-v4-pro
   prices: # OpenRouter list price, 2026-11-22
-    deepseek/deepseek-v4.1-flash: {input_per_mtok: 0.05, output_per_mtok: 0.199}
+    deepseek/deepseek-v4-pro: {input_per_mtok: 0.9, output_per_mtok: 1.5}
 orchestrator:
   tenant_concurrency: 1
   tenant_rate_limit: 60

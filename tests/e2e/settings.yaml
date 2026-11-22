@@ -1,5 +1,6 @@
 sim:
   autostart: false
+  seconds_per_sim_hour: 1 # demo pace: one simulated day in about a minute plus analysis time
 sentinel:
   top_k: 30
 llm:
