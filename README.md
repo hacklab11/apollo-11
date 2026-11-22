@@ -55,13 +55,37 @@ so services can be independently replicated (for example,
 Core and SellerOS currently retain process-local state/file-backed storage;
 multiple replicas are not a distributed-state or multi-writer deployment.
 
-### Simulator controls
+### S8 demo against the running continuous stack
 
-Scenario controls now belong exclusively to the [continuous simulator service](sim/README.md), not Core, MCP, chat or the Observatory. Start `uv run eye-sim serve`; trigger with `curl -fsS -X POST http://127.0.0.1:8100/scenarios/s8`, inspect `/status`, and clear with `DELETE /scenarios/s8`. S8 starts the planned coupon day immediately and the seller typo after `typo_delay_hours` (default 1).
+Start the stack with `docker compose up -d --build --wait` as above, then run
+from the checkout root:
 
-The legacy `scripts/demo_run.py` and rehearsal instructions below predate this boundary and are not compatible with the removed core scenario endpoints. A separate demo CLI follows in Wave 2. Do not run Core and the simulator service as concurrent writers to the same world. Until the data-service migration, use Core's existing DuckDB source for externally ingested data.
+```sh
+uv sync --locked
+uv run demo trigger s8
+uv run demo status
+uv run demo narrate
+```
 
-### Legacy local stack and rehearsal
+Compose starts the continuous `sim` service. The CLI never starts, resets,
+pauses or advances simulation, adds metrics, or calls a model. Only `trigger`
+writes, via the simulator's scenario endpoint. S8 starts the planned coupon day
+immediately and the seller typo after `typo_delay_hours` (default 1).
+
+Defaults are simulator `http://127.0.0.1:8100` and Core `http://127.0.0.1:8000`.
+Set `DEMO_SIM_URL` / `DEMO_API_URL`, or use global options before the command:
+`uv run demo --sim-url http://127.0.0.1:9100 --api-url http://127.0.0.1:8000 status`.
+
+`status` lists non-terminal incidents. `narrate --interval 2 --timeout 180`
+prints S8 activation and changed incident titles, Reporter summaries,
+investigation IDs and verdicts exposed by Core's public `/api/incidents` endpoint.
+It observes **all** incidents: that endpoint does not identify an S8 incident.
+By default it exits successfully when an incident observed as non-terminal becomes
+resolved/closed, and fails on timeout. Existing resolved incidents do not satisfy
+that condition. Use `--until timeout` to observe for the full duration and exit
+successfully, or Ctrl+C to stop. It does not promise the scripted D6 timeline.
+
+### Local provider configuration
 
 From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):
 
@@ -69,8 +93,6 @@ From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-star
 uv python install 3.13
 uv sync --locked
 ```
-
-In your local `config/settings.yaml`, set `sim.autostart: false` (nested under `sim`). Use the default simulator data source (`data.source: sim`); a DuckDB warehouse does not expose the demo scenarios. Leave `sim.start_ts` unchanged so recordings still match. Use a fresh checkout or worktree so the clock, incidents, and SellerOS actions are reset.
 
 **Claude (default):** Set `ANTHROPIC_API_KEY` from a funded workspace in the environment that starts the stack. Core, the specialists, and SellerOS use Claude by default.
 
@@ -92,42 +114,7 @@ export SELLEROS_MODEL=nvidia/nemotron-3.5-lightning:free
 
 Core and SellerOS already default to `https://openrouter.ai/api/v1` and read the key from `OPENROUTER_API_KEY` in this mode. Do not put API keys in settings or commit local overrides. A free-model D6 eval did not pass; see [Eval results](#eval-results).
 
-Start all services in the first terminal:
-
-```sh
-./scripts/dev.sh
-```
-
-On a fresh world, Core generates 28 days of history and builds the seed graph before serving the API. Model refinement runs in the background; successful results are saved to `data/graph.json` and reused on later starts. If Core logs `refinement_unavailable`, check your provider credentials and model availability before rehearsing. In a second terminal at the checkout root, check for `"tick": 0` and `"paused": true`:
-
-```sh
-curl -fsS http://127.0.0.1:8000/api/status
-```
-
-Once ready, open [the observatory](http://127.0.0.1:8000/) and run:
-
-```sh
-uv run python scripts/demo_run.py --script demo
-```
-
-The legacy runner prepared 09:00 with a coupon campaign active since midnight and injected S8 at 10:00, and reports whether the monitor deferred the incomplete hour. Once the S8 incident opens, it adds `fee_per_order` from SQL and waits for the electronics / small third-party seller anomaly to attach. After SellerOS acknowledges the revert, the simulator applies it on the next tick. The runner waits for three normal ticks and resolution of the same incident without clearing S8 manually.
-
-`--speed 5` (the default) waits five real seconds before each simulated hour after setup, plus processing time. The runner prints wall time for each step. On success it preserves the original pause state; on failure it stops without resuming or undoing changes. Use a fresh world for another run.
-
-To reset for another rehearsal, stop `./scripts/dev.sh` with Ctrl+C and wait for all services to exit, then run from the checkout root:
-
-```sh
-uv run python scripts/demo_reset.py
-./scripts/dev.sh
-```
-
-The reset refuses if service processes/ports appear active or either database is locked. It prints each removed file: the simulator world and operations databases (including WALs), graph snapshot, and SellerOS runtime data, including action journals. It keeps the configured Core LLM cache and SellerOS `llm_cache.jsonl`. The graph must be rebuilt because it can contain demo-added metrics, node states and world-derived evidence; keeping it could carry the previous rehearsal into the new one. This also discards saved seed refinement, but recorded model responses remain cached. Unlike the older `scripts/reset.sh` (which deletes all data including caches), this command preserves recordings. After restart, check for tick 0 and a paused clock before running the demo again. `--settings PATH` selects a different settings file; simulator and store paths come from their runtime defaults, not the read-only `data.path` warehouse setting.
-
 To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your local settings before launch. Keep the cache out of git and use `llm.mode: replay` for the next launch. Replay may still call the API on a cache miss. The LLM mode is read only at startup; there is no runtime switch.
-
-### Docker
-
-Once [the deployment card](docs/tasks/T26-deployment.md) lands, use Docker Compose. Populate `.env` from `.env.example` with the API key and demo credentials, then run `docker compose up --build -d` and open `http://localhost:8080/`. See the [deployment guide](docs/specs/16-deployment.md#5-steps-to-deploy-for-the-team) for the password-protected tunnel and Codespaces backup.
 
 ### Separate read-only data service
 
@@ -138,8 +125,9 @@ the completed time range once at least one hour is ready.
 
 Run `EYE_DATA_URL=http://127.0.0.1:8150 uv run eye-core` to read metrics, the causal
 graph, and partition status over HTTP. The Core clock consumes completed hours
-without advancing the producer. Scenario controls and adding metrics from SQL
-remain available only in the legacy local mode.
+without advancing the producer. Scenario controls belong exclusively to the
+[simulator service](sim/README.md); Core, MCP, chat and the Observatory do not
+expose them. Adding metrics from SQL remains available only in legacy local mode.
 
 ## Workspace layout
 

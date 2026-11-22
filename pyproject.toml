@@ -14,6 +14,7 @@ dependencies = [
     "eye-specialists",
     "eye-mcp",
     "eye-sim",
+    "eye-demo",
     "selleros",
 ]
 
@@ -50,10 +51,23 @@ eye-orchestrator = { workspace = true }
 eye-specialists = { workspace = true }
 eye-mcp = { workspace = true }
 eye-sim = { workspace = true }
+eye-demo = { workspace = true }
 selleros = { workspace = true }
 
 [tool.importlinter]
-root_packages = ["eye", "selleros", "agent_runtime"]
+root_packages = ["eye", "selleros", "agent_runtime", "eye_demo"]
+
+[[tool.importlinter.contracts]]
+name = "Demo CLI is isolated from application packages"
+type = "forbidden"
+source_modules = ["eye_demo"]
+forbidden_modules = ["eye", "selleros", "agent_runtime"]
+
+[[tool.importlinter.contracts]]
+name = "Application packages cannot import demo CLI"
+type = "forbidden"
+source_modules = ["eye", "selleros", "agent_runtime"]
+forbidden_modules = ["eye_demo"]
 
 [[tool.importlinter.contracts]]
 name = "Agent runtime does not import application packages"
