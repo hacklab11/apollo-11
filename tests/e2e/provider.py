@@ -220,6 +220,8 @@ async def completion(
     calls[request.model] += 1
     return {
         "id": "offline-scripted-completion",
+        "object": "chat.completion",
+        "created": 0,
         "model": request.model,
         "choices": [
             {
@@ -228,5 +230,5 @@ async def completion(
                 "finish_reason": "tool_calls" if message.get("tool_calls") else "stop",
             }
         ],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
     }

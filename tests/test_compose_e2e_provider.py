@@ -5,6 +5,7 @@ import pytest
 from e2e import provider
 from fastapi.testclient import TestClient
 from httpx import Response
+from openai.types.chat import ChatCompletion
 
 
 @pytest.fixture
@@ -41,6 +42,10 @@ def post(client: TestClient, body: dict) -> Response:
 def test_empty_candidates_submit_no_decisions(client: TestClient) -> None:
     response = post(client, completion("sentinel", {"candidates": []}))
     assert response.status_code == 200
+    parsed = ChatCompletion.model_validate(response.json())
+    assert parsed.object == "chat.completion"
+    assert parsed.usage is not None
+    assert parsed.usage.total_tokens == 0
     call = response.json()["choices"][0]["message"]["tool_calls"][0]
     assert call["function"]["name"] == "submit"
     assert json.loads(call["function"]["arguments"]) == {"decisions": []}
