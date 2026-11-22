@@ -4,12 +4,19 @@ from unittest.mock import AsyncMock
 
 import duckdb
 import pytest
-from test_detective import START, anomaly, hypothesis, seed
+from pydantic_ai import models
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+from test_detective import START, anomaly, seed
 
-from eye.agents.skeptic import Skeptic, SkepticResult
-from eye.llm.runtime import AgentSpec
+from eye.agents.skeptic import Skeptic
 from eye.registry.loader import load_registry
 from eye.sim.store import Store
+
+
+@pytest.fixture(autouse=True)
+def no_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
 
 
 @pytest.fixture
@@ -21,84 +28,101 @@ def world() -> Iterator[duckdb.DuckDBPyConnection]:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("planned", "comparison", "verdict"),
+    "case",
     [
-        ("-58%", "matches", "innocent"),
-        ("+35%", "opposite", "not_innocent"),
-        ("-20%", "exceeds", "not_innocent"),
+        "plan",
+        "seasonal",
+        "empty",
+        "data_issue",
+        "loop",
+        "invalid_plan",
+        "gave_up",
+        "needs_input",
     ],
 )
-async def test_only_matching_plan_can_establish_innocence(
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    planned: str,
-    comparison: str,
-    verdict: str,
+async def test_review(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch, case: str
 ) -> None:
-    world.execute(
-        "UPDATE change_log SET expected_effect=? WHERE id='black-friday'",
-        ['{"gmv":"' + planned + '"}'],
+    calls: list[tuple[str, dict]] = []
+    expected = "not_innocent"
+    if case == "plan":
+        world.execute(
+            "UPDATE change_log SET expected_effect=? WHERE id='black-friday'",
+            ['{"gmv":"-58%"}'],
+        )
+        calls = [
+            ("list_events", {"planned": False}),
+            ("planned_effect_check", {"event_id": "black-friday"}),
+        ]
+        expected = "innocent"
+    elif case == "seasonal":
+        world.execute("UPDATE orders_hourly SET gmv=115200 WHERE ts >= ?", [START])
+        calls = [("baseline_compare", {"metric": "gmv", "segment": {"country": "DE"}})]
+        expected = "innocent"
+    elif case == "data_issue":
+        world.execute(
+            "INSERT INTO partition_status VALUES ('orders_hourly', 'DE', ?, 100, 40, ?)",
+            [START, START],
+        )
+        expected = "data_issue"
+    elif case == "loop":
+        calls = [("list_events", {})] * 4
+    elif case == "invalid_plan":
+        calls = [("planned_effect_check", {"event_id": "checkout"})]
+    elif case == "gave_up":
+        calls = [("GaveUp", {"reason": "No evidence"})]
+    elif case == "needs_input":
+        calls = [("NeedsInput", {"question": "Which plan?"})]
+    calls.append(
+        (
+            "submit",
+            {
+                "verdict": "innocent",
+                "explained_share": 1,
+                "reasons": [],
+                "evidence": [],
+            },
+        )
     )
+    turns = iter(calls)
 
-    async def run(spec: AgentSpec, *_: object) -> SkepticResult:
-        assert spec.effort == "medium"
-        assert spec.max_steps == 6
-        assert {t.name for t in spec.tools} == {
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert {tool.name for tool in info.function_tools} == {
             "baseline_compare",
             "check_freshness",
             "compare_segments",
             "list_events",
             "planned_effect_check",
         }
-        tools = {t.name: t for t in spec.tools}
-        events = tools["list_events"]
-        output = events.fn(events.input_model(planned=False))
-        assert [event.id for event in output.events] == ["black-friday"]
-        plan = tools["planned_effect_check"]
-        assert plan.fn(plan.input_model(event_id="black-friday")).verdict == comparison
-        with pytest.raises(ValueError, match="outside"):
-            plan.fn(plan.input_model(event_id="checkout"))
-        return SkepticResult(
-            verdict="innocent", explained_share=1, reasons=[], evidence=[]
-        )
+        assert "submit" in {tool.name for tool in info.output_tools}
+        name, args = next(turns)
+        return ModelResponse(parts=[ToolCallPart(name, args)])
 
-    monkeypatch.setattr("eye.agents.skeptic.run_agent", run)
-    skeptic = Skeptic(world, load_registry(world))
-    result = await skeptic.review(
-        anomaly("s7"), "inv", AsyncMock(), hypothesis=hypothesis()
+    monkeypatch.setattr(
+        "eye.agents.skeptic._model",
+        lambda _: FunctionModel(respond, model_name="skeptic"),
     )
-    assert result.verdict == verdict
-    assert (result.explained_share > 0) == (verdict == "innocent")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("seasonal", [False, True])
-@pytest.mark.parametrize("check_plan", [False, True])
-async def test_seasonality_must_be_checked_on_entry(
-    world: duckdb.DuckDBPyConnection,
-    monkeypatch: pytest.MonkeyPatch,
-    seasonal: bool,
-    check_plan: bool,
-) -> None:
-    if seasonal:
-        world.execute("UPDATE orders_hourly SET gmv=115200 WHERE ts >= ?", [START])
-
-    async def run(spec: AgentSpec, *_: object) -> SkepticResult:
-        baseline = next(t for t in spec.tools if t.name == "baseline_compare")
-        observed = baseline.fn(
-            baseline.input_model(metric="gmv", segment={"country": "DE"})
-        )
-        assert observed.points[0].ts == START
-        assert len(observed.points) == 2
-        if check_plan:
-            plan = next(t for t in spec.tools if t.name == "planned_effect_check")
-            outcome = plan.fn(plan.input_model(event_id="black-friday"))
-            assert outcome.verdict != "matches"
-        return SkepticResult(
-            verdict="innocent", explained_share=1, reasons=[], evidence=[]
-        )
-
-    monkeypatch.setattr("eye.agents.skeptic.run_agent", run)
-    skeptic = Skeptic(world, load_registry(world))
-    result = await skeptic.review(anomaly("s7"), "inv", AsyncMock())
-    assert result.verdict == ("innocent" if seasonal else "not_innocent")
+    callback = AsyncMock()
+    result = await Skeptic(world, load_registry(world)).review(
+        anomaly("s7"), "inv", callback
+    )
+    assert result.verdict == expected
+    assert (result.explained_share > 0) == (expected == "innocent")
+    all_steps = [call.args[0] for call in callback.call_args_list]
+    assert [step.n for step in all_steps] == list(range(1, len(all_steps) + 1))
+    steps = [step for step in all_steps if step.action == "tool_call"]
+    assert steps
+    assert all(
+        step.investigation_id == "inv" and step.actor == "skeptic" for step in steps
+    )
+    if case == "plan":
+        assert [step.tool for step in steps] == [
+            "list_events",
+            "planned_effect_check",
+            "submit",
+        ]
+        assert steps[1].input == {"event_id": "black-friday"}
+        assert steps[1].output["verdict"] == "matches"
+    if case in {"loop", "gave_up", "needs_input"}:
+        assert result.reasons
+        assert result.evidence == []
