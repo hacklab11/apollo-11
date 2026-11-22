@@ -12,6 +12,7 @@ llm:
     reporter: {input_per_mtok: 0.0, output_per_mtok: 0.0}
     cartographer:free: {input_per_mtok: 0.0, output_per_mtok: 0.0}
     detective: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+    skeptic: {input_per_mtok: 0.0, output_per_mtok: 0.0}
   models:
     default: unsupported
     cartographer: cartographer:free
