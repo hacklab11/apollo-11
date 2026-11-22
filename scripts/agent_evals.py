@@ -239,10 +239,14 @@ async def discard(step: Any) -> None:
 
 
 async def run_case(inputs: Inputs, model: Model, model_id: str) -> dict[str, Any]:
+    prices = {
+        name: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}
+        for name in {model_id, model.model_name}
+    }
     settings = LlmSettings(
         provider="openai_compatible",
         models={"default": model_id},
-        prices={model_id: {"input_per_mtok": 0.0, "output_per_mtok": 0.0}},
+        prices=prices,
     )
     data = RecordedData(inputs)
     if inputs.agent == "sentinel":
@@ -295,7 +299,7 @@ async def run_case(inputs: Inputs, model: Model, model_id: str) -> dict[str, Any
         SpecialistRequest.model_validate(inputs.payload),
         model=model,
         prices=PriceTable(
-            prices={model_id: ModelPrice(input_per_mtok=0, output_per_mtok=0)}
+            prices={name: ModelPrice(**price) for name, price in prices.items()}
         ),
     )
     return result.model_dump(mode="json")

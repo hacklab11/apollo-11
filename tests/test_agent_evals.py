@@ -147,6 +147,24 @@ def test_recording_exhaustion_fails_without_provider() -> None:
         model.function([], info)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", sorted(evals.AGENTS))
+async def test_namespaced_serving_route_is_priced(agent: str) -> None:
+    case = next(case for case in evals.load_cases().cases if case.inputs.agent == agent)
+    route = "anthropic/claude-opus-5-5"
+    output = await evals.run_case(
+        case.inputs, evals.replay(case.inputs, route), evals.CLAUDE
+    )
+    assert (
+        evals.DecisionScore().evaluate(
+            SimpleNamespace(output=output, expected_output=case.expected_output)
+        )
+        == 1
+    )
+    if agent == "skeptic":
+        assert output["reasons"] == case.inputs.responses[-1]["reasons"]
+
+
 def test_recorded_submissions_match_s8_finite_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
