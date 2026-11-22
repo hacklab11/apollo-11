@@ -3,6 +3,7 @@
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from threading import RLock
 
@@ -70,8 +71,12 @@ class Warehouse:
 
     def graph(self, queries: LocalQueries) -> GraphStore:
         if queries.graph is None:
+            latest = queries.partitions().latest
             queries.graph = load_or_bootstrap(
-                queries.engine, path=self.graph_path, config_dir=self.config_dir
+                queries.engine,
+                path=self.graph_path,
+                config_dir=self.config_dir,
+                end=latest + timedelta(hours=1) if latest else None,
             )
         return queries.graph
 

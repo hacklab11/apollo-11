@@ -45,6 +45,8 @@ def load_or_bootstrap(
     path: Path = GRAPH_PATH,
     config_dir: str | Path = CONFIG_DIR,
     scenario_hours: list[datetime] | None = None,
+    *,
+    end: datetime | None = None,
 ) -> GraphStore:
     expected = registry_hash(engine._registry, config_dir)
     if path.exists():
@@ -52,7 +54,7 @@ def load_or_bootstrap(
         if store.registry_hash == expected:
             return store
         _log.info(json.dumps({"event": "graph_stale", "path": str(path)}))
-    return bootstrap(engine, path, config_dir, scenario_hours)
+    return bootstrap(engine, path, config_dir, scenario_hours, end=end)
 
 
 def bootstrap(
@@ -60,6 +62,8 @@ def bootstrap(
     path: Path | None = GRAPH_PATH,
     config_dir: str | Path = CONFIG_DIR,
     scenario_hours: list[datetime] | None = None,
+    *,
+    end: datetime | None = None,
 ) -> GraphStore:
     registry = engine._registry
     # Built without a path so the file is written once, not after every edge.
@@ -67,13 +71,15 @@ def bootstrap(
     for metric in registry.metrics.values():
         store.add_metric(metric)
     for identity in registry.identities:
-        for edge in _formula_edges(engine, identity, scenario_hours):
+        for edge in _formula_edges(engine, identity, scenario_hours, end):
             store.add_edge(edge)
     for metric in registry.metrics.values():
         for dim in metric.dimensions:
-            store.add_edge(_breakdown_edge(engine, metric.name, dim, scenario_hours))
+            store.add_edge(
+                _breakdown_edge(engine, metric.name, dim, scenario_hours, end)
+            )
     for seed in registry.causal_seeds:
-        store.add_edge(_seed_edge(engine, seed, scenario_hours))
+        store.add_edge(_seed_edge(engine, seed, scenario_hours, end))
     store.path = path
     store.save()
     return store
@@ -84,7 +90,10 @@ def _pending(registry: Registry, names: list[str]) -> list[str]:
 
 
 def _formula_edges(
-    engine: MetricEngine, identity: Identity, scenario_hours: list[datetime] | None
+    engine: MetricEngine,
+    identity: Identity,
+    scenario_hours: list[datetime] | None,
+    end: datetime | None,
 ) -> list[Edge]:
     parsed = parse_identity(identity.text)
     names = [parsed.target, *(t.name for t in parsed.terms)]
@@ -92,7 +101,9 @@ def _formula_edges(
     if pending := _pending(engine._registry, names):
         status, evidence = "ambiguous", {"pending_metrics": pending}
     else:
-        result = validate_identity(engine, identity.text, scenario_hours=scenario_hours)
+        result = validate_identity(
+            engine, identity.text, end=end, scenario_hours=scenario_hours
+        )
         median = result.evidence["median_residual"]
         p95 = result.evidence["p95_residual"]
         evidence = {
@@ -115,7 +126,7 @@ def _formula_edges(
                 )
             )
         if parsed.kind == "sum":
-            shares = _mean_shares(engine, parsed.target, names[1:])
+            shares = _mean_shares(engine, parsed.target, names[1:], end)
     return [
         Edge(
             id=f"edg_formula_{identity.id}_{term.name}",
@@ -140,9 +151,10 @@ def _mean_shares(
     engine: MetricEngine,
     target: str,
     components: list[str],
+    end: datetime | None,
 ) -> dict[str, float]:
     """|component mean| / |target mean| over the validation window (06 §4)."""
-    start, end = _window(engine, None, None, [target, *components])
+    start, end = _window(engine, None, end, [target, *components])
     total = engine.metric_window(target, start, end)
     if not total:
         return {}
@@ -154,14 +166,18 @@ def _mean_shares(
 
 
 def _breakdown_edge(
-    engine: MetricEngine, metric: str, dim: str, scenario_hours: list[datetime] | None
+    engine: MetricEngine,
+    metric: str,
+    dim: str,
+    scenario_hours: list[datetime] | None,
+    end: datetime | None,
 ) -> Edge:
     if pending := _pending(engine._registry, [metric]):
         status, confidence, evidence = "ambiguous", 0.0, {"pending_metrics": pending}
     else:
         try:
             result = validate_breakdown(
-                engine, metric, dim, scenario_hours=scenario_hours
+                engine, metric, dim, end=end, scenario_hours=scenario_hours
             )
         except ValueError as error:
             status, confidence, evidence = "ambiguous", 0.0, {"error": str(error)}
@@ -188,14 +204,22 @@ def _breakdown_edge(
 
 
 def _seed_edge(
-    engine: MetricEngine, seed: CausalSeed, scenario_hours: list[datetime] | None
+    engine: MetricEngine,
+    seed: CausalSeed,
+    scenario_hours: list[datetime] | None,
+    end: datetime | None,
 ) -> Edge:
     evidence: dict = {"rationale": seed.rationale}
     if pending := _pending(engine._registry, [seed.src, seed.dst]):
         evidence["pending_metrics"] = pending
     else:
         result = lagged_correlation(
-            engine, seed.src, seed.dst, SEED_MAX_LAG, scenario_hours=scenario_hours
+            engine,
+            seed.src,
+            seed.dst,
+            SEED_MAX_LAG,
+            end=end,
+            scenario_hours=scenario_hours,
         )
         evidence |= {
             "corr": result.corr,
