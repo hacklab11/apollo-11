@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -17,10 +16,7 @@ from pydantic_ai import Agent, ModelRetry, RunContext, Tool, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import Model, ModelRequestContext
-from pydantic_ai.models.anthropic import AnthropicModel
-from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.output import OutputContext
-from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.tools import ToolDefinition
 
 from agent_runtime import (
@@ -31,9 +27,9 @@ from agent_runtime import (
     RunLimits,
     RunScope,
     end_state_outputs,
-    model_chain,
     run_agent,
 )
+from agent_runtime.configured_models import build_model
 from eye.agents.investigation_tools import (
     _ControlInput,
     _EventsInput,
@@ -169,21 +165,7 @@ class _Trail(AbstractCapability[_Deps]):
 
 
 def _model(llm: LlmSettings) -> Model:
-    def build(name: str) -> Model:
-        if llm.provider == "anthropic":
-            return AnthropicModel(name)
-        return OpenAIChatModel(
-            name,
-            provider=OpenAIProvider(
-                base_url=llm.base_url,
-                api_key=os.environ[llm.api_key_env],
-            ),
-        )
-
-    return model_chain(
-        build(llm.model_for("skeptic")),
-        *(build(name) for name in llm.fallback_models.get("skeptic", [])),
-    )
+    return build_model(llm, "skeptic")
 
 
 class _PlanInput(BaseModel):
@@ -285,6 +267,7 @@ class Skeptic:
         self._agent = Agent(
             model or _model(self._llm),
             name="skeptic",
+            retries=2,
             deps_type=_Deps,
             instructions=_PROMPT.read_text(),
             output_type=outputs,

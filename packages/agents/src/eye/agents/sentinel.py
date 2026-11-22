@@ -137,6 +137,7 @@ class Sentinel:
         agent = Agent(
             self._model or build_model(self._llm, "sentinel"),
             instructions=_PROMPT.read_text(),
+            retries=2,
             output_type=[
                 ToolOutput(SentinelSubmission, name="submit"),
                 *end_state_outputs(SentinelSubmission)[1:],

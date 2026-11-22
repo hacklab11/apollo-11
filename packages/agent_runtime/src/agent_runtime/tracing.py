@@ -14,11 +14,14 @@ INSTRUMENTATION_NAME = "agent_runtime"
 _configured = False
 
 
-def redact_pii(item: StringValue) -> str:
-    value = re.sub(
-        r"[\w.+-]{1,128}@[\w.-]{1,128}\.[A-Za-z]{2,}", "[redacted]", item.value
-    )
+def redact_text(text: str) -> str:
+    """Remove email addresses and phone numbers from free text."""
+    value = re.sub(r"[\w.+-]{1,128}@[\w.-]{1,128}\.[A-Za-z]{2,}", "[redacted]", text)
     return re.sub(r"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[redacted]", value)
+
+
+def redact_pii(item: StringValue) -> str:
+    return redact_text(item.value)
 
 
 def setup_telemetry() -> bool:

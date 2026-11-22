@@ -277,3 +277,8 @@ async def test_review(
     if case in {"loop", "gave_up", "needs_input"}:
         assert result.reasons
         assert result.evidence == []
+
+
+def test_skeptic_starts_without_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    Skeptic(data=Mock(), freshness=Mock(), llm=LlmSettings())

@@ -16,7 +16,7 @@ and animated S8 incident. GitHub shows HTML source; open locally in a browser
 - [Agent runtime](specs/agent-runtime.md), [core agents](specs/core-agents.md), [Cartographer](specs/cartographer.md)
 - [Prompts and model configuration](specs/llm.md)
 - [Specialists and A2A](specs/specialists.md), [SellerOS](specs/selleros.md)
-- [MCP](specs/mcp.md), [web/API](specs/web.md)
+- [MCP](specs/mcp.md), [web/API](specs/web.md), [Overview page](specs/overview.md)
 - [Observability and alerts](specs/observability.md), [testing/evals](specs/testing.md)
 - [Production criteria and gaps](specs/agent-criteria.md)
 

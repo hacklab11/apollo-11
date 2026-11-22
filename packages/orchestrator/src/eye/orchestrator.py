@@ -375,7 +375,7 @@ class Orchestrator(DBOSConfiguredInstance):
                     run_id, incident_id, "human_input", {"question": result.question}
                 )
         elif result.status != "done":
-            log.warning("A2A %s ended %s", skill, result.status)
+            log.warning("A2A %s ended %s: %s", skill, result.status, result.reason)
         return result.result if result.status == "done" else None, metadata
 
     @DBOS.step()

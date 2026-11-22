@@ -2,13 +2,14 @@
 
 import os
 from collections.abc import Mapping, Sequence
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import JsonSchemaTransformer, ModelProfile
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.settings import ModelSettings
 
@@ -55,6 +56,32 @@ class _MissingCredentialsModel(Model):
         raise ModelAPIError(self.model_name, f"Missing credential: {self._key_env}")
 
 
+class _PassThrough(JsonSchemaTransformer):
+    def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+        return schema
+
+
+def _without_property_names(profile: ModelProfile) -> ModelProfile:
+    """Move `propertyNames` into the description; some OpenAI-compatible backends reject it.
+
+    Pydantic still validates the keys when the tool call arrives.
+    """
+    base = profile.get("json_schema_transformer") or _PassThrough
+
+    class Transformer(base):  # type: ignore[valid-type,misc]
+        def transform(self, schema: dict[str, Any]) -> dict[str, Any]:
+            names = schema.pop("propertyNames", None)
+            if isinstance(names, dict) and "enum" in names:
+                keys = ", ".join(str(key) for key in names["enum"])
+                hint = f"Allowed keys: {keys}."
+                schema["description"] = (
+                    f"{schema.get('description', '')} {hint}".strip()
+                )
+            return super().transform(schema)
+
+    return {**profile, "json_schema_transformer": Transformer}
+
+
 def build_model(
     settings: ModelConfig, agent: str, *, effort_key: str | None = None
 ) -> Model:
@@ -78,6 +105,7 @@ def build_model(
             provider=OpenAIProvider(
                 base_url=settings.base_url, api_key=os.environ[settings.api_key_env]
             ),
+            profile=_without_property_names,
         )
 
     return model_chain(

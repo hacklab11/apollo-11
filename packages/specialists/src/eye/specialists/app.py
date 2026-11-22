@@ -132,6 +132,7 @@ async def answer(
         model or build_model(settings.llm, specialist.NAME, effort_key="specialists"),
         name=specialist.NAME,
         instructions=(PROMPTS / f"{specialist.NAME}.md").read_text(),
+        retries=2,
         deps_type=Evidence,
         tools=authorized_tools(specialist, client, guard),
         capabilities=[Hooks(before_tool_validate=object_arguments)],

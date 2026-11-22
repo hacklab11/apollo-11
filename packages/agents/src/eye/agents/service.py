@@ -13,6 +13,7 @@ from threading import Lock
 
 import duckdb
 import httpx
+import logfire
 import uvicorn
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.routes.agent_card_routes import create_agent_card_routes
@@ -355,14 +356,21 @@ def create_app(
 
 
 def main() -> None:
-    setup_telemetry()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("agent", choices=PORTS)
     name = parser.parse_args().agent
     port = PORTS[name]
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_JsonLogFormatter())
-    logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
+    handlers: list[logging.Handler] = [handler]
+    if setup_telemetry():
+        # Also export logs over OTLP so Grafana shows them inside the run's trace.
+        handlers.append(logfire.LogfireLoggingHandler())
+    logging.basicConfig(
+        level=os.environ.get("EYE_LOG_LEVEL", "WARNING").upper(),
+        handlers=handlers,
+        force=True,
+    )
     settings = load_settings()
     uvicorn.run(
         instrument_app(

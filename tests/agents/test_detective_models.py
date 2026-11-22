@@ -56,3 +56,25 @@ def test_explicit_free_model_prices() -> None:
     with pytest.raises(UnpricedModel):
         table.cost("unconfigured:free", usage)
     assert not price_table(LlmSettings(prices={})).prices
+
+
+def test_openai_compatible_tool_schema_drops_property_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic_ai.models import ModelRequestParameters
+    from pydantic_ai.tools import ToolDefinition
+
+    from eye.tools.models import MetricWindowInput
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test")
+    model = build_model(LlmSettings(provider="openai_compatible"), "sentinel")
+    schema = MetricWindowInput.model_json_schema()
+    assert "propertyNames" in schema["properties"]["segment"]
+    params = model.customize_request_parameters(
+        ModelRequestParameters(
+            function_tools=[ToolDefinition(name="t", parameters_json_schema=schema)]
+        )
+    )
+    segment = params.function_tools[0].parameters_json_schema["properties"]["segment"]
+    assert "propertyNames" not in segment
+    assert "country" in segment["description"]

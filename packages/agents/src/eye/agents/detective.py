@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -30,6 +31,7 @@ from agent_runtime import (
     run_agent,
 )
 from agent_runtime.configured_models import build_model, price_table
+from agent_runtime.tracing import redact_text
 from eye.a2a_client import A2AClient
 from eye.agents.investigation_tools import (
     _ControlInput,
@@ -72,6 +74,7 @@ from eye.warehouse import operations as ops
 from eye.warehouse.client import DataUnavailable
 from eye.warehouse.queries import DataQueries, LocalQueries
 
+_LOG = logging.getLogger(__name__)
 _PROMPT = files("eye.agents").joinpath("prompts/detective.md")
 _WEEK = timedelta(weeks=1)
 
@@ -543,6 +546,13 @@ class Detective:
                             output_summary=f"{type(exc).__name__}: tool {name} failed",
                         )
                     )
+                    _LOG.warning(
+                        "detective tool_failed investigation=%s tool=%s args=%s error=%s",
+                        ctx.deps.investigation_id,
+                        name,
+                        redact_text(json.dumps(kwargs, default=str))[:500],
+                        redact_text(str(exc))[:500],
+                    )
                     raise ModelRetry(str(exc)) from exc
                 if name != "update_hypotheses":
                     reference = f"ref-{next(references)}"
@@ -752,6 +762,7 @@ class Detective:
             agent = Agent(
                 self._model or build_model(self._llm, "detective"),
                 name="detective",
+                retries=2,
                 system_prompt=_PROMPT.read_text(),
                 deps_type=_Deps,
                 output_type=end_state_outputs(_Submission),
@@ -1028,4 +1039,17 @@ class Detective:
             stop_reason=stop,
         )
         await record("decision", f"{result.verdict}: {result.summary}", output=result)
+        _LOG.log(
+            logging.WARNING if stop in ("error", "budget") else logging.INFO,
+            "detective finished investigation=%s metric=%s verdict=%s stop=%s "
+            "root_cause=%s hypotheses=%d steps=%d open_questions=%s",
+            investigation_id,
+            anomaly.metric,
+            result.verdict,
+            stop,
+            result.root_cause.root_node if result.root_cause else None,
+            len(result.hypotheses),
+            turns,
+            redact_text(json.dumps(result.open_questions[:3]))[:1000],
+        )
         return result

@@ -30,6 +30,7 @@ from google.protobuf.json_format import MessageToDict
 from pydantic import BaseModel, ValidationError
 from pydantic_ai.exceptions import UsageLimitExceeded
 
+from agent_runtime.tracing import redact_text
 from eye.contracts_v2 import (
     DEFAULT_TENANT,
     AgentResult,
@@ -198,7 +199,12 @@ class SkillExecutor(AgentExecutor):
                 **({"usage": run.usage} if run is not None else {}),
             )
         except Exception as exc:  # noqa: BLE001 -- always terminate an accepted A2A task
-            _LOG.warning("agent=%s task_failed=%s", self.agent, type(exc).__name__)
+            _LOG.warning(
+                "agent=%s task_failed=%s error=%s",
+                self.agent,
+                type(exc).__name__,
+                redact_text(str(exc))[:1000],
+            )
             result = result_model(
                 status="failed",
                 reason="Invalid task request"

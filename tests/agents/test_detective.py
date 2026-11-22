@@ -725,3 +725,53 @@ async def test_downstream_symptoms(
     assert bool(expected) == any(
         step.action == "note" and step.tool == "first_change" for step in steps
     )
+
+
+@pytest.mark.asyncio
+async def test_two_failed_calls_to_one_tool_do_not_stop_investigation(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    bad = {"metric": "not_a_metric", "dim": "country"}
+    answer = submission(hypothesis(), "HYPOTHESIS")
+    scripted(
+        monkeypatch,
+        [
+            ("mix_rate_split", bad),
+            ("mix_rate_split", bad),
+            ("submit", answer.model_dump(mode="json")),
+        ],
+    )
+    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
+        anomaly("s3"), AsyncMock()
+    )
+    assert not any("max retries" in q for q in result.open_questions)
+    assert result.root_cause is not None
+
+
+@pytest.mark.asyncio
+async def test_logs_tool_failures_and_outcome(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    scripted(
+        monkeypatch,
+        [
+            ("mix_rate_split", {"metric": "not_a_metric", "dim": "country"}),
+            ("submit", submission(hypothesis(), "HYPOTHESIS").model_dump(mode="json")),
+        ],
+    )
+    with caplog.at_level("INFO", logger="eye.agents.detective"):
+        await Detective(world, registry, make_graph(registry, "s3")).investigate(
+            anomaly("s3"), AsyncMock(), investigation_id="inv-log"
+        )
+    failed = [r.getMessage() for r in caplog.records if "tool_failed" in r.getMessage()]
+    assert failed and "tool=mix_rate_split" in failed[0]
+    assert "not_a_metric" in failed[0]
+    finished = [r for r in caplog.records if "detective finished" in r.getMessage()]
+    assert "investigation=inv-log" in finished[0].getMessage()
+    assert "verdict=HYPOTHESIS" in finished[0].getMessage()

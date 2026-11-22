@@ -1,8 +1,15 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Activity, CheckCheck, GitBranch, Inbox } from "lucide-react";
+import {
+  Activity,
+  CheckCheck,
+  GitBranch,
+  Inbox,
+  LayoutDashboard,
+} from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { IncidentDetail } from "./components/IncidentDetail";
+import { Overview } from "./components/Overview";
 import { Button } from "./components/ui/button";
 import { get, setPaused } from "./lib/api";
 import { group, time } from "./lib/incidents";
@@ -16,6 +23,7 @@ const CausalGraph = lazy(() =>
 export default function App() {
   const client = useQueryClient();
   const [selected, setSelected] = useState<string>();
+  const [tab, setTab] = useState("overview");
   const [streamLive, setStreamLive] = useState(false);
   const status = useQuery({
     queryKey: ["status"],
@@ -78,7 +86,7 @@ export default function App() {
   }, [client]);
 
   return (
-    <Tabs defaultValue="incidents" className="min-h-screen">
+    <Tabs value={tab} onValueChange={setTab} className="min-h-screen">
       <header className="app-header">
         <div className="flex items-center gap-3">
           <span className="brand-icon">
@@ -130,6 +138,10 @@ export default function App() {
           </Button>
         )}
         <TabsList aria-label="Workspace">
+          <TabsTrigger value="overview">
+            <LayoutDashboard size={15} />
+            Overview
+          </TabsTrigger>
           <TabsTrigger value="incidents">
             <Inbox size={15} />
             Incidents
@@ -151,6 +163,16 @@ export default function App() {
           automatically.
         </p>
       )}
+      <TabsContent value="overview">
+        <Overview
+          status={status.data}
+          incidents={items}
+          onOpenIncident={(id) => {
+            if (id) setSelected(id);
+            setTab("incidents");
+          }}
+        />
+      </TabsContent>
       <TabsContent value="incidents" className="workspace">
         <aside aria-label="Incidents" className="incident-sidebar">
           <div className="sidebar-heading">

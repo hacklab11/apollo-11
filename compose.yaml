@@ -92,6 +92,8 @@ services:
     networks: [eye, warehouse, agents]
     volumes:
       - ./config/grafana/alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro
+      - ./config/grafana/dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/eye.yaml:ro
+      - ./config/grafana/dashboards:/otel-lgtm/eye-dashboards:ro
     healthcheck:
       <<: *health
       test: [CMD-SHELL, "curl -fsS http://localhost:3000/api/health && curl -fsS http://localhost:13133/ready"]

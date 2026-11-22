@@ -2,7 +2,8 @@
 
 `packages/web` is React 19.2 + TypeScript/Vite, served by nginx on port 8080 in Compose.
 Core remains private on port 8000; nginx proxies `/api/`.
-The UI has incident detail/evidence, at most three metric charts, and a separate React Flow graph tab.
+The UI has three tabs: an [Overview](overview.md) home page (default), incident detail/evidence
+with at most three metric charts, and a separate React Flow graph tab.
 TanStack Query refetches on SSE signals with five-second polling fallback.
 
 Core routes and SSE are in `packages/orchestrator/src/eye/api/`.
