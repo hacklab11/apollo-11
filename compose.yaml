@@ -87,7 +87,8 @@ services:
         condition: service_healthy
     volumes:
       - ./config/compose.yaml:/app/config/settings.yaml:ro
-      - core-data:/app/data
+      # Keep the original mount for existing incident and investigation history.
+      - eye-data:/app/data
     networks: [eye, warehouse]
     ports: ["127.0.0.1:${CORE_PORT:-8000-8009}:8000"]
     healthcheck:
@@ -110,7 +111,6 @@ services:
 
 volumes:
   eye-data:
-  core-data:
   warehouse-data:
   seller-data:
 
