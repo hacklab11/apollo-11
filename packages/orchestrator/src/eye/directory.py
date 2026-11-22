@@ -1,5 +1,6 @@
 """Typed, skill-routed A2A calls across the process boundary."""
 
+from contextlib import AsyncExitStack
 from uuid import uuid4
 
 import httpx
@@ -27,6 +28,8 @@ from eye.contracts_v2 import (
     AgentResult,
     TaskMetadata,
 )
+from eye_auth.client import oauth_client
+from eye_auth.trust import verify_card
 
 
 class AgentDirectory:
@@ -58,6 +61,7 @@ class AgentDirectory:
                 url = getattr(self.settings, f"{name}_url")
                 try:
                     card = await A2ACardResolver(client, url).get_agent_card()
+                    await verify_card(card, name)
                 except (httpx.HTTPError, AgentCardResolutionError):
                     continue
                 for skill in card.skills:
@@ -97,11 +101,19 @@ class AgentDirectory:
                 ),
                 metadata=ParseDict(metadata.model_dump(mode="json"), Struct()),
             )
-            async with httpx.AsyncClient(
-                transport=self.transport,
-                timeout=self.settings.timeout_s,
-                headers=headers,
-            ) as client:
+            async with (
+                httpx.AsyncClient(
+                    transport=self.transport,
+                    timeout=self.settings.timeout_s,
+                    headers=headers,
+                ) as raw,
+                oauth_client(
+                    {f"{self.cards[skill].name}:{skill}"},
+                    client_id="eye-core",
+                    http=raw,
+                ) as client,
+            ):
+                await verify_card(self.cards[skill])
                 response = await JsonRpcTransport(
                     client, self.cards[skill], self.urls[skill], is_shared_httpx=True
                 ).send_message(request)
@@ -125,15 +137,26 @@ class AgentDirectory:
             with self.tracer.start_as_current_span("agent.selleros"):
                 headers = {"A2A-Version": "1.0"}
                 propagate.inject(headers)
-                async with httpx.AsyncClient(
-                    transport=self.transport,
-                    timeout=self.settings.timeout_s,
-                    headers=headers,
-                ) as client:
+                async with (
+                    AsyncExitStack() as stack,
+                    httpx.AsyncClient(
+                        transport=self.transport,
+                        timeout=self.settings.timeout_s,
+                        headers=headers,
+                    ) as client,
+                ):
                     url = self.settings.selleros_url
                     card = await A2ACardResolver(client, url).get_agent_card()
+                    await verify_card(card, "selleros")
+                    authenticated = await stack.enter_async_context(
+                        oauth_client(
+                            {"selleros:receive_alert"},
+                            client_id="eye-core",
+                            http=client,
+                        )
+                    )
                     response = await JsonRpcTransport(
-                        client, card, url, is_shared_httpx=True
+                        authenticated, card, url, is_shared_httpx=True
                     ).send_message(
                         SendMessageRequest(
                             message=Message(

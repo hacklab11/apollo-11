@@ -18,6 +18,7 @@ from a2a.types.a2a_pb2 import (
     TaskState,
 )
 from a2a.utils.errors import A2AError
+from authlib.integrations.base_client.errors import OAuthError
 from google.protobuf.json_format import MessageToDict, ParseDict, ParseError
 from google.protobuf.struct_pb2 import Value
 from pydantic import BaseModel, Field
@@ -29,8 +30,11 @@ from eye.contracts import (
     SpecialistRequest,
     SpecialistResponse,
 )
+from eye_auth.client import oauth_client
+from eye_auth.trust import verify_card
 
 _FAILURES = (
+    OAuthError,
     A2AError,
     httpx.HTTPError,
     TimeoutError,
@@ -60,9 +64,6 @@ class A2AClient:
         self.settings = settings or A2aSettings()
         self._http = http_client or httpx.AsyncClient(timeout=self.settings.timeout_s)
         self._owns_http = http_client is None
-        self._factory = ClientFactory(
-            ClientConfig(streaming=False, httpx_client=self._http)
-        )
         self._urls = {
             name: getattr(self.settings, f"{name}_url")
             for name in ("growth", "marketplace", "discovery", "selleros")
@@ -90,6 +91,7 @@ class A2AClient:
     async def _card(self, agent: str, *, refresh: bool = False) -> AgentCard:
         if refresh or monotonic() - self._checked.get(agent, -float("inf")) >= 60:
             card = await A2ACardResolver(self._http, self._urls[agent]).get_agent_card()
+            await verify_card(card, agent)
             self._cards[agent] = card
             self._checked[agent] = monotonic()
             self._health[agent] = AgentCardInfo(
@@ -124,7 +126,19 @@ class A2AClient:
                     parts=[Part(data=data), Part(text=text)],
                 )
             )
-            async with self._factory.create(card) as client:
+            skills = {s.id for s in card.skills}
+            if isinstance(payload, SellerAlert):
+                skills = {"receive_alert"}
+            else:
+                skills.discard("receive_alert")
+            async with (
+                oauth_client(
+                    {f"{agent}:{skill}" for skill in skills}, http=self._http
+                ) as authenticated,
+                ClientFactory(
+                    ClientConfig(streaming=False, httpx_client=authenticated)
+                ).create(card) as client,
+            ):
                 async for event in client.send_message(request):
                     if not event.HasField("task"):
                         raise ValueError("expected a completed task")

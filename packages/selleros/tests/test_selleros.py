@@ -23,6 +23,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from agent_runtime import ModelPrice, PriceTable
+from eye_auth.client import oauth_client
 from selleros.actions import receive_alert as handle_alert
 from selleros.agent import answer
 from selleros.data import (
@@ -368,20 +369,28 @@ async def rpc(
     model: FunctionModel | None = None,
     approvals_transport: httpx.AsyncBaseTransport | None = None,
     metadata: dict | None = None,
+    scopes: set[str] | None = None,
 ) -> dict:
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(
-            app=create_app(
-                store,
-                model=model,
-                prices=TEST_PRICES,
-                approvals_url="http://approvals",
-                approvals_transport=approvals_transport
-                or httpx.MockTransport(decided_approval),
-            )
-        ),
-        base_url="http://test",
-    ) as client:
+    async with (
+        httpx.AsyncClient(
+            transport=httpx.ASGITransport(
+                app=create_app(
+                    store,
+                    model=model,
+                    prices=TEST_PRICES,
+                    approvals_url="http://approvals",
+                    approvals_transport=approvals_transport
+                    or httpx.MockTransport(decided_approval),
+                )
+            ),
+            base_url="http://test",
+        ) as raw,
+        oauth_client(
+            scopes if scopes is not None else {f"selleros:{skill}" for skill in SKILLS},
+            http=raw,
+            base_url="http://test",
+        ) as client,
+    ):
         response = await client.post(
             "/",
             headers={"A2A-Version": "1.0"},
@@ -455,7 +464,7 @@ async def test_card(store: FileSellerStore) -> None:
         response = await client.get("/.well-known/agent-card.json")
     assert response.status_code == 200
     card = response.json()
-    assert card["name"] == "SellerOS Partner Agent"
+    assert card["name"] == "selleros"
     assert {s["id"] for s in card["skills"]} == set(SKILLS)
     assert len(card["skills"]) == 5
     assert "price_intent_check" in {s["id"] for s in card["skills"]}
@@ -742,6 +751,22 @@ def test_revert_log_failure_does_not_mark_reverted(s8_store: FileSellerStore) ->
     (s8_store.directory / "actions.jsonl").rmdir()
     assert s8_store.reverted_prices() == set()
     assert s8_store.paused_repricers() == set()
+
+
+@pytest.mark.asyncio
+async def test_read_scope_cannot_execute_another_tool(store: FileSellerStore) -> None:
+    seen: list[tuple[list[ModelMessage], AgentInfo]] = []
+    model = scripted_model([message("get_costs", {"skus": ["E02"]})], seen)
+    result = await rpc(
+        store,
+        request("below_cost_check for E02").model_dump(mode="json"),
+        model=model,
+        scopes={"selleros:repricer_status"},
+    )
+    task = result["result"]["task"]
+    assert task["status"]["state"] == "TASK_STATE_FAILED"
+    assert "PermissionError" in str(task)
+    assert "artifacts" not in task
 
 
 @pytest.mark.asyncio

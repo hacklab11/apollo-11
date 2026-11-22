@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
-from a2a.client import ClientCallContext, ClientConfig, ClientFactory
+from a2a.client import Client, ClientCallContext, ClientConfig, ClientFactory
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.helpers.proto_helpers import new_data_part, new_text_message
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -32,6 +32,8 @@ from pydantic import BaseModel, ValidationError
 from eye.contracts import TrailStep
 from eye.contracts_v2 import DEFAULT_TENANT, AgentResult, RunUsageSummary, TaskMetadata
 from eye.llm.client import BudgetExceeded
+from eye_auth.client import oauth_client
+from eye_auth.trust import verify_card
 
 _LOG = logging.getLogger(__name__)
 _STATES = {
@@ -116,7 +118,7 @@ class Skill[I: BaseModel, O: BaseModel]:
 
 def agent_card(name: str, url: str, skill: Skill) -> AgentCard:
     return AgentCard(
-        name=name.capitalize(),
+        name=name,
         description=skill.description,
         version="0.1.0",
         capabilities=AgentCapabilities(),
@@ -229,6 +231,16 @@ async def send_skill[T: BaseModel](
 ) -> AgentResult[T]:
     async with asyncio.timeout(seconds_left(metadata)):
         card = await A2ACardResolver(http, url).get_agent_card()
+        await verify_card(
+            card,
+            {
+                "detect": "sentinel",
+                "investigate": "detective",
+                "challenge": "skeptic",
+                "report": "reporter",
+                "map": "cartographer",
+            }[skill],
+        )
         if skill not in {item.id for item in card.skills}:
             raise ValueError(f"Agent does not advertise {skill}")
         rpc = SendMessageRequest(
@@ -247,25 +259,39 @@ async def send_skill[T: BaseModel](
         context = ClientCallContext(
             service_parameters={"traceparent": metadata.traceparent}
         )
-        factory = ClientFactory(ClientConfig(streaming=False, httpx_client=http))
-        async with factory.create(card) as client:
-            async for event in client.send_message(rpc, context=context):
-                task = event.task
-                if (
-                    not event.HasField("task")
-                    or task.context_id != metadata.context_id
-                    or len(task.artifacts) != 1
-                    or len(task.artifacts[0].parts) != 1
-                    or not task.artifacts[0].parts[0].HasField("data")
-                ):
-                    raise ValueError("Invalid agent response")
-                try:
-                    result = AgentResult[output].model_validate(
-                        MessageToDict(task.artifacts[0].parts[0].data)
-                    )
-                except ValidationError:
-                    raise ValueError("Invalid agent result") from None
-                if _STATES[result.a2a_state] != task.status.state:
-                    raise ValueError("Agent result does not match task state")
-                return result
+        async with oauth_client({f"{card.name}:{skill}"}, http=http) as authenticated:
+            factory = ClientFactory(
+                ClientConfig(streaming=False, httpx_client=authenticated)
+            )
+            async with factory.create(card) as client:
+                return await _skill_result(client, rpc, context, metadata, output)
+    raise ValueError("Empty agent response")
+
+
+async def _skill_result[T: BaseModel](
+    client: Client,
+    rpc: SendMessageRequest,
+    context: ClientCallContext,
+    metadata: TaskMetadata,
+    output: type[T],
+) -> AgentResult[T]:
+    async for event in client.send_message(rpc, context=context):
+        task = event.task
+        if (
+            not event.HasField("task")
+            or task.context_id != metadata.context_id
+            or len(task.artifacts) != 1
+            or len(task.artifacts[0].parts) != 1
+            or not task.artifacts[0].parts[0].HasField("data")
+        ):
+            raise ValueError("Invalid agent response")
+        try:
+            result = AgentResult[output].model_validate(
+                MessageToDict(task.artifacts[0].parts[0].data)
+            )
+        except ValidationError:
+            raise ValueError("Invalid agent result") from None
+        if _STATES[result.a2a_state] != task.status.state:
+            raise ValueError("Agent result does not match task state")
+        return result
     raise ValueError("Empty agent response")

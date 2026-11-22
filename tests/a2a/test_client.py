@@ -29,7 +29,7 @@ def request() -> SpecialistRequest:
 def settings() -> A2aSettings:
     return A2aSettings(
         **{
-            f"{agent}_url": "http://stub"
+            f"{agent}_url": f"http://{agent}"
             for agent in ("growth", "marketplace", "discovery", "selleros")
         }
     )
@@ -37,8 +37,18 @@ def settings() -> A2aSettings:
 
 @pytest.mark.asyncio
 async def test_round_trip_and_health() -> None:
-    app, executor = stub_server()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app)) as http:
+    _, executor = stub_server()
+    apps = {
+        name: stub_server(executor, name=name)[0]
+        for name in ("growth", "marketplace", "discovery", "selleros")
+    }
+
+    async def handle(req: httpx.Request) -> httpx.Response:
+        return await httpx.ASGITransport(app=apps[req.url.host]).handle_async_request(
+            req
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
         client = A2AClient(settings(), http_client=http)
         cards = await client.fetch_cards()
         assert set(cards) == {"growth", "marketplace", "discovery", "selleros"}
@@ -136,7 +146,7 @@ async def test_owned_http_client_closed() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failed", [False, True])
 async def test_directory_delivers_seller_alerts(failed: bool) -> None:
-    app, executor = stub_server(EchoExecutor(failed=failed))
+    app, executor = stub_server(EchoExecutor(failed=failed), name="selleros")
     directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
     alert = SellerAlert(
         incident_id="inc_1",

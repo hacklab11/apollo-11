@@ -2,7 +2,7 @@ import asyncio
 import json
 import shutil
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import aclosing, closing
 from datetime import datetime
 from pathlib import Path
@@ -190,12 +190,12 @@ async def test_seller_revert_requires_exact_human_approval(
     tmp_path: Path,
     stale: bool,
     monkeypatch: pytest.MonkeyPatch,
+    oauth_headers: Callable[..., dict[str, str]],
 ) -> None:
-    service_token, operator_token = token_urlsafe(), token_urlsafe()
-    monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", service_token)
+    operator_token = token_urlsafe()
     monkeypatch.setenv("EYE_SELLER_REVERT_OPERATOR_TOKEN", operator_token)
     monkeypatch.delenv("EYE_TRUST_PROXY_PERSON_HEADER", raising=False)
-    seller_client = {"Authorization": f"Bearer {service_token}"}
+    seller_client = oauth_headers("selleros:revert", "selleros")
     operator = {"Authorization": f"Bearer {operator_token}"}
     api, settings, core = service
     snapshot_path = tmp_path / "sellers.json"
@@ -237,6 +237,24 @@ async def test_seller_revert_requires_exact_human_approval(
         approve_url = f"/api/approvals/{by_sku['E02']}"
         permission_url = f"/api/approvals/seller-revert/{by_sku['E02']}/permission"
         bogus = dict(approvals[0]["args"], incident_id="not-the-approved-incident")
+        wrong_scope = oauth_headers("eye-core:unrelated")
+        assert (
+            await client.put(
+                "/api/approvals/seller-revert", json=bogus, headers=wrong_scope
+            )
+        ).status_code == 403
+        assert (
+            await client.get(permission_url, headers=wrong_scope)
+        ).status_code == 403
+        wrong_audience = oauth_headers("selleros:repricer_status")
+        assert (
+            await client.get(permission_url, headers=wrong_audience)
+        ).status_code == 401
+        assert (
+            await client.get(
+                permission_url, headers={"Authorization": "Bearer invalid"}
+            )
+        ).status_code == 401
         for untrusted in ({}, {"X-Eye-Person": "reviewer"}, operator):
             assert (
                 await client.put(

@@ -77,16 +77,20 @@ class EchoExecutor(AgentExecutor):
         raise NotImplementedError
 
 
-def stub_server(executor: EchoExecutor | None = None) -> tuple[Starlette, EchoExecutor]:
+def stub_server(
+    executor: EchoExecutor | None = None, *, name: str = "growth"
+) -> tuple[Starlette, EchoExecutor]:
     executor = executor or EchoExecutor()
     card = AgentCard(
-        name="Growth stub",
+        name=name,
         description="Fixed specialist response",
         version="0.1.0",
         capabilities=AgentCapabilities(),
         supported_interfaces=[
             AgentInterface(
-                url="http://stub/", protocol_binding="JSONRPC", protocol_version="1.0"
+                url=f"http://{name}/",
+                protocol_binding="JSONRPC",
+                protocol_version="1.0",
             )
         ],
         default_input_modes=["application/json", "text/plain"],

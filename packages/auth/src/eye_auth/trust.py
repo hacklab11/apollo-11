@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+from contextvars import ContextVar
 from functools import lru_cache
 from typing import Any
 
@@ -15,6 +16,34 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 
 _bearer = HTTPBearer(auto_error=False)
+_scopes: ContextVar[frozenset[str]] = ContextVar("eye_auth_scopes", default=frozenset())
+
+
+def granted_scopes() -> frozenset[str]:
+    return _scopes.get()
+
+
+def check_skill(agent: str, skill: str, scopes: set[str] | frozenset[str]) -> None:
+    if f"{agent}:{skill}" not in scopes:
+        raise PermissionError(f"Insufficient scope for {agent}:{skill}")
+
+
+class SkillGuard:
+    def __init__(self, agent: str, scopes: frozenset[str]) -> None:
+        self.agent = agent
+        self.scopes = scopes
+        self.denied = False
+
+    def check(self, skill: str) -> None:
+        try:
+            check_skill(self.agent, skill, self.scopes)
+        except PermissionError:
+            self.denied = True
+            raise
+
+    def finish(self) -> None:
+        if self.denied:
+            raise PermissionError("A requested skill was not authorized")
 
 
 def issuer() -> str:
@@ -86,9 +115,14 @@ class A2AAuthMiddleware(BaseHTTPMiddleware):
         if service is not None:
             audience, scopes = service
             try:
-                await require_scopes(request, audience, scopes)
+                claims = await require_scopes(request, audience, scopes)
             except HTTPException as exc:
                 return JSONResponse(
                     {"detail": exc.detail}, exc.status_code, headers=exc.headers
                 )
+            token = _scopes.set(frozenset(claims["scope"].split()))
+            try:
+                return await call_next(request)
+            finally:
+                _scopes.reset(token)
         return await call_next(request)

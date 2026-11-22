@@ -225,7 +225,14 @@ async def test_signed_cards_and_authlib_clients(authority: tuple[str, Path]) -> 
         # Client credentials do not use refresh tokens: Authlib reissues on expiry.
         old = client.token["access_token"]
         client.token["expires_at"] = 1
-        assert (await client.get(url + "/healthz")).status_code == 200
+        response = await client.send(client.build_request("GET", url + "/healthz"))
+        assert response.status_code == 200
+        assert (
+            decode_token(response.request.headers["Authorization"].split()[1], "auth")[
+                "scope"
+            ]
+            == "auth:card"
+        )
         assert client.token["access_token"] != old
     with sync_client({"sentinel:detect"}) as client:
         old = client.token["access_token"]
