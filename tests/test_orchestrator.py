@@ -312,3 +312,28 @@ async def test_sentinel_attach_updates_only_active_incidents(
         assert saved.occurrences == item.occurrences
         assert saved.last_seen_ts == item.last_seen_ts
     assert len(scripted.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["open", "investigating", "persisting"])
+async def test_matching_anomaly_does_not_reinvestigate(workflow, status: str) -> None:
+    core, scripted = workflow
+    item = make_incident_s7()
+    item.status = status
+    core.incidents._save(item)
+    decision = SentinelDecision(
+        anomaly=item.entry.model_copy(
+            update={"id": "another-anomaly", "ts": core.sim.now}
+        ),
+        action="investigate",
+        reason="Same incident",
+    )
+    scripted.executors["detect"].result = AgentResult(
+        status="done", result=DetectResult(decisions=[decision])
+    )
+    await core.step_once()
+    assert len(scripted.requests) == 1
+    saved = core.incidents.get(item.id)
+    assert saved.occurrences == item.occurrences + 1
+    assert saved.investigation_ids == item.investigation_ids
+    assert saved.summary == item.summary

@@ -379,7 +379,16 @@ class Orchestrator(DBOSConfiguredInstance):
     @DBOS.step()
     def prepare_investigation(self, decision: SentinelDecision) -> Incident | None:
         incident = self.incidents.match(decision)
-        if incident is not None and not incident.investigation_ids:
+        if incident is None:
+            return None
+        self.emit("incident_upserted", incident)
+        if not (
+            incident.status == "investigating"
+            and incident.entry.id == decision.anomaly.id
+            and incident.occurrences == 1
+        ):
+            return None
+        if not incident.investigation_ids:
             incident.investigation_ids.append(f"inv_{uuid4().hex}")
             self.incidents._save(incident)
         return incident
