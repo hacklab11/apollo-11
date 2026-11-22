@@ -24,6 +24,7 @@ from agent_runtime import (
     KillSwitch,
     RunLimits,
     RunScope,
+    RunUsageSummary,
     end_state_outputs,
     run_agent,
 )
@@ -484,6 +485,7 @@ class Detective:
         open_incidents: Iterable[Incident | IncidentV2] = (),
         budget: Budget | None = None,
         scope: RunScope | None = None,
+        on_usage: Callable[[RunUsageSummary], None] | None = None,
     ) -> InvestigationResult:
         investigation_id = investigation_id or uuid4().hex
         window = _Window.from_anomaly(anomaly)
@@ -838,6 +840,8 @@ class Detective:
                 deps=_Deps(investigation_id, emit),
                 kill_switch=self._kill_switch,
             )
+            if on_usage is not None:
+                on_usage(outcome.result.usage)
             if outcome.result.status != "done":
                 reason = (
                     outcome.result.reason
@@ -848,6 +852,20 @@ class Detective:
                     raise BudgetExceeded(reason)
                 raise LLMUnavailable(reason)
             answer = cast(_Submission, outcome.result.result)
+            await emit(
+                TrailStep(
+                    id=uuid4().hex,
+                    investigation_id=investigation_id,
+                    n=0,
+                    real_ts=datetime.now(UTC),
+                    actor="detective",
+                    action="tool_call",
+                    tool="submit",
+                    input=answer.model_dump(mode="json"),
+                    output=answer.model_dump(mode="json"),
+                    output_summary=answer.summary[:500],
+                )
+            )
         except (BudgetExceeded, LLMUnavailable) as exc:
             stop = "budget" if isinstance(exc, BudgetExceeded) else "error"
             answer = _Submission(

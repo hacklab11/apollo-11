@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 
 import duckdb
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -368,6 +369,60 @@ async def test_tools_cite_exact_calls(
         tool_steps[1].id,
         "",
     ]
+
+
+@pytest.mark.asyncio
+async def test_validated_output_and_tool_repair(
+    world: duckdb.DuckDBPyConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+    root = hypothesis()
+    root.evidence_for[1].group = "change_log"
+    root.evidence_for[0].step_id = "ref-1"
+    root.evidence_for[1].step_id = "ref-2"
+    answer = submission(root)
+    scripted(
+        monkeypatch,
+        [
+            ("baseline_compare", {"metric": "nonexistent"}),
+            (
+                "baseline_compare",
+                {"metric": "search_conversion", "segment": {"country": "DE"}},
+            ),
+            ("list_events", {}),
+            ("submit", {"summary": "incomplete"}),
+            ("submit", answer.model_dump(mode="json")),
+        ],
+    )
+    usage = []
+    result = await Detective(world, registry, make_graph(registry, "s3")).investigate(
+        anomaly("s3"), AsyncMock(), on_usage=usage.append
+    )
+    assert result.verdict == "CONFIRMED"
+    assert result.stop_reason == "confirmed"
+    assert result.steps_used == 5
+    assert result.root_cause and all(e.step_id for e in result.root_cause.evidence_for)
+    assert usage[0].requests == 5
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_becomes_error(world: duckdb.DuckDBPyConnection) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    def unavailable(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelHTTPError(503, "detective")
+
+    result = await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(unavailable, model_name="detective"),
+    ).investigate(anomaly("s3"), AsyncMock())
+    assert result.stop_reason == "error"
+    assert result.verdict == "HYPOTHESIS"
+    assert "503" in result.open_questions[0]
 
 
 @pytest.mark.asyncio
