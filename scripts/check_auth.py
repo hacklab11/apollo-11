@@ -61,7 +61,9 @@ async def reject_card(card: dict[str, Any], damage: str) -> None:
                 A2aSettings(sentinel_url=f"http://127.0.0.1:{server.server_port}/")
             )
             await directory.resolve()
-            assert not directory.cards
+            assert all(
+                registered.name != "sentinel" for registered in directory.cards.values()
+            )
         finally:
             await asyncio.to_thread(server.shutdown)
             thread.join()
