@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from importlib.resources import files
-from typing import Self, cast, get_args
+from typing import Literal, Self, get_args
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
@@ -24,7 +24,6 @@ from agent_runtime import (
     end_state_outputs,
     run_agent,
 )
-
 from eye.agents.models import configured_model, configured_prices
 from eye.config import LlmSettings
 from eye.contracts import (
@@ -36,9 +35,9 @@ from eye.contracts import (
     MetricDef,
     TrailStep,
 )
+from eye.contracts_v2 import DEFAULT_TENANT
 from eye.graph.bootstrap import _mean_shares
 from eye.graph.store import GraphStore
-from eye.contracts_v2 import DEFAULT_TENANT
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import formula_inputs
 from eye.tools import sqlguard
@@ -56,14 +55,14 @@ from eye.tools.validate import (
 class Submission(BaseModel):
     edges: list[EdgeProposal]
     notes: str
-    unit: str = "count"
+    unit: Literal["count", "eur", "ratio", "hours", "ms", "index"] = "count"
 
 
 class SeedDecision(BaseModel):
     src: str
     dst: str
-    status: str
-    confidence: float
+    status: Literal["hypothesis", "ambiguous", "rejected"]
+    confidence: float = Field(ge=0, le=1)
     rationale: str
 
 
@@ -132,7 +131,12 @@ class Cartographer:
             max_steps=8, max_tokens=self.llm.max_tokens * 8, max_cost_usd=1.0
         )
         self.kill_switch = kill_switch or InMemoryKillSwitch()
-        self.budget = budget
+        self.budget = budget or Budget(
+            tokens=self.limits.max_tokens,
+            cost_usd=self.limits.max_cost_usd,
+            deadline=datetime.now(UTC)
+            + timedelta(seconds=self.limits.max_wall_clock_s),
+        )
         self.scope = scope
         self.usage = RunUsageSummary()
         self._allowed_tables = frozenset(
@@ -190,14 +194,15 @@ class Cartographer:
             name="cartographer",
             deps_type=CartographerDeps,
             output_type=end_state_outputs(output),
-            instructions=prompt + "\nFinish using the structured output tool for the requested mode.",
+            instructions=prompt
+            + "\nFinish using the structured output tool for the requested mode.",
             model_settings={"max_tokens": self.llm.max_tokens},
             retries=3,
         )
 
-        async def checked(
-            ctx: RunContext[CartographerDeps], name: str, compute: Callable[[], BaseModel]
-        ) -> BaseModel:
+        async def checked[R: BaseModel](
+            ctx: RunContext[CartographerDeps], name: str, compute: Callable[[], R]
+        ) -> R:
             try:
                 result = compute()
             except (ValueError, KeyError) as error:
@@ -207,8 +212,11 @@ class Cartographer:
             return result
 
         @agent.tool
-        async def query_metric(ctx: RunContext[CartographerDeps], metric: str) -> Output:
+        async def query_metric(
+            ctx: RunContext[CartographerDeps], metric: str
+        ) -> Output:
             """Read hourly total metric history."""
+
             def query() -> Output:
                 start, through = _window(ctx.deps.engine, None, ctx.deps.end, [metric])
                 series = ctx.deps.engine.query_metric(metric, start, through)
@@ -224,40 +232,57 @@ class Cartographer:
             ctx: RunContext[CartographerDeps], identity: str
         ) -> ValidationResult:
             """Test an identity at total and shared segments."""
-            return await checked(ctx, "validate_identity", lambda: self._identity(
-                ctx.deps.engine, identity, end=ctx.deps.end
-            ))
+            return await checked(
+                ctx,
+                "validate_identity",
+                lambda: self._identity(ctx.deps.engine, identity, end=ctx.deps.end),
+            )
 
         @agent.tool
         async def validate_breakdown(
             ctx: RunContext[CartographerDeps], metric: str, dimension: Dimension
         ) -> ValidationResult:
             """Test whether dimension segments reconcile to total."""
-            return await checked(ctx, "validate_breakdown", lambda: self._breakdown(
-                ctx.deps.engine, metric, dimension, end=ctx.deps.end
-            ))
+            return await checked(
+                ctx,
+                "validate_breakdown",
+                lambda: self._breakdown(
+                    ctx.deps.engine, metric, dimension, end=ctx.deps.end
+                ),
+            )
 
         @agent.tool
         async def lagged_correlation(
             ctx: RunContext[CartographerDeps], src: str, dst: str, max_lag: int = 96
         ) -> CorrelationResult:
             """Measure lagged correlation, not causation."""
-            return await checked(ctx, "lagged_correlation", lambda: self._correlation(
-                ctx.deps.engine, src, dst, max_lag, end=ctx.deps.end
-            ))
+            return await checked(
+                ctx,
+                "lagged_correlation",
+                lambda: self._correlation(
+                    ctx.deps.engine, src, dst, max_lag, end=ctx.deps.end
+                ),
+            )
 
         @agent.tool
-        async def get_graph(ctx: RunContext[CartographerDeps], node: str | None = None) -> Output:
+        async def get_graph(
+            ctx: RunContext[CartographerDeps], node: str | None = None
+        ) -> Output:
             """Read graph edges and nodes."""
-            return await checked(ctx, "get_graph", lambda: Output(
-                summary=f"Graph has {len(ctx.deps.graph.edges())} edges",
-                data=ctx.deps.graph.view(node).model_dump(mode="json"),
-            ))
+            return await checked(
+                ctx,
+                "get_graph",
+                lambda: Output(
+                    summary=f"Graph has {len(ctx.deps.graph.edges())} edges",
+                    data=ctx.deps.graph.view(node).model_dump(mode="json"),
+                ),
+            )
 
         outcome = await run_agent(
             agent,
             content,
-            scope=self.scope or RunScope(run_id=investigation, tenant_id=DEFAULT_TENANT),
+            scope=self.scope
+            or RunScope(run_id=investigation, tenant_id=DEFAULT_TENANT),
             limits=self.limits,
             prices=self.prices,
             budget=self.budget,
@@ -500,15 +525,12 @@ class Cartographer:
             n += 1
             await on_step(record.model_copy(update={"n": n}))
 
-        submitted = cast(
+        submitted = await self._propose(
             Submission,
-            await self._propose(
-                Submission,
-                engine,
-                json.dumps(context, sort_keys=True),
-                investigation,
-                agent_step,
-            ),
+            engine,
+            json.dumps(context, sort_keys=True),
+            investigation,
+            agent_step,
         )
         await step("proposals", f"{len(submitted.edges)} proposals")
         await step(
@@ -655,18 +677,21 @@ class Cartographer:
                         errors.append(f"{label} seed decisions: {names}")
                 if errors:
                     raise ValueError("; ".join(errors))
+                if len(self.edges) > 10 or any(
+                    edge.type != "causal_hypothesis" for edge in self.edges
+                ):
+                    raise ValueError(
+                        "bootstrap extras must be at most 10 causal hypotheses"
+                    )
                 return self
 
-        submission = cast(
-            SeedSubmission,
-            await self._propose(
-                CompleteSeedSubmission,
-                self.engine,
-                json.dumps({"mode": "refine_seeds", "seeds": payload}, sort_keys=True),
-                "cartographer:bootstrap",
-                on_step,
-                end=end,
-            ),
+        submission = await self._propose(
+            CompleteSeedSubmission,
+            self.engine,
+            json.dumps({"mode": "refine_seeds", "seeds": payload}, sort_keys=True),
+            "cartographer:bootstrap",
+            on_step,
+            end=end,
         )
         decisions = {(d.src, d.dst): d for d in submission.seeds}
         if set(decisions) != required or len(submission.seeds) != len(required):

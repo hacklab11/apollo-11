@@ -1,7 +1,20 @@
 # 08 Agent runtime
 
 Code: `packages/llm/src/eye/llm/runtime.py`, prompts in `packages/llm/src/eye/llm/prompts/`. Task: T11.
-All LLM agents in core, the specialists, SellerOS, and the chat use this runtime (SellerOS has its own copy, because it must not import `eye`; T17 copies the file).
+This is the interim custom runtime, still used by agents not yet migrated
+(SellerOS has its own independent copy).
+
+Cartographer instead uses PydanticAI `Agent` with `end_state_outputs` and typed
+dependency-injected tools, run exclusively through `agent_runtime.run_agent`.
+It applies `RunLimits`, pinned `PriceTable` pricing, `RunScope`, kill switch,
+and the A2A request budget. Provider construction lives in `eye.agents.models`;
+an agent-specific model falls back to the configured default when different.
+Free `:free` models cost zero; unknown paid models fail closed as unpriced.
+The Opus default is pinned at $5/$25 per million input/output tokens.
+Seed submission model validation retries incomplete/duplicate decisions before
+any graph mutation. All non-done outcomes raise execution errors; the existing
+A2A executor reports failed tasks. Startup no longer invokes refinement in v2;
+direct refinement callers still receive failures without caching partial work.
 
 ## 1. API
 

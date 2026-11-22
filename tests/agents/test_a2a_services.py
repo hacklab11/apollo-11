@@ -10,8 +10,11 @@ import httpx
 import pytest
 from anthropic.types.beta import BetaMessage
 from factories import make_anomaly, make_incident_s7
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
+from agent_runtime import ModelPrice, PriceTable
 from eye.agents.a2a_service import send_skill
 from eye.agents.service import PORTS, create_app
 from eye.config import LlmPrice, Settings
@@ -308,7 +311,10 @@ async def test_detective_delegates_and_reports(
 
 @pytest.mark.asyncio
 async def test_cartographer_reads_lake_and_returns_validated_proposal(
-    metadata: TaskMetadata, model: deque, warehouse: DataClient, tmp_path: Path
+    metadata: TaskMetadata,
+    monkeypatch: pytest.MonkeyPatch,
+    warehouse: DataClient,
+    tmp_path: Path,
 ) -> None:
     ts = make_anomaly().ts
     with closing(Store(":memory:")) as store:
@@ -323,7 +329,27 @@ async def test_cartographer_reads_lake_and_returns_validated_proposal(
                 [ts],
             )
         LakeWriter(tmp_path).land(store, ts)
-    model.append([use("submit", {"edges": [], "notes": "Validated", "unit": "count"})])
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        name = next(
+            tool.name for tool in info.output_tools if tool.name.endswith("_Submission")
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(name, {"edges": [], "notes": "Validated", "unit": "count"})
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.agents.cartographer.configured_model",
+        lambda *args: FunctionModel(respond, model_name="scripted"),
+    )
+    monkeypatch.setattr(
+        "eye.agents.cartographer.configured_prices",
+        lambda *args: PriceTable(
+            prices={"scripted": ModelPrice(input_per_mtok=0, output_per_mtok=0)}
+        ),
+    )
     url = "http://cartographer:8250/"
     app = create_app("cartographer", url, Settings(), lake=tmp_path, data=warehouse)
     async with (
@@ -348,7 +374,8 @@ async def test_cartographer_reads_lake_and_returns_validated_proposal(
     assert mapped.result is not None
     assert mapped.result.metric.name == "orders_x2"
     assert mapped.result.metric.expression == "orders + orders"
-    assert not model
+    assert mapped.usage.requests == 1
+    assert mapped.usage.total_tokens > 0
 
 
 @pytest.mark.asyncio

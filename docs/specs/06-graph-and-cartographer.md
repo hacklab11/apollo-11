@@ -3,6 +3,13 @@
 Code: `packages/data/src/eye/graph/`, `packages/agents/src/eye/agents/cartographer.py`. Tasks: T09 (graph), T10 (Cartographer).
 Judging weight: 40% (graph + automatic extension).
 
+Cartographer uses PydanticAI typed tools and structured outputs through
+`agent_runtime.run_agent` for both placement and seed refinement. Each run has
+step/tool/token/cost/time caps, loop detection, a kill switch, and the caller's
+A2A budget. Non-done end states raise an execution error without registering a
+metric or marking seeds refined. Seed completeness is schema-validated and
+returned to the model for correction. Deterministic edge acceptance is unchanged.
+
 ## 1. Graph store (`graph/store.py`)
 
 - `networkx.MultiDiGraph`. Node id = metric name. Node attributes = `MetricDef` fields + `state` (normal / watch / anomaly / incident).

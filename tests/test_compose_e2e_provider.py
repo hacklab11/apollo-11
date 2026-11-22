@@ -60,6 +60,34 @@ def test_reporter_returns_narrative_output_tool(client: TestClient) -> None:
     assert message["tool_calls"][0]["function"]["name"] == "final_result_Narrative"
 
 
+@pytest.mark.parametrize("refine", [False, True])
+def test_cartographer_pydanticai_output_tools(client: TestClient, refine: bool) -> None:
+    name = (
+        "final_result_CompleteSeedSubmission" if refine else "final_result_Submission"
+    )
+    payload = (
+        {
+            "mode": "refine_seeds",
+            "seeds": [{"edge": {"src": "orders", "dst": "refunds", "confidence": 0.5}}],
+        }
+        if refine
+        else {"metric": {"name": "new_metric", "unit": "count"}}
+    )
+    body = completion("cartographer:free", payload)
+    body["tools"] = [{"type": "function", "function": {"name": name}}]
+    response = post(client, body)
+    assert response.status_code == 200
+    call = response.json()["choices"][0]["message"]["tool_calls"][0]
+    assert call["function"]["name"] == name
+    output = json.loads(call["function"]["arguments"])
+    assert output["edges"] == []
+    if refine:
+        assert len(output["seeds"]) == 1
+        assert output["seeds"][0]["src"] == "orders"
+    else:
+        assert output["unit"] == "count"
+
+
 @pytest.mark.parametrize(
     ("ts", "completeness", "expected"),
     [

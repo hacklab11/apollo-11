@@ -85,9 +85,13 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
     if any("error" in output for output in outputs):
         raise ValueError("A runtime tool failed")
 
-    if request.model == "cartographer" and payload.get("mode") == "refine_seeds":
+    if request.model == "cartographer:free" and payload.get("mode") == "refine_seeds":
         return tool(
-            "submit",
+            next(
+                item["function"]["name"]
+                for item in request.tools
+                if "CompleteSeedSubmission" in item["function"]["name"]
+            ),
             {
                 "seeds": [
                     {
@@ -101,6 +105,20 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                 ],
                 "edges": [],
                 "notes": "Scripted bootstrap; no new causal claims.",
+            },
+        )
+
+    if request.model == "cartographer:free" and "metric" in payload:
+        return tool(
+            next(
+                item["function"]["name"]
+                for item in request.tools
+                if item["function"]["name"].endswith("_Submission")
+            ),
+            {
+                "edges": [],
+                "notes": "Scripted placement; no causal claims.",
+                "unit": payload["metric"]["unit"],
             },
         )
 
