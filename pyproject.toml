@@ -24,7 +24,7 @@ dev = [
     "pytest==9.2.0",
     "pytest-asyncio==1.5.0",
     "ruff==0.17.6",
-    "import-linter==2.11",
+    "import-linter==2.17",
     "pydantic-evals==2.66.0",
     "vulture==2.16",
 ]
