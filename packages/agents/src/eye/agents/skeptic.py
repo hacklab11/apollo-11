@@ -56,13 +56,14 @@ from eye.warehouse.queries import DataQueries, LocalQueries
 
 _PROMPT = files("eye.llm").joinpath("prompts/skeptic.md")
 _MAX_STEPS = 6
-_PRICES = PriceTable(
-    prices={
-        "claude-opus-5-5": ModelPrice(input_per_mtok=4, output_per_mtok=20),
-        # The offline Compose provider reports this alias and never bills tokens.
-        "skeptic": ModelPrice(input_per_mtok=0, output_per_mtok=0),
-    }
-)
+
+
+def _prices(llm: LlmSettings) -> PriceTable:
+    return PriceTable(
+        prices={
+            name: ModelPrice(**price.model_dump()) for name, price in llm.prices.items()
+        }
+    )
 
 
 @dataclass
@@ -178,9 +179,9 @@ def _model(llm: LlmSettings) -> Model:
             ),
         )
 
-    fallback = llm.models.get("skeptic_fallback")
     return model_chain(
-        build(llm.model_for("skeptic")), *([build(fallback)] if fallback else [])
+        build(llm.model_for("skeptic")),
+        *(build(name) for name in llm.fallback_models.get("skeptic", [])),
     )
 
 
@@ -334,7 +335,7 @@ class Skeptic:
                 max_tool_calls=30,
                 max_cost_usd=3,
             ),
-            prices=_PRICES,
+            prices=_prices(self._llm),
             kill_switch=self.kill_switch,
         )
         if outcome.result.status != "done":

@@ -111,7 +111,7 @@ def model(monkeypatch: pytest.MonkeyPatch) -> deque[list[dict[str, Any]]]:
 
     monkeypatch.setattr(
         "eye.agents.skeptic._model",
-        lambda _: FunctionModel(skeptic_response, model_name="skeptic"),
+        lambda _: FunctionModel(skeptic_response, model_name="claude-opus-5-5"),
     )
     return turns
 

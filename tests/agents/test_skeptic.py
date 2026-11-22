@@ -7,9 +7,12 @@ import pytest
 from pydantic_ai import models
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.usage import RequestUsage
 from test_detective import START, anomaly, seed
 
-from eye.agents.skeptic import Skeptic
+from agent_runtime import UnpricedModel
+from eye.agents.skeptic import Skeptic, _prices
+from eye.config import LlmSettings
 from eye.registry.loader import load_registry
 from eye.sim.store import Store
 
@@ -24,6 +27,18 @@ def world() -> Iterator[duckdb.DuckDBPyConnection]:
     with closing(Store(":memory:")) as store, store.cursor() as con:
         seed(con, "s7")
         yield con
+
+
+def test_configured_prices() -> None:
+    settings = LlmSettings(
+        prices={"custom:free": {"input_per_mtok": 0, "output_per_mtok": 0}}
+    )
+    prices = _prices(settings)
+    assert prices.cost("custom:free", RequestUsage(input_tokens=100)) == 0
+    with pytest.raises(UnpricedModel):
+        prices.cost("skeptic", RequestUsage())
+    with pytest.raises(UnpricedModel):
+        prices.cost("unconfigured:free", RequestUsage())
 
 
 @pytest.mark.asyncio
@@ -100,7 +115,7 @@ async def test_review(
 
     monkeypatch.setattr(
         "eye.agents.skeptic._model",
-        lambda _: FunctionModel(respond, model_name="skeptic"),
+        lambda _: FunctionModel(respond, model_name="claude-opus-5-5"),
     )
     callback = AsyncMock()
     result = await Skeptic(world, load_registry(world)).review(
