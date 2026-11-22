@@ -1,10 +1,18 @@
 import json
 from collections.abc import Iterator
 
+import httpx
 import pytest
 from e2e import provider
 from fastapi.testclient import TestClient
 from httpx import Response
+from openai import AsyncOpenAI
+from pydantic_ai import Agent, models
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai import OpenAIProvider
+
+from agent_runtime import end_state_outputs
+from eye.agents.cartographer import Submission
 
 
 @pytest.fixture
@@ -58,6 +66,69 @@ def test_reporter_returns_narrative_output_tool(client: TestClient) -> None:
         == "Electronics price-change investigation"
     )
     assert message["tool_calls"][0]["function"]["name"] == "final_result_Narrative"
+
+
+def test_reporter_returns_narrative_without_tools(client: TestClient) -> None:
+    body = completion("reporter", {})
+    del body["tools"]
+    response = post(client, body)
+    assert response.status_code == 200
+    message = response.json()["choices"][0]["message"]
+    assert (
+        json.loads(message["content"])["title"]
+        == "Electronics price-change investigation"
+    )
+    assert "tool_calls" not in message
+
+
+@pytest.mark.parametrize("refine", [False, True])
+def test_cartographer_pydanticai_output_tools(client: TestClient, refine: bool) -> None:
+    name = (
+        "final_result_CompleteSeedSubmission" if refine else "final_result_Submission"
+    )
+    payload = (
+        {
+            "mode": "refine_seeds",
+            "seeds": [{"edge": {"src": "orders", "dst": "refunds", "confidence": 0.5}}],
+        }
+        if refine
+        else {"metric": {"name": "new_metric", "unit": "count"}}
+    )
+    body = completion("cartographer:free", payload)
+    body["tools"] = [{"type": "function", "function": {"name": name}}]
+    response = post(client, body)
+    assert response.status_code == 200
+    call = response.json()["choices"][0]["message"]["tool_calls"][0]
+    assert call["function"]["name"] == name
+    output = json.loads(call["function"]["arguments"])
+    assert output["edges"] == []
+    if refine:
+        assert len(output["seeds"]) == 1
+        assert output["seeds"][0]["src"] == "orders"
+    else:
+        assert output["unit"] == "count"
+
+
+@pytest.mark.asyncio
+async def test_cartographer_openai_sdk_roundtrip(client: TestClient) -> None:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=provider.app)
+    ) as http:
+        sdk = AsyncOpenAI(
+            base_url="http://offline/v1", api_key="offline-test-only", http_client=http
+        )
+        model = OpenAIChatModel(
+            "cartographer:free", provider=OpenAIProvider(openai_client=sdk)
+        )
+        agent = Agent(model, output_type=end_state_outputs(Submission))
+        with models.override_allow_model_requests(True):
+            result = await agent.run(json.dumps({"metric": {"unit": "count"}}))
+    assert isinstance(result.output, Submission)
+    assert result.output.edges == []
+    assert client.get("/stats").json() == {
+        "calls": {"cartographer:free": 1},
+        "errors": [],
+    }
 
 
 @pytest.mark.parametrize(

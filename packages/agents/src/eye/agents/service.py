@@ -227,9 +227,19 @@ def _map(
         # Legacy validation stages contributor SQL and graph edits on a private snapshot.
         async with lock:
             engine, graph = await asyncio.to_thread(warehouse.prepare)
-            return await Cartographer(engine, graph, llm=settings.llm).add_metric(
-                request.metric, on_step=run.record
+            cartographer = Cartographer(
+                engine,
+                graph,
+                llm=settings.llm,
+                budget=Budget.model_validate(run.metadata.budget.model_dump()),
+                scope=RunScope(
+                    run_id=run.metadata.context_id, tenant_id=run.metadata.tenant_id
+                ),
             )
+            try:
+                return await cartographer.add_metric(request.metric, on_step=run.record)
+            finally:
+                run.usage = cartographer.usage
 
     return Skill(
         "map",

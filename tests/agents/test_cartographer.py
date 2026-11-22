@@ -1,31 +1,42 @@
 import asyncio
-import copy
 import json
 import time
-from datetime import datetime
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from datetime import UTC, datetime, timedelta, tzinfo
+from unittest.mock import AsyncMock
 
 import duckdb
 import pytest
-from anthropic.types.beta import BetaMessage
+from pydantic_ai import models
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from agent_runtime import (
+    Budget,
+    InMemoryKillSwitch,
+    ModelPrice,
+    PriceTable,
+    RunLimits,
+    model_chain,
+)
 from eye.agents.cartographer import (
     Cartographer,
     SeedDecision,
     SeedSubmission,
     Submission,
 )
-from eye.config import LlmSettings
 from eye.contracts import AddMetricRequest, Edge, EdgeProposal, MetricDef, TrailStep
 from eye.graph.store import GraphStore
-from eye.llm.client import BudgetExceeded, LLMClient
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Identity, Registry
 from eye.tools.sqlguard import check
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures/llm"
+models.ALLOW_MODEL_REQUESTS = False
 SQL = "SELECT ts, country, category, seller_tier, refunds AS num, units AS den FROM orders_hourly"
 FEE_SQL = """SELECT ts, country, platform, category, seller_tier, channel,
 SUM(fee_revenue) AS num, SUM(units) AS den FROM orders_hourly
@@ -127,26 +138,180 @@ def cartographer() -> Cartographer:
     con.close()
 
 
-def install(monkeypatch: pytest.MonkeyPatch, case: str, live: bool) -> Mock:
-    sdk = Mock()
-    sdk.beta.messages.create = AsyncMock(
-        side_effect=AssertionError("Replay tried to go live")
+def scripted(cartographer: Cartographer, respond: object) -> None:
+    cartographer.model = FunctionModel(respond, model_name="scripted")
+    cartographer.prices = PriceTable(
+        prices={"scripted": ModelPrice(input_per_mtok=0, output_per_mtok=0)}
     )
-    settings = LlmSettings(
-        mode="record" if live else "replay",
-        cache_path=FIXTURES / f"cartographer_{case}.jsonl",
-    )
-    monkeypatch.setattr(
-        "eye.llm.client._client",
-        LLMClient(settings) if live else LLMClient(settings, sdk),
-    )
-    return sdk.beta.messages.create
 
 
-async def placement(
-    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str, live: bool
+def finish(info: AgentInfo, data: dict, name: str = "Submission") -> ModelResponse:
+    tool = next(t.name for t in info.output_tools if t.name.endswith("_" + name))
+    return ModelResponse(parts=[ToolCallPart(tool, data)], model_name="scripted")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit_budget", [False, True])
+async def test_reused_instance_budget_deadline(
+    cartographer: Cartographer,
+    monkeypatch: pytest.MonkeyPatch,
+    explicit_budget: bool,
 ) -> None:
-    network = install(monkeypatch, case, live)
+    clock = datetime.now(UTC)
+    limits = RunLimits()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> datetime:
+            return clock
+
+    monkeypatch.setattr("eye.agents.cartographer.datetime", Clock)
+    monkeypatch.setattr("agent_runtime.budget.datetime", Clock)
+    instance = Cartographer(
+        cartographer.engine,
+        cartographer.graph,
+        limits=limits,
+        budget=Budget(
+            tokens=limits.max_tokens,
+            cost_usd=limits.max_cost_usd,
+            deadline=clock + timedelta(seconds=limits.max_wall_clock_s),
+        )
+        if explicit_budget
+        else None,
+    )
+    calls = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        return finish(info, {"edges": [], "notes": "0 proposals", "unit": "count"})
+
+    scripted(instance, respond)
+    await instance.add_metric(
+        AddMetricRequest(
+            name="first_metric", description="orders", expression="orders + refunds"
+        )
+    )
+    clock += timedelta(seconds=limits.max_wall_clock_s + 1)
+    request = AddMetricRequest(
+        name="second_metric", description="orders", expression="orders + refunds"
+    )
+    if explicit_budget:
+        with pytest.raises(
+            RuntimeError, match="Cartographer gave_up: budget exhausted"
+        ):
+            await instance.add_metric(request)
+        assert calls == 1
+    else:
+        result = await instance.add_metric(request)
+        assert result.metric.name == "second_metric"
+        assert calls == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop", ["loop", "limit", "needs_input", "gave_up", "kill", "model_error"]
+)
+async def test_non_done_is_atomic(cartographer: Cartographer, stop: str) -> None:
+    calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append("primary")
+        if stop == "model_error":
+            raise ModelAPIError("primary", "offline")
+        if stop in {"needs_input", "gave_up"}:
+            return finish(
+                info,
+                {"question": "Which unit?"}
+                if stop == "needs_input"
+                else {"reason": "No evidence"},
+                "NeedsInput" if stop == "needs_input" else "GaveUp",
+            )
+        return ModelResponse(
+            parts=[ToolCallPart("get_graph", {})], model_name="scripted"
+        )
+
+    scripted(cartographer, respond)
+    if stop == "limit":
+        cartographer.limits = RunLimits(max_steps=1)
+    if stop == "kill":
+        switch = InMemoryKillSwitch()
+        switch.kill_system("maintenance")
+        cartographer.kill_switch = switch
+    if stop == "model_error":
+
+        def fallback(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append("fallback")
+            raise ModelAPIError("fallback", "offline")
+
+        cartographer.model = model_chain(cartographer.model, FunctionModel(fallback))
+    expected = (
+        "needs_input"
+        if stop == "needs_input"
+        else "failed"
+        if stop in {"kill", "model_error"}
+        else "gave_up"
+    )
+    with pytest.raises(RuntimeError, match=f"Cartographer {expected}"):
+        await cartographer.add_metric(
+            AddMetricRequest(
+                name="new_metric", description="orders", expression="orders + refunds"
+            )
+        )
+    assert "new_metric" not in cartographer.engine._registry.metrics
+    assert len(cartographer.graph.metrics()) == 2
+    if stop == "model_error":
+        assert calls == ["primary", "fallback"]
+    if stop == "kill":
+        assert not calls
+
+
+@pytest.mark.asyncio
+async def test_tools_and_validation_retry(cartographer: Cartographer) -> None:
+    calls = 0
+    trail: list[TrailStep] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return ModelResponse(
+                parts=[ToolCallPart("query_metric", {"metric": "missing_metric"})],
+                model_name="scripted",
+            )
+        if calls == 2:
+            assert any(
+                isinstance(part, ToolReturnPart) and part.outcome == "retried"
+                for message in messages
+                for part in message.parts
+            )
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("query_metric", {"metric": "orders"}),
+                    ToolCallPart("get_graph", {}),
+                ],
+                model_name="scripted",
+            )
+        return finish(info, {"edges": [], "notes": "0 proposals", "unit": "count"})
+
+    async def record(step: TrailStep) -> None:
+        trail.append(step)
+
+    scripted(cartographer, respond)
+    result = await cartographer.add_metric(
+        AddMetricRequest(
+            name="new_metric", description="orders", expression="orders + refunds"
+        ),
+        on_step=record,
+    )
+    assert all(edge.type == "breakdown" for edge in result.accepted)
+    assert result.notes == "0 proposals"
+    assert calls == 3
+    assert len([step for step in trail if step.action == "tool_call"]) == 3
+    assert all(step.output_summary for step in trail)
+
+
+async def placement(cartographer: Cartographer, case: str) -> None:
     if case in {"fee_per_order", "fee_per_order_mix"}:
         fee_world(cartographer, mixed=case == "fee_per_order_mix")
         req = AddMetricRequest(
@@ -164,6 +329,59 @@ async def placement(
             if case == "refund"
             else "SELECT ts, country, category, seller_tier, units AS num FROM orders_hourly",
         )
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if case == "refund":
+            edges = [
+                {
+                    "type": "formula",
+                    "src": "refunds",
+                    "dst": "refund_rate",
+                    "identity": "refund_rate = refunds / orders",
+                    "rationale": "Count rate",
+                }
+            ]
+        elif case == "duplicate":
+            edges = [
+                {
+                    "type": "formula",
+                    "src": "orders",
+                    "dst": "order_copy",
+                    "identity": "order_copy = orders",
+                    "rationale": "Equality",
+                }
+            ]
+        else:
+            edges = [
+                {
+                    "type": "formula",
+                    "src": "fee_per_order",
+                    "dst": "fee_revenue",
+                    "identity": "fee_revenue = orders * fee_per_order",
+                    "rationale": "Accounting identity",
+                },
+                {
+                    "type": "causal_hypothesis",
+                    "src": "aov",
+                    "dst": "fee_per_order",
+                    "lag_hours": 0,
+                    "rationale": "Same-hour fee mechanism",
+                },
+            ]
+        return finish(
+            info,
+            {
+                "edges": edges,
+                "notes": "Scripted placement",
+                "unit": "eur"
+                if case.startswith("fee")
+                else "ratio"
+                if case == "refund"
+                else "count",
+            },
+        )
+
+    scripted(cartographer, respond)
     steps: list[TrailStep] = []
 
     async def trail(step: TrailStep) -> None:
@@ -218,29 +436,14 @@ async def placement(
         assert result.ambiguous
         assert "duplicate" in result.notes.lower()
     assert cartographer.engine._registry.get(req.name).added_by == "user"
-    if not live:
-        network.assert_not_called()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "case", ["refund", "duplicate", "fee_per_order", "fee_per_order_mix"]
 )
-async def test_replay(
-    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
-) -> None:
-    await placement(cartographer, monkeypatch, case, False)
-
-
-@pytest.mark.live
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "case", ["refund", "duplicate", "fee_per_order", "fee_per_order_mix"]
-)
-async def test_record(
-    cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch, case: str
-) -> None:
-    await placement(cartographer, monkeypatch, case, True)
+async def test_placement(cartographer: Cartographer, case: str) -> None:
+    await placement(cartographer, case)
 
 
 @pytest.mark.parametrize(
@@ -316,10 +519,10 @@ async def test_empty_and_invalid_columns(cartographer: Cartographer) -> None:
 async def test_expression_and_failed_agent_are_atomic(
     cartographer: Cartographer, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def fail(*args: object) -> None:
+    async def fail(*args: object, **kwargs: object) -> None:
         raise RuntimeError("offline")
 
-    monkeypatch.setattr("eye.agents.cartographer.run_agent", fail)
+    monkeypatch.setattr("eye.agents.cartographer.Cartographer._propose", fail)
     with pytest.raises(RuntimeError, match="offline"):
         await cartographer.add_metric(
             AddMetricRequest(
@@ -360,14 +563,11 @@ async def test_refinement_is_cached(
             notes="uncertain",
         )
     )
-    monkeypatch.setattr("eye.agents.cartographer.run_agent", run)
+    monkeypatch.setattr("eye.agents.cartographer.Cartographer._propose", run)
     await cartographer.refine_causal_seeds()
     await cartographer.refine_causal_seeds()
     assert run.call_count == 1
-    spec, payload, *_ = run.call_args.args
-    prompt = Path(spec.system_prompt_file).read_text()
-    assert "assess all seeds" in prompt
-    assert "Do not call get_graph once per seed" in prompt
+    _, _, payload, *_ = run.call_args.args
     assert json.loads(payload)["mode"] == "refine_seeds"
     assert "numbers" in json.loads(payload)["seeds"][0]
     assert cartographer.graph.edges()[0].status == "ambiguous"
@@ -390,7 +590,7 @@ async def test_refinement_respects_main_cache_marker(
         )
     )
     run = AsyncMock(side_effect=AssertionError("cached seed must not be refined"))
-    monkeypatch.setattr("eye.agents.cartographer.run_agent", run)
+    monkeypatch.setattr("eye.agents.cartographer.Cartographer._propose", run)
     await cartographer.refine_causal_seeds([], run)
     run.assert_not_awaited()
 
@@ -412,10 +612,10 @@ async def test_refinement_incomplete_submit_can_be_repaired(
             created_by="seed",
         )
     )
-    requests = []
+    requests: list[list[ModelMessage]] = []
 
-    async def create(request: dict) -> BetaMessage:
-        requests.append(copy.deepcopy(request))
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
         decisions = []
         if repair and len(requests) == 2:
             decisions = [
@@ -427,49 +627,33 @@ async def test_refinement_incomplete_submit_can_be_repaired(
                     "rationale": "0 usable correlations",
                 }
             ]
-        return BetaMessage.model_validate(
-            {
-                "id": f"msg_{len(requests)}",
-                "type": "message",
-                "role": "assistant",
-                "model": request["model"],
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": f"submit_{len(requests)}",
-                        "name": "submit",
-                        "input": {
-                            "seeds": decisions,
-                            "edges": [],
-                            "notes": "uncertain",
-                        },
-                    }
-                ],
-                "stop_reason": "tool_use",
-                "stop_sequence": None,
-                "usage": {"input_tokens": 10, "output_tokens": 10},
-            }
+        return finish(
+            info,
+            {"seeds": decisions, "edges": [], "notes": "uncertain"},
+            "CompleteSeedSubmission",
         )
 
-    monkeypatch.setattr(
-        "eye.llm.runtime.get_client", lambda: SimpleNamespace(create=create)
-    )
+    scripted(cartographer, respond)
     if repair:
         await cartographer.refine_causal_seeds()
         assert len(requests) == 2
         assert cartographer.graph.edges()[0].evidence["refined"] is True
         assert cartographer.graph.edges()[0].status == "ambiguous"
     else:
-        with pytest.raises(BudgetExceeded, match="agent turn budget exhausted"):
+        with pytest.raises(RuntimeError, match="Cartographer failed"):
             await cartographer.refine_causal_seeds()
-        assert len(requests) == 8
+        assert len(requests) == 4
         assert not cartographer.graph.edges()[0].evidence.get("refined")
-        assert (
-            "final allowed turn" in requests[-1]["messages"][-1]["content"][-1]["text"]
-        )
-    error = requests[1]["messages"][-1]["content"][0]
-    assert error["is_error"] is True
-    assert "Missing seed decisions: orders -> refunds" in error["content"]
+    retries = [
+        part
+        for message in requests[1]
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.outcome == "retried"
+    ]
+    assert any(
+        "Missing seed decisions: orders -> refunds" in str(part.content)
+        for part in retries
+    )
 
 
 @pytest.mark.asyncio
@@ -484,7 +668,7 @@ async def test_deterministic_acceptance_overrides_proposal(
         rationale="incorrect",
     )
     monkeypatch.setattr(
-        "eye.agents.cartographer.run_agent",
+        "eye.agents.cartographer.Cartographer._propose",
         AsyncMock(return_value=Submission(edges=[proposal], notes="", unit="ratio")),
     )
     result = await cartographer.add_metric(
@@ -500,7 +684,7 @@ async def test_sql_comments_cannot_expand_table_permissions(
     con = cartographer.engine._con
     con.execute("CREATE TABLE private_table AS SELECT * FROM orders_hourly")
     monkeypatch.setattr(
-        "eye.agents.cartographer.run_agent",
+        "eye.agents.cartographer.Cartographer._propose",
         AsyncMock(return_value=Submission(edges=[], notes="", unit="count")),
     )
     await cartographer.add_metric(
@@ -535,7 +719,7 @@ async def test_outgoing_causal_proposal_for_new_metric(
         rationale="More orders can cause refunds",
     )
     monkeypatch.setattr(
-        "eye.agents.cartographer.run_agent",
+        "eye.agents.cartographer.Cartographer._propose",
         AsyncMock(return_value=Submission(edges=[proposal], notes="", unit="count")),
     )
     result = await cartographer.add_metric(
@@ -556,7 +740,7 @@ async def test_concurrent_same_name_cannot_overwrite(
     ready = asyncio.Event()
     entered = 0
 
-    async def submit(*args: object) -> Submission:
+    async def submit(*args: object, **kwargs: object) -> Submission:
         nonlocal entered
         entered += 1
         if entered == 2:
@@ -564,7 +748,7 @@ async def test_concurrent_same_name_cannot_overwrite(
         await ready.wait()
         return Submission(edges=[], notes="", unit="count")
 
-    monkeypatch.setattr("eye.agents.cartographer.run_agent", submit)
+    monkeypatch.setattr("eye.agents.cartographer.Cartographer._propose", submit)
     req = AddMetricRequest(
         name="same_metric",
         description="orders",
@@ -591,7 +775,7 @@ async def test_additive_edges_have_mean_shares(
         rationale="Sum",
     )
     monkeypatch.setattr(
-        "eye.agents.cartographer.run_agent",
+        "eye.agents.cartographer.Cartographer._propose",
         AsyncMock(return_value=Submission(edges=[proposal], notes="", unit="count")),
     )
     result = await cartographer.add_metric(
@@ -647,7 +831,14 @@ async def test_pending_seed_does_not_abort_other_refinement(
         assert dst != "pending_refunds", "pending seed must not be queried"
         return original(engine, src, dst, lag, end=end)
 
-    async def submit(spec: object, content: str, *args: object) -> SeedSubmission:
+    async def submit(
+        self: object,
+        output: object,
+        engine: object,
+        content: str,
+        *args: object,
+        **kwargs: object,
+    ) -> SeedSubmission:
         payload = json.loads(content)["seeds"]
         missing = next(s for s in payload if s["edge"]["dst"] == "pending_refunds")
         assert missing["numbers"] is None
@@ -668,6 +859,6 @@ async def test_pending_seed_does_not_abort_other_refinement(
         )
 
     monkeypatch.setattr(cartographer, "_correlation", correlate)
-    monkeypatch.setattr("eye.agents.cartographer.run_agent", submit)
+    monkeypatch.setattr("eye.agents.cartographer.Cartographer._propose", submit)
     await cartographer.refine_causal_seeds()
     assert all(e.evidence["refined"] for e in cartographer.graph.edges())
