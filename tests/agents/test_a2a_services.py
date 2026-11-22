@@ -188,6 +188,14 @@ async def test_detective_delegates_and_reports(
                     {"hypotheses": [hypothesis.model_dump(mode="json")]},
                 ),
                 use("ask_skeptic", {"hypothesis_id": hypothesis.id}),
+                use(
+                    "ask_specialist",
+                    {
+                        "agent": "selleros",
+                        "metric": "orders",
+                        "question": "Why did orders fall?",
+                    },
+                ),
             ],
             [
                 use(
@@ -225,8 +233,8 @@ async def test_detective_delegates_and_reports(
     calls = []
 
     async def capture(request: httpx.Request) -> None:
+        assert request.url.host == "skeptic"
         if request.method == "POST":
-            assert request.url.host == "skeptic"
             assert request.headers["traceparent"] == metadata.traceparent
             calls.append(json.loads(request.content)["params"])
 
@@ -258,6 +266,10 @@ async def test_detective_delegates_and_reports(
     }
     assert all(
         not step.input and step.output is None for step in investigated.result.trail
+    )
+    assert any(
+        step.tool == "selleros" and "unavailable" in step.output_summary
+        for step in investigated.result.trail
     )
     assert len(calls) == 1
     child = TaskMetadata.model_validate(calls[0]["metadata"])

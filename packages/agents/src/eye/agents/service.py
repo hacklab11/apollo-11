@@ -23,7 +23,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from eye.a2a_client import A2AClient
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
 from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
@@ -85,7 +84,6 @@ def _investigate(
 ) -> Skill[InvestigateRequest, InvestigateResult]:
     from eye.agents.detective import Detective
 
-    specialists = A2AClient(settings.a2a, http_client=http)
     graph = RemoteGraph(data)
 
     async def investigate(request: InvestigateRequest, run: Run) -> InvestigateResult:
@@ -124,7 +122,6 @@ def _investigate(
             None,
             None,
             graph,
-            a2a=specialists,
             settings=settings.detective,
             freshness=settings.sentinel,
             llm=settings.llm,

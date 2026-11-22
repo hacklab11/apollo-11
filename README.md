@@ -56,6 +56,8 @@ endpoints at their Compose service names on ports 8210–8250, respectively.
 Discover each at `/.well-known/agent-card.json`. To run multiple replicas,
 use `docker compose up -d --wait --scale detective=3`. Use blocking A2A
 sends: task state stays with the replica that handles a request.
+The A2A Detective delegates only to Skeptic: legacy specialists and SellerOS
+do not accept budgets or report usage yet. The legacy Core path is unchanged.
 
 ### S8 demo against the running continuous stack
 
