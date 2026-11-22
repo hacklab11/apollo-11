@@ -1,11 +1,16 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Activity, CheckCheck, GitBranch, Inbox } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { CausalGraph } from "./components/CausalGraph";
 import { IncidentDetail } from "./components/IncidentDetail";
 import { get } from "./lib/api";
 import { group, time } from "./lib/incidents";
+
+const CausalGraph = lazy(() =>
+  import("./components/CausalGraph").then((module) => ({
+    default: module.CausalGraph,
+  })),
+);
 
 export default function App() {
   const client = useQueryClient();
@@ -215,7 +220,11 @@ export default function App() {
         </main>
       </TabsContent>
       <TabsContent value="graph" className="p-6">
-        <CausalGraph />
+        <Suspense
+          fallback={<p className="empty-state">Loading causal graph…</p>}
+        >
+          <CausalGraph />
+        </Suspense>
       </TabsContent>
     </Tabs>
   );

@@ -92,9 +92,11 @@ def _detect(settings: Settings, data: DataClient) -> Skill[DetectRequest, Detect
 def _investigate(
     settings: Settings, data: DataClient, http: httpx.AsyncClient, skeptic_url: str
 ) -> Skill[InvestigateRequest, InvestigateResult]:
+    from eye.a2a_client import A2AClient
     from eye.agents.detective import Detective
 
     graph = RemoteGraph(data)
+    specialists = A2AClient(settings.a2a, http_client=http)
 
     async def investigate(request: InvestigateRequest, run: Run) -> InvestigateResult:
         from agent_runtime import Budget, RunScope, RunUsageSummary
@@ -137,6 +139,7 @@ def _investigate(
             None,
             None,
             graph,
+            a2a=specialists,
             settings=settings.detective,
             freshness=settings.sentinel,
             llm=settings.llm,
