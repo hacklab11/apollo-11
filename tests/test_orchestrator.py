@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,7 @@ from eye.llm.client import LLMClient, LLMUnavailable
 from eye.main import _reporter
 from eye.orchestrator import HOUR, Orchestrator, StepSink
 from eye.schema import create_tables
+from eye.warehouse.client import DataUnavailable
 
 
 @pytest.mark.asyncio
@@ -192,6 +194,49 @@ class Sentinel:
         ]
         self.count = 0
         return decisions
+
+
+@pytest.mark.asyncio
+async def test_replays_incident_lifecycle_after_warehouse_outage() -> None:
+    settings = Settings(sim={"autostart": False})
+    clock = Clock(settings.sim.start_ts + HOUR)
+    readings = []
+
+    def lookup(_name: str, _segment: dict[str, str], ts: datetime) -> float:
+        readings.append(ts)
+        if len(readings) == 1:
+            raise DataUnavailable("warehouse unavailable")
+        return 5
+
+    with closing(IncidentStore(":memory:")) as store:
+        incident = await store.upsert(
+            InvestigationResult(
+                investigation_id="inv_retry",
+                entry=make_anomaly().model_copy(update={"ts": clock.now - HOUR}),
+                verdict="HYPOTHESIS",
+                summary="No confirmed cause",
+                root_cause=None,
+                hypotheses=[],
+                contributions=[],
+                open_questions=[],
+                suggested_actions=[],
+                steps_used=0,
+                stop_reason="budget",
+            )
+        )
+        core = Orchestrator(
+            settings, clock, Sentinel(0), store, LLMClient(settings.llm), lookup
+        )
+        try:
+            first = clock.now
+            assert (await core.step_once()).tick == 1
+            assert (await core.step_once()).tick == 2
+            assert readings == [first, first, first + HOUR]
+            updated = store.get(incident.id)
+            assert updated.status == "persisting"
+            assert updated.impact_eur_total == 2 * incident.impact_eur_per_hour
+        finally:
+            await core.close()
 
 
 @pytest.mark.asyncio
