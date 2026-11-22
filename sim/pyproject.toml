@@ -6,7 +6,9 @@ dependencies = [
     "duckdb==2.0.1",
     "eye-contracts",
     "eye-data",
-    "eye-orchestrator",
+    "fastapi==0.165.0",
+    "uvicorn>=0.34",
+    "pydantic-settings>=2",
     "numpy==2.5.5",
     "pydantic==2.14.4",
     "pyyaml==6.0.4",
@@ -25,4 +27,3 @@ packages = ["src/eye"]
 [tool.uv.sources]
 eye-contracts = { workspace = true }
 eye-data = { workspace = true }
-eye-orchestrator = { workspace = true }

@@ -11,8 +11,8 @@ from typing import get_args
 import duckdb
 
 from eye.config import SimSettings, load_settings
-from eye.contracts import ScenarioId
 from eye.sim.engine import Simulator
+from eye.sim.scenarios import ScenarioId
 from eye.sim.store import TABLES, WORLD_DB
 
 
@@ -26,7 +26,7 @@ def _play_schedule(value: str) -> dict[int, list[ScenarioId]]:
             or not hours.isdecimal()
         ):
             raise argparse.ArgumentTypeError(
-                "expected scenario IDs and nonnegative hours: I1@0,S7@3"
+                "expected scenario IDs and nonnegative hours: S8@0"
             )
         schedule.setdefault(int(hours), []).append(scenario)
     return schedule
@@ -117,9 +117,14 @@ def main() -> None:
     export.add_argument("--format", required=True, choices=("parquet", "csv"))
     export.add_argument("--out", required=True, type=Path)
     commands.add_parser("stats")
+    commands.add_parser("serve")
     args = parser.parse_args()
     try:
-        if args.command == "generate":
+        if args.command == "serve":
+            from eye.sim.service import serve
+
+            serve()
+        elif args.command == "generate":
             _generate(args.days, args.seed, args.play)
         else:
             with duckdb.connect(str(WORLD_DB), read_only=True) as con:

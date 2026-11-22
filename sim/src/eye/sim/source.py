@@ -2,7 +2,7 @@
 
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,16 +11,20 @@ from types import ModuleType
 import duckdb
 
 from eye.config import Settings
-from eye.contracts import ScenarioId
-from eye.orchestrator import HOUR, Scenarios
 from eye.sim.engine import Simulator
+from eye.sim.scenarios import ScenarioId, ScenarioManager
 from eye.sim.seller_actions import SellerAction
 from eye.sim.store import WORLD_DB, Store
+
+HOUR = timedelta(hours=1)
 
 
 class SimSource:
     def __init__(
-        self, sim: Simulator, scenarios: Scenarios | None, titles: dict[ScenarioId, str]
+        self,
+        sim: Simulator,
+        scenarios: ScenarioManager | None,
+        titles: dict[ScenarioId, str],
     ) -> None:
         self.sim = sim
         self.live_start = sim.settings.sim.start_ts
@@ -52,21 +56,21 @@ class SimSource:
 
 
 @contextmanager
-def open_sim_source(settings: Settings) -> Iterator[SimSource]:
+def open_sim_source(settings: Settings, path: Path = WORLD_DB) -> Iterator[SimSource]:
     try:
         scenarios = import_module("eye.sim.scenarios")
     except ModuleNotFoundError as exc:
         if exc.name != "eye.sim.scenarios":
             raise
         scenarios = None
-    with _world(settings, scenarios, WORLD_DB) as (sim, manager):
+    with _world(settings, scenarios, path) as (sim, manager):
         yield SimSource(sim, manager, scenarios._TITLES if scenarios else {})
 
 
 @contextmanager
 def _world(
     settings: Settings, scenario_module: ModuleType | None, path: Path = WORLD_DB
-) -> Iterator[tuple[Simulator, Scenarios | None]]:
+) -> Iterator[tuple[Simulator, ScenarioManager | None]]:
     with closing(Store(path)) as stored, stored.cursor() as reader:
         exists = reader.execute("SELECT 1 FROM skus LIMIT 1").fetchone() is not None
         latest = reader.execute("SELECT max(ts) FROM traffic_hourly").fetchone()[0]
