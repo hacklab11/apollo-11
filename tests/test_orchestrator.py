@@ -337,3 +337,17 @@ async def test_matching_anomaly_does_not_reinvestigate(workflow, status: str) ->
     assert saved.occurrences == item.occurrences + 1
     assert saved.investigation_ids == item.investigation_ids
     assert saved.summary == item.summary
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["innocent", "resolved", "deferred"])
+async def test_terminal_or_deferred_incidents_are_not_sent_as_open(
+    workflow, status: str
+) -> None:
+    core, scripted = workflow
+    item = make_incident_s7()
+    item.status = status
+    core.incidents._save(item)
+    await core.step_once()
+    payload = scripted.requests[0][1]["params"]["message"]["parts"][0]["data"]
+    assert payload["open_incidents"] == []

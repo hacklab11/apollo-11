@@ -351,6 +351,7 @@ class Orchestrator(DBOSConfiguredInstance):
             self.incidents.as_v2(item)
             for item in self.incidents.all()
             if item.merged_into is None
+            and item.status in {"investigating", "open", "persisting"}
             and self.incidents.as_v2(item).status not in {"recovered", "closed"}
         ]
 

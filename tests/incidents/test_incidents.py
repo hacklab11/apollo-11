@@ -7,6 +7,7 @@ from factories import make_anomaly, make_incident_s7, make_metrics, make_trail_s
 
 from eye.agents.reporter import Reporter
 from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision, Symptom
+from eye.contracts_v2 import DEFAULT_TENANT, IncidentClosure
 from eye.graph.store import GraphStore
 from eye.incidents.store import IncidentStore, canonical, fingerprint
 
@@ -73,6 +74,29 @@ def test_excluded_hours(store: IncidentStore, status: str) -> None:
 
 def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
     assert store.excluded_hours(make_incident_s7().entry.ts) == set()
+
+
+def test_innocent_incident_is_terminal_and_can_be_human_closed(
+    store: IncidentStore,
+) -> None:
+    incident = make_incident_s7()
+    incident.status, incident.verdict = "innocent", "INNOCENT"
+    store._save(incident)
+    projected = store.as_v2(incident)
+    assert projected.status == "recovered"
+    assert projected.recovered_ts == incident.updated_ts
+    closed = store.human_close(
+        incident.id,
+        IncidentClosure(
+            tenant_id=DEFAULT_TENANT,
+            closed_by="reviewer",
+            note="Reviewed innocent verdict",
+            closed_ts=incident.updated_ts,
+        ),
+    )
+    assert closed.status == "closed"
+    assert store.get(incident.id).status == "innocent"
+    assert store.excluded_hours(incident.updated_ts) == set()
 
 
 def test_thread_queries_do_not_replace_another_threads_result(

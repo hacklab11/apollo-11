@@ -93,13 +93,14 @@ class IncidentStore:
         data.update(
             tenant_id=DEFAULT_TENANT,
             context_id=incident.id,
-            recovered_ts=incident.resolved_ts,
+            recovered_ts=incident.resolved_ts
+            or (incident.updated_ts if incident.status == "innocent" else None),
         )
         data["status"] = {
             "persisting": "mitigating",
             "resolved": "recovered",
             "deferred": "open",
-            "innocent": "open",
+            "innocent": "recovered",
         }.get(incident.status, incident.status)
         closure = self.db.execute(
             "SELECT closure FROM incident_closures WHERE id = ?", [incident.id]
