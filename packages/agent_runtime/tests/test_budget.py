@@ -52,6 +52,20 @@ def test_metadata_round_trip_for_a2a() -> None:
     assert Budget.from_metadata({"other": 1}) is None
 
 
+def test_budget_operations_preserve_runtime_subclass() -> None:
+    original = budget()
+    spent = original.spend(tokens=100, cost_usd=0.1)
+    child = spent.delegate()
+    restored = Budget.from_metadata(child.to_metadata())
+    assert type(spent) is Budget
+    assert type(child) is Budget
+    assert type(restored) is Budget
+    assert restored is not None
+    assert restored.seconds_left(NOW) == 60
+    assert Budget.from_metadata(None) is None
+    assert Budget.from_metadata({}) is None
+
+
 def test_run_limits_tighten_to_budget() -> None:
     remaining = budget(
         tokens=500, cost_usd=0.01, deadline=datetime.now(UTC) + timedelta(seconds=5)
