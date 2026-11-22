@@ -21,9 +21,13 @@ docker compose down
 
 Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
 its own container and HTTP health check; `sim-generate` exits successfully after
-initializing the DuckDB/SellerOS volumes. `eye-data` reads that DuckDB snapshot
+initializing the DuckDB snapshot. `eye-data` reads that DuckDB snapshot
 from a read-only mount and serves it to Core on a private network; no warehouse
-port is published. Host ports can be changed in
+port is published. Alongside it, continuous `sim` backfills/resumes its private
+`sim-world` volume and publishes hourly Parquet to the named `sim-lake` volume.
+Only continuous `sim` publishes the shared SellerOS export; SellerOS waits for
+its `/health`. The simulator uses host port 8100 and MCP starts at 8110.
+Host ports can be changed in
 `.env`. Compose uses the normal live Anthropic LLM defaults, matching
 `config/settings.yaml`. Set `ANTHROPIC_API_KEY` in `.env` to run real agents;
 Compose does not override credentials. For OpenRouter, add the same `llm`
@@ -35,8 +39,11 @@ CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
 model requests. Missing credentials produce the existing `refinement_unavailable`
 warning without preventing startup; this is not an agent-quality eval.
 This Compose setup reads the initial snapshot; the Core clock only advances
-when the warehouse has another complete hour. Use the local stack below for a
-rehearsal that drives the simulator directly. Containers bind
+when the warehouse has another complete hour. Neither Core nor `eye-data` mounts
+`sim-lake` yet; wiring the live lake is a separate data-service follow-up.
+The private continuous simulator and one-shot snapshot use separate world volumes
+to avoid concurrent DuckDB writers. Do not scale `sim` against the same volumes.
+Containers bind
 `EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
 `EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
 `EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
@@ -192,7 +199,7 @@ Only S8 is enabled by the simulator. It includes the planned electronics coupon 
 | --- | --- |
 | [A2A specialists](docs/specs/10-a2a-and-specialists.md) | `http://localhost:8200/growth`, `/marketplace`, `/discovery` |
 | [A2A SellerOS](docs/specs/11-selleros-external.md) | `http://localhost:8300` |
-| [MCP, streamable HTTP](docs/specs/12-mcp-server.md) | `http://localhost:8100/mcp` |
+| [MCP, streamable HTTP](docs/specs/12-mcp-server.md) | `http://localhost:8100/mcp` locally; `http://localhost:8110/mcp` in Compose |
 
 Append `/.well-known/agent-card.json` to an A2A base address to inspect its card. In Q&A, try asking an MCP client: “What is broken right now and who is affected?”
 
