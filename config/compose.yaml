@@ -1,0 +1,8 @@
+# Use the normal live LLM defaults; CI supplies no credentials.
+sim:
+  autostart: false
+a2a:
+  growth_url: http://eye-specialists:8200/growth
+  marketplace_url: http://eye-specialists:8200/marketplace
+  discovery_url: http://eye-specialists:8200/discovery
+  selleros_url: http://selleros:8300

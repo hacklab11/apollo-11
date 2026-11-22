@@ -1,0 +1,13 @@
+.git
+.venv
+.env
+.env.*
+!.env.example
+data
+packages/selleros/data
+**/__pycache__
+**/.pytest_cache
+.import_linter_cache
+.ruff_cache
+docs
+tests

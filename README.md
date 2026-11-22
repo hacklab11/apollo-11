@@ -8,6 +8,43 @@ The [live observatory](web/README.md) is served by Core. [Earlier API preview](d
 
 ## Run it
 
+### Docker Compose (live stack or credential-free wave gate)
+
+```sh
+cp .env.example .env
+docker compose up -d --build --wait
+./scripts/smoke.sh
+docker compose ps
+# Stop, preserving data (add -v to reset the world):
+docker compose down
+```
+
+Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
+its own container and HTTP health check; `sim-generate` exits successfully after
+initializing the shared DuckDB/SellerOS volumes. Host ports can be changed in
+`.env`. Compose uses the normal live Anthropic LLM defaults, matching
+`config/settings.yaml`. Set `ANTHROPIC_API_KEY` in `.env` to run real agents;
+Compose does not override credentials. For OpenRouter, add the same `llm`
+provider/model settings shown below to `config/compose.yaml`, set
+`OPENROUTER_API_KEY` in `.env`, and add SellerOS's provider/model variables there
+too. Never commit keys.
+
+CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
+model requests. Missing credentials produce the existing `refinement_unavailable`
+warning without preventing startup; this is not an agent-quality eval.
+`config/compose.yaml` keeps simulation paused for smoke checks and rehearsals;
+resume it through the UI/API when ready. Containers bind
+`EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
+`EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
+`EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
+allowlist (Compose adds `eye-mcp:8100`), retaining DNS-rebinding protection;
+the A2A URLs live in settings. SellerOS uses `SELLEROS_DATA_DIR` for its shared
+export directory. Compose uses host port ranges and no fixed container names,
+so services can be independently replicated (for example,
+`docker compose up -d --wait --scale eye-specialists=2`).
+Core and SellerOS currently retain process-local state/file-backed storage;
+multiple replicas are not a distributed-state or multi-writer deployment.
+
 ### Local stack and rehearsal
 
 From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):

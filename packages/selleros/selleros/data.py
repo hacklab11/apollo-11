@@ -13,7 +13,9 @@ from pydantic import BaseModel, Field
 
 from selleros.models import SellerAlert, SellerAlertAck
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+DATA_DIR = Path(
+    os.environ.get("SELLEROS_DATA_DIR", Path(__file__).resolve().parents[1] / "data")
+)
 PriceSource = Literal["repricer", "manual"]
 
 

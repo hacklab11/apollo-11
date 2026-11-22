@@ -1,6 +1,7 @@
 """MCP server: a stateless adapter over the core public API."""
 
 import json
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Annotated, Any
@@ -9,8 +10,11 @@ import httpx
 import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter, ValidationError
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from eye.api.app import MetricDefinition
 from eye.config import load_settings
@@ -148,6 +152,10 @@ def create_server(
             return False
 
     server = _MonitoringServer(has_scenarios)
+
+    @server.custom_route("/healthz", methods=["GET"])
+    async def healthz(_: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
 
     async def status() -> Status:
         return Status.model_validate(await call("GET", "/api/status"))
@@ -397,12 +405,28 @@ def create_server(
     return server
 
 
+def transport_security() -> TransportSecuritySettings | None:
+    hosts = [
+        host.strip()
+        for host in os.environ.get("EYE_MCP_ALLOWED_HOSTS", "").split(",")
+        if host.strip()
+    ]
+    if not hosts:
+        return None
+    return TransportSecuritySettings(
+        allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *hosts],
+        allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+    )
+
+
 def main() -> None:
     settings = load_settings()
-    server = create_server(f"http://127.0.0.1:{settings.ports.core}")
+    server = create_server(
+        os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{settings.ports.core}")
+    )
     uvicorn.run(
-        server.streamable_http_app(),
-        host="127.0.0.1",
+        server.streamable_http_app(transport_security=transport_security()),
+        host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=settings.ports.mcp,
         access_log=False,
         log_config=None,

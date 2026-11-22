@@ -46,6 +46,9 @@ uv run lint-imports
 uv run pytest -m "not live" -q            # must pass before every PR
 uv run eye-sim generate --days 28 --seed 42
 ./scripts/dev.sh                          # run all processes locally
+cp .env.example .env
+docker compose up -d --build --wait && ./scripts/smoke.sh # offline wave gate
+docker compose down                      # add -v to reset shared data
 ```
 
 Tests marked `live` call the real API. Do not run them in CI. Run them only when your card says so.
