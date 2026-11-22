@@ -23,7 +23,13 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 from scripted_agents import ScriptedAgents
 
-from eye.api.app import MetricDefinition, create_app, human_actor
+from eye.api.app import (
+    IncidentDetail,
+    MetricDefinition,
+    UIStatus,
+    create_app,
+    human_actor,
+)
 from eye.config import Settings
 from eye.contracts import (
     AddMetricResult,
@@ -37,7 +43,7 @@ from eye.contracts import (
     Symptom,
     TrailStep,
 )
-from eye.contracts_v2 import AgentResult
+from eye.contracts_v2 import AgentResult, IncidentV2
 from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
@@ -132,6 +138,28 @@ def service(
             settings,
             orchestrator,
         )
+
+
+def test_ui_reads_v2_lifecycle_and_sanitized_exchange(service) -> None:
+    app, _, core = service
+    sample = make_incident_s7()
+    with TestClient(app) as client:
+        status = UIStatus.model_validate(client.get("/api/ui/status").json())
+        assert status.sim_ts == core.status().sim_ts
+        rows = client.get("/api/ui/incidents").json()
+        assert len(rows) == 1
+        listed = IncidentV2.model_validate(rows[0])
+        assert listed.root_cause is None and not listed.hypotheses
+        detail = IncidentDetail.model_validate(
+            client.get(f"/api/ui/incidents/{sample.id}").json()
+        )
+        assert detail.incident.root_cause == sample.root_cause
+        assert detail.incident.tenant_id == "default"
+        assert client.get("/api/ui/incidents/unknown").status_code == 404
+        sample.status = "resolved"
+        sample.resolved_ts = sample.updated_ts
+        core.incidents._save(sample)
+        assert client.get("/api/ui/incidents").json()[0]["status"] == "recovered"
 
 
 @pytest.mark.asyncio

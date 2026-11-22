@@ -55,7 +55,7 @@ def configure(
     ] = "http://127.0.0.1:8100",
     api_url: Annotated[
         str, typer.Option(envvar="DEMO_API_URL", help="Core public API URL.")
-    ] = "http://127.0.0.1:8000",
+    ] = "http://127.0.0.1:8080",
 ) -> None:
     ctx.obj = Settings(sim_url=sim_url.rstrip("/"), api_url=api_url.rstrip("/"))
 

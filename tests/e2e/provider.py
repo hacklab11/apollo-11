@@ -3,10 +3,13 @@
 import json
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import AwareDatetime, BaseModel, Field
+
+from selleros.data import Snapshot, price_intent
 
 app = FastAPI()
 calls: Counter[str] = Counter()
@@ -25,7 +28,24 @@ class CompletionRequest(BaseModel):
 
 
 def decode(content: str) -> dict[str, Any]:
-    return json.JSONDecoder().raw_decode(content)[0]
+    # SellerOS frames its request as untrusted input; the finite script reads JSON only.
+    return json.JSONDecoder().raw_decode(content[content.index("{") :])[0]
+
+
+def affected_sellers() -> list[str]:
+    snapshot = Snapshot.model_validate_json(
+        Path("/seller-data/sellers.json").read_text()
+    )
+    return [
+        seller.seller_id
+        for seller in snapshot.sellers
+        if seller.customer_of_selleros
+        and any(
+            (intent := price_intent(seller, sku)) is not None
+            and intent.verdict == "likely_error"
+            for sku in seller.skus
+        )
+    ]
 
 
 def tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -172,10 +192,20 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             )
         root = hypothesis(entry, outputs)
         if len(outputs) == 2:
-            return tool("update_hypotheses", {"hypotheses": [root]})
+            sellers = affected_sellers()
+            return tool(
+                "ask_specialist",
+                {
+                    **args,
+                    "agent": "selleros",
+                    "question": f"Were the manual price changes for {', '.join(sellers)} intended?",
+                },
+            )
         if len(outputs) == 3:
-            return tool("ask_skeptic", {"hypothesis_id": root["id"]})
+            return tool("update_hypotheses", {"hypotheses": [root]})
         if len(outputs) == 4:
+            return tool("ask_skeptic", {"hypothesis_id": root["id"]})
+        if len(outputs) == 5:
             return tool(
                 "final_result__Submission",
                 {
@@ -185,7 +215,30 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                     "hypotheses": [root],
                     "contributions": [],
                     "open_questions": [],
-                    "suggested_actions": ["Review the manual electronics prices."],
+                    "affected_sellers": affected_sellers(),
+                    "suggested_actions": ["Revert manual prices."],
+                },
+            )
+
+    if request.model == "selleros":
+        if not outputs:
+            return tool("price_intent_check", {"selection": {}})
+        if len(outputs) == 1:
+            return tool(
+                "submit",
+                {
+                    "agent": "selleros",
+                    "answered": True,
+                    "findings": [
+                        {
+                            "claim": f"Manual price change on {row['sku']} was {row['verdict']}.",
+                            "numbers": row,
+                            "confidence": 1,
+                            "supports": ["price_change"],
+                        }
+                        for row in outputs[0]["rows"]
+                    ],
+                    "data_used": ["price_intent_check"],
                 },
             )
 

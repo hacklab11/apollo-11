@@ -4,7 +4,12 @@ Eye of the System monitors a graph of metrics without waiting for someone to ask
 
 ## Observatory
 
-The [live observatory](web/README.md) is served by Core. [Earlier API preview](docs/assets/observatory-live.png): the chart shows simulated orders after injecting I1 and S7, not results from the headphones rehearsal.
+The [React workspace](packages/web/README.md) is served at http://localhost:8080 by
+nginx, with Core's API on the same origin. Incidents are grouped into Open,
+Recovered and Closed; select one for its cause, ruled-out explanations, up to
+three measurements, SellerOS exchange and human actions. The full causal graph
+lives on a separate Graph tab. The header shows the consumer's sim clock and
+latest complete warehouse hour; updates use SSE invalidation with polling fallback.
 
 ## Run it
 
@@ -42,7 +47,12 @@ docker compose ps
 docker compose down
 ```
 
-Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
+Open http://localhost:8080. Core is private: host API calls and `demo` use nginx
+on port 8080, not the former port 8000. nginx strips incoming identity and bearer
+headers and sets `X-Eye-Person: local-operator`; this local-only demo has one
+operator, not a login system. A caller-supplied `X-Eye-Person: gleb` is replaced,
+not trusted. For a shared deployment, replace this with an authenticated proxy.
+Each Python service has
 its own container and HTTP health check. The continuous simulator backfills or
 resumes its private `sim-world` volume and publishes hourly Parquet to
 `sim-lake`. `eye-data` mounts the lake read-only and serves it to Core on a
@@ -54,7 +64,10 @@ Host ports can be changed in
 Compose does not override credentials. For OpenRouter, add the same `llm`
 provider/model settings shown below to `config/compose.yaml`, set
 `OPENROUTER_API_KEY` in `.env`, and add SellerOS's provider/model variables there
-too. Never commit keys.
+too. Set the same `EYE_SELLER_REVERT_SERVICE_TOKEN` in `.env` for Core, SellerOS
+and sim to enable approval-gated price correction (for example, generate one with
+`openssl rand -hex 32`). The browser never receives this service credential;
+human approvals and closure use nginx's identity. Never commit keys.
 
 With empty keys, the startup/API smoke makes no model requests. Core never
 constructs a model client or runs seed refinement.
@@ -99,9 +112,22 @@ pauses or advances simulation, adds metrics, or calls a model. Only `trigger`
 writes, via the simulator's scenario endpoint. S8 starts the planned coupon day
 immediately and the seller typo after `typo_delay_hours` (default 1).
 
-Defaults are simulator `http://127.0.0.1:8100` and Core `http://127.0.0.1:8000`.
+Defaults are simulator `http://127.0.0.1:8100` and API `http://127.0.0.1:8080`.
 Set `DEMO_SIM_URL` / `DEMO_API_URL`, or use global options before the command:
-`uv run demo --sim-url http://127.0.0.1:9100 --api-url http://127.0.0.1:8000 status`.
+`uv run demo --sim-url http://127.0.0.1:9100 --api-url http://127.0.0.1:9080 status`.
+
+Approve a pending price revert in the UI, then wait for measured recovery and
+close it with a review note. The equivalent host API call is:
+
+```sh
+curl -fsS -X POST 'localhost:8080/api/incidents/<id>/close' \
+  -H 'Content-Type: application/json' \
+  -d '{"tenant_id":"default","note":"Reviewed measured recovery."}'
+```
+
+Replace `<id>` with the incident ID. nginx supplies the audited `local-operator`
+identity; no identity header is needed. The old port-8000 command must use 8080.
+For a bare local Core without nginx, use `DEMO_API_URL=http://127.0.0.1:8000`.
 
 `status` lists non-terminal incidents. `narrate --interval 2 --timeout 180`
 prints S8 activation and changed incident titles, Reporter summaries,
@@ -119,7 +145,7 @@ successfully, or Ctrl+C to stop. It does not promise the scripted D6 timeline.
 ```sh
 docker compose up -d --build --wait
 SIM_URL="http://$(docker compose port sim 8100)"
-CORE_URL="http://$(docker compose port eye-core 8000)"
+CORE_URL="http://$(docker compose port web 8080)"
 curl -fsS -X POST "$SIM_URL/scenarios/s8"
 curl -fsS -X POST "$CORE_URL/api/clock/resume"
 curl -fsS "$SIM_URL/status"
@@ -136,7 +162,7 @@ export COMPOSE_FILE=compose.yaml:compose.e2e.yaml
 export COMPOSE_PROJECT_NAME=eye-s8-e2e
 export COMPOSE_DISABLE_ENV_FILE=1
 docker compose down -v
-docker compose up -d --build --wait
+docker compose up -d --build --wait --scale detective=3
 ./scripts/smoke.sh
 ./scripts/e2e-s8.sh
 docker compose down -v
@@ -152,8 +178,12 @@ all model configuration at a test-only, non-forwarding OpenAI-compatible server 
 reach a real provider. The existing `s8.jsonl` recording contains triage/specialist
 responses but no completed Detective submission, so it cannot cover this gate.
 The driver injects S8 through the simulator API, steps Core's consumer clock,
-and polls Core's public APIs for an open, investigated incident with real
-tool outputs, Skeptic review and a Reporter narrative. Failures print Compose logs.
+and polls nginx's public APIs for an open, investigated incident with real
+tool outputs, Skeptic review, a Reporter narrative and a SellerOS exchange.
+It approves the exact pending SellerOS price reverts through nginx, checks that
+nginx replaces a spoofed identity, waits for measured recovery without clearing
+S8, and human-closes the incident with an audited note. It also checks that the
+React bundle and UI API share an origin. Failures print Compose logs.
 This is an integration/transport gate with scripted verdicts, **not an evaluation
 of model reasoning or the full D6 SellerOS correction/resolution oracle**. It runs
 separately from normal `pytest -m "not live"`; the latter tests the scripted
@@ -205,7 +235,7 @@ the completed time range once at least one hour is ready.
 Run `EYE_DATA_URL=http://127.0.0.1:8150 uv run eye-core` to read metrics, the causal
 graph, and partition status over HTTP. The Core clock consumes completed hours
 without advancing the producer. Scenario controls belong exclusively to the
-[simulator service](sim/README.md); Core, MCP, chat and the Observatory do not
+[simulator service](sim/README.md); Core, MCP and the incident workspace do not
 expose them. Adding metrics from SQL remains available only in legacy local mode.
 
 ## Workspace layout
@@ -226,10 +256,9 @@ flowchart LR
     Detective <-->|A2A| Agents["Growth · Marketplace · Discovery · SellerOS"]
     Graph --> API["Core API and event stream"]
     Reporter --> API
-    API --> UI["Observatory"]
+    API --> Proxy["nginx :8080"] --> UI["React incident workspace"]
     MCP["MCP server"] --> API
     Client["Claude Code or another MCP client"] --> MCP
-    UI -->|Chat via core| MCP
 ```
 
 Cartographer dry-runs new metric SQL and proposes where to place the metric in the graph. See the [architecture spec](docs/specs/01-architecture.md) and [public API](docs/specs/13-api-and-ui.md).

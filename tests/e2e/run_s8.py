@@ -1,4 +1,4 @@
-"""Exercise S8 investigation, recovery and human closure through Core."""
+"""Exercise the UI origin, S8 approval, recovery and human closure offline."""
 
 import time
 from datetime import datetime, timedelta
@@ -86,11 +86,15 @@ def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
 
 def run() -> None:
     with (
-        httpx.Client(base_url="http://127.0.0.1:8000", timeout=120) as core,
+        httpx.Client(base_url="http://web:8080", timeout=120) as core,
         httpx.Client(base_url="http://scripted-model:8400", timeout=5) as model,
         httpx.Client(base_url="http://sim:8100", timeout=30) as sim,
     ):
         request(model, "GET", "/healthz")
+        html = request(core, "GET", "/").text
+        assert "Eye of the System" in html and 'type="module"' in html
+        assert request(core, "GET", "/api/ui/status").json()["data_complete_ts"]
+        print("OK React UI and typed API served on the same nginx origin", flush=True)
         status = Status.model_validate_json(request(core, "GET", "/api/status").content)
         assert status.tick == 0 and status.paused, "Use a fresh stack and volumes"
         assert request(core, "GET", "/api/incidents").json() == []
@@ -128,19 +132,45 @@ def run() -> None:
             flush=True,
         )
         close_path = f"/api/incidents/{incident.id}/close"
-        person = "offline-operator"
-        identity = {"X-Eye-Person": person}
+        person = "local-operator"
+        identity = {"X-Eye-Person": "spoofed-browser-identity"}
         close_body = IncidentCloseRequest(
             tenant_id=DEFAULT_TENANT, note="Reviewed measured S8 recovery."
         ).model_dump(mode="json")
         early = core.post(close_path, headers=identity, json=close_body)
         assert early.status_code == 409, early.text
         print("OK human close rejected before recovery (409)", flush=True)
-        timeline = SCENARIOS.validate_json(
-            request(sim, "DELETE", "/scenarios/s8").content
+        ui_detail = request(core, "GET", f"/api/ui/incidents/{incident.id}").json()
+        assert ui_detail["incident"]["status"] in {"open", "investigating"}
+        assert any(
+            "SellerOS:" in row["summary"] for row in ui_detail["seller_exchange"]
         )
-        assert any(s.id == "S8" and not s.active for s in timeline), timeline
-        print("OK S8 cleared through sim; waiting for measured recovery", flush=True)
+        approvals = request(core, "GET", "/api/approvals/seller-revert").json()
+        pending = [
+            row for row in approvals if row["args"]["incident_id"] == incident.id
+        ]
+        assert pending and all(row["status"] == "pending" for row in pending), approvals
+        for approval in pending:
+            request(
+                core,
+                "POST",
+                f"/api/approvals/{approval['id']}",
+                headers=identity,
+                json={"approve": True},
+            )
+        decided = request(core, "GET", "/api/approvals/seller-revert").json()
+        assert all(
+            row["status"] == "approved" and row["decided_by"] == person
+            for row in decided
+        )
+        print(
+            f"OK {len(pending)} exact SellerOS price reverts approved; nginx stripped spoofed identity",
+            flush=True,
+        )
+        print(
+            "OK waiting for recovery after real SellerOS simulator intervention",
+            flush=True,
+        )
         deadline = time.monotonic() + 120
         while incident.status != "resolved":
             if time.monotonic() >= deadline:
@@ -158,7 +188,9 @@ def run() -> None:
             f"OK S8 incident recovered (legacy status=resolved): {incident.resolved_ts.isoformat()}",
             flush=True,
         )
-        unauthenticated = core.post(close_path, json=close_body)
+        unauthenticated = httpx.post(
+            f"http://127.0.0.1:8000{close_path}", json=close_body
+        )
         assert unauthenticated.status_code == 401, unauthenticated.text
         print("OK human close requires identity (401)", flush=True)
         closed = IncidentV2.model_validate_json(
@@ -167,6 +199,12 @@ def run() -> None:
         assert closed.status == "closed" and closed.recovered_ts == incident.resolved_ts
         assert closed.closure is not None and closed.closure.closed_by == person
         assert closed.closure.note == close_body["note"]
+        assert (
+            request(core, "GET", f"/api/ui/incidents/{closed.id}").json()["incident"][
+                "status"
+            ]
+            == "closed"
+        )
         assert any(
             row["action"] == "incident_closed"
             and row["incident_id"] == incident.id
@@ -176,14 +214,14 @@ def run() -> None:
         print(f"OK S8 incident closed by {person}: {closed.id} (audited)", flush=True)
         stats: dict[str, Any] = request(model, "GET", "/stats").json()
         assert not stats["errors"], stats
-        for actor in ("sentinel", "detective", "skeptic", "reporter"):
+        for actor in ("sentinel", "detective", "skeptic", "reporter", "selleros"):
             assert stats["calls"].get(actor, 0) > 0, stats
         print(
             f"OK offline model calls: {stats['calls']}; unexpected requests: 0",
             flush=True,
         )
         print(
-            "Compose S8 e2e passed (3 Detectives; sim injection -> eye-data -> investigation -> report -> recovered -> human close).",
+            "Compose S8 e2e passed (React/nginx; 3 Detectives; S8 -> investigation -> report -> SellerOS approval -> recovered -> human close).",
             flush=True,
         )
 

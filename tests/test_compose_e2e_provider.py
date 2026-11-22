@@ -61,7 +61,8 @@ def test_empty_candidates_submit_no_decisions(client: TestClient) -> None:
     ChatCompletion.model_validate(response.json())
 
 
-def test_detective_pydanticai_output_tool(client: TestClient) -> None:
+def test_detective_pydanticai_output_tool(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(provider, "affected_sellers", lambda: ["S-001"])
     body = completion(
         "detective",
         {
@@ -74,6 +75,7 @@ def test_detective_pydanticai_output_tool(client: TestClient) -> None:
         [
             {"summary": "Measured delta"},
             {"summary": "Fresh data"},
+            {"summary": "SellerOS consulted"},
             {"summary": "Board updated"},
             {"summary": "Skeptic reviewed"},
         ],
