@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import timedelta
 
@@ -72,6 +73,16 @@ def test_excluded_hours(store: IncidentStore, status: str) -> None:
 
 def test_empty_store_has_no_excluded_hours(store: IncidentStore) -> None:
     assert store.excluded_hours(make_incident_s7().entry.ts) == set()
+
+
+def test_thread_queries_do_not_replace_another_threads_result(
+    store: IncidentStore,
+) -> None:
+    with ThreadPoolExecutor(max_workers=1) as worker:
+        for _ in range(5):
+            query = store.db.execute("SELECT 'http-result'")
+            assert worker.submit(store.all).result() == []
+            assert query.fetchone() == ("http-result",)
 
 
 @pytest.mark.parametrize("chain", [False, True])

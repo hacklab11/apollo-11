@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Lock, local
 from uuid import uuid4
 
 import duckdb
@@ -50,7 +51,10 @@ class IncidentStore:
     ) -> None:
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = duckdb.connect(str(path))
+        self._connection = duckdb.connect(str(path))
+        self._thread = local()
+        self._cursor_lock = Lock()
+        self._cursors: list[duckdb.DuckDBPyConnection] = []
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS incidents (id VARCHAR PRIMARY KEY, incident JSON, trigger_id VARCHAR, ticks INTEGER DEFAULT 0)"
         )
@@ -72,7 +76,17 @@ class IncidentStore:
         self.settings = settings or ReporterSettings()
 
     def close(self) -> None:
-        self.db.close()
+        for cursor in self._cursors:
+            cursor.close()
+        self._connection.close()
+
+    @property
+    def db(self) -> duckdb.DuckDBPyConnection:
+        if not hasattr(self._thread, "cursor"):
+            with self._cursor_lock:
+                self._thread.cursor = self._connection.cursor()
+                self._cursors.append(self._thread.cursor)
+        return self._thread.cursor
 
     def as_v2(self, incident: Incident) -> IncidentV2:
         data = incident.model_dump(exclude={"normal_ticks", "resolved_ts"})
