@@ -228,6 +228,38 @@ def _read_records(path: Path) -> str:
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
+def _fingerprint_value(value: Any) -> Any:
+    if isinstance(value, float):
+        # BLAS backends can disagree in the last bits of computed tool results.
+        rounded = round(value, 10)
+        return 0.0 if rounded == 0 else rounded
+    if isinstance(value, dict):
+        return {key: _fingerprint_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_fingerprint_value(item) for item in value]
+    if isinstance(value, str) and value.lstrip().startswith(("{", "[")):
+        try:
+            parsed, end = json.JSONDecoder().raw_decode(value.lstrip())
+        except ValueError:
+            return value
+        suffix = value.lstrip()[end:]
+        return (
+            json.dumps(
+                _fingerprint_value(parsed), sort_keys=True, separators=(",", ":")
+            )
+            + suffix
+        )
+    return value
+
+
+def _request_fingerprint(identity: dict[str, Any]) -> str:
+    # Tool results and user context contain JSON strings, not just nested objects.
+    digest = json.dumps(
+        _fingerprint_value(identity), sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(digest.encode()).hexdigest()
+
+
 class LLMClient:
     def __init__(
         self,
@@ -401,7 +433,8 @@ class LLMClient:
         if tool_choice["type"] != "auto":
             identity["tool_choice"] = tool_choice
         digest = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-        key = hashlib.sha256(digest.encode()).hexdigest()
+        legacy_key = hashlib.sha256(digest.encode()).hexdigest()
+        key = _request_fingerprint(identity)
         path = Path(self.settings.cache_path)
         response = None
         if self.settings.mode == "replay":
@@ -409,7 +442,7 @@ class LLMClient:
             if records:
                 for line in records.splitlines():
                     entry = json.loads(line)
-                    if entry["key"] == key:
+                    if entry["key"] in {key, legacy_key}:
                         response = BetaMessage.model_validate(entry["response_json"])
                         break
             if response is None:
