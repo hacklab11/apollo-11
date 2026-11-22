@@ -277,6 +277,48 @@ async def test_data_unavailable_retries_and_preserves_board(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error", [ValueError, KeyError, DataUnavailable])
+async def test_failed_tool_calls_are_recorded(
+    world: duckdb.DuckDBPyConnection,
+    monkeypatch: pytest.MonkeyPatch,
+    error: type[Exception],
+) -> None:
+    seed(world, "s3")
+    registry = load_registry(world)
+
+    def fail(*args: object) -> None:
+        raise error("Tool failed")
+
+    monkeypatch.setattr("eye.agents.detective._WindowTools.baseline", fail)
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(message, ModelResponse) for message in messages):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("baseline_compare", {"metric": "search_conversion"})
+                ]
+            )
+        name = next(t.name for t in info.output_tools if t.name.endswith("GaveUp"))
+        return ModelResponse(parts=[ToolCallPart(name, {"reason": "Tool failed"})])
+
+    trail = AsyncMock()
+    await Detective(
+        world,
+        registry,
+        make_graph(registry, "s3"),
+        model=FunctionModel(respond, model_name="detective"),
+    ).investigate(anomaly("s3"), trail)
+    steps = [call.args[0] for call in trail.await_args_list]
+    failed = [step for step in steps if step.tool == "baseline_compare"]
+    assert len(failed) == 1
+    assert failed[0].action == "tool_call"
+    assert failed[0].input == {"metric": "search_conversion"}
+    assert failed[0].output is None
+    assert failed[0].output_summary == f"{error.__name__}: tool baseline_compare failed"
+    assert [step.n for step in steps] == list(range(1, len(steps) + 1))
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "ending,expected", [("gave_up", "budget"), ("needs_input", "error")]
 )

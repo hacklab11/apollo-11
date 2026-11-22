@@ -529,6 +529,19 @@ class Detective:
                         result = fn(args)
                     output = await result if isawaitable(result) else result
                 except (ValueError, KeyError, DataUnavailable) as exc:
+                    await ctx.deps.emit(
+                        TrailStep(
+                            id=uuid4().hex,
+                            investigation_id=ctx.deps.investigation_id,
+                            n=0,
+                            real_ts=datetime.now(UTC),
+                            actor="detective",
+                            action="tool_call",
+                            tool=name,
+                            input=kwargs,
+                            output_summary=f"{type(exc).__name__}: tool {name} failed",
+                        )
+                    )
                     raise ModelRetry(str(exc)) from exc
                 if name != "update_hypotheses":
                     reference = f"ref-{next(references)}"
