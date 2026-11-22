@@ -9,8 +9,8 @@ dependency-injected tools, run exclusively through `agent_runtime.run_agent`.
 It applies `RunLimits`, pinned `PriceTable` pricing, `RunScope`, kill switch,
 and the A2A request budget. Provider construction lives in `eye.agents.models`;
 `build_model(settings, agent)` uses explicit `llm.fallback_models[agent]` in order.
-`price_table(settings)` uses `llm.prices`, including explicit zero prices for free
-models; unpriced models fail closed.
+`price_table(settings)` uses `llm.prices`; unpriced models fail closed except
+when the request uses an OpenRouter free route.
 The Opus default is pinned at $5/$25 per million input/output tokens.
 Seed submission model validation retries incomplete/duplicate decisions before
 any graph mutation. All non-done outcomes raise execution errors; the existing
@@ -32,8 +32,10 @@ Deterministic evidence checks still downgrade unsupported verdicts.
 `eye.agents.models.build_model` constructs the configured Anthropic or OpenAI-compatible
 model and uses `model_chain` with the agent's explicit `llm.fallback_models` list.
 Anthropic effort comes from `llm.effort.detective`. `price_table(settings)` reads
-`llm.prices` in USD per million tokens; unknown response model names fail closed.
-OpenRouter free routes and any routed response IDs need explicit zero-cost prices.
+`llm.prices` in USD per million tokens. If the reported model isn't pinned,
+the runtime uses the pinned rate of the route that answered, including after a
+fallback. An OpenRouter `:free` route or `openrouter/free` uses its own pinned
+rate if set, otherwise zero, regardless of the ID in the response.
 The offline gate configures the `detective` model name at zero cost.
 Legacy record/replay and process-local `LLMClient` counters do not apply to the
 Detective. Offline tests inject PydanticAI `FunctionModel` rather than credentials.

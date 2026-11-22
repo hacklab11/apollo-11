@@ -1,8 +1,10 @@
 """Per-run hard caps and the pinned price table used to cap cost."""
 
 from collections.abc import Mapping
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage, UsageLimits
 
 from agent_runtime.budget import Budget
@@ -49,17 +51,37 @@ class ModelPrice(BaseModel):
 
 
 class PriceTable(BaseModel):
-    """USD per million tokens, keyed by the model name a response reports."""
+    """Pinned USD per million tokens, keyed by reported or requested model name."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     prices: Mapping[str, ModelPrice]
 
-    def cost(self, model_name: str, usage: RequestUsage) -> float:
-        price = self.prices.get(model_name)
+    def cost(
+        self,
+        model_name: str,
+        usage: RequestUsage,
+        *,
+        requested: Model | None = None,
+    ) -> float:
+        requested_price = self.prices.get(requested.model_name) if requested else None
+        if requested is not None and _is_openrouter_free(requested):
+            # The requested free route determines billing, not the base model it reports.
+            price = requested_price
+            if price is None:
+                return 0.0
+        else:
+            price = self.prices.get(model_name) or requested_price
         if price is None:
             raise UnpricedModel(f"no pinned price for model {model_name!r}")
         return (
             usage.input_tokens * price.input_per_mtok
             + usage.output_tokens * price.output_per_mtok
         ) / 1_000_000
+
+
+def _is_openrouter_free(model: Model) -> bool:
+    if model.model_name != "openrouter/free" and not model.model_name.endswith(":free"):
+        return False
+    url = urlsplit(str(model.base_url or ""))
+    return url.scheme == "https" and url.hostname == "openrouter.ai"
