@@ -15,8 +15,10 @@ _configured = False
 
 
 def redact_pii(item: StringValue) -> str:
-    value = re.sub(r"[\w.+-]{1,128}@[\w.-]{1,128}\.[A-Za-z]{2,}", "[email]", item.value)
-    return re.sub(r"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[phone]", value)
+    value = re.sub(
+        r"[\w.+-]{1,128}@[\w.-]{1,128}\.[A-Za-z]{2,}", "[redacted]", item.value
+    )
+    return re.sub(r"(?<!\w)\+?\d[\d ().-]{7,}\d(?!\w)", "[redacted]", value)
 
 
 def setup_telemetry() -> bool:
@@ -40,6 +42,7 @@ def setup_telemetry() -> bool:
         )
         logfire.instrument_pydantic_ai()
         logfire.instrument_httpx()
+        loop_counter.add(0)
         _configured = True
     return True
 

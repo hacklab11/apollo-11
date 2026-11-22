@@ -21,6 +21,103 @@ SCENARIOS = TypeAdapter(list[ScenarioState])
 REPORT_TITLE = "Electronics price-change investigation"
 
 
+def verify_telemetry(run_id: str) -> None:
+    expected = {"eye-core", "sentinel", "detective", "skeptic", "reporter"}
+    rule_uids = {
+        "eye-cost-spike",
+        "eye-loop-rate",
+        "eye-failure-rate",
+        "eye-escalation-rate",
+    }
+    deadline = time.monotonic() + 90
+    detail = "No trace ingested"
+    with httpx.Client(
+        base_url="http://lgtm:3000", auth=("admin", "admin"), timeout=10
+    ) as grafana:
+        while time.monotonic() < deadline:
+            rules = request(grafana, "GET", "/api/v1/provisioning/alert-rules").json()
+            assert rule_uids <= {rule["uid"] for rule in rules}, rules
+            metrics_prefix = "/api/datasources/proxy/uid/prometheus/api/v1"
+            names = request(
+                grafana, "GET", f"{metrics_prefix}/label/__name__/values"
+            ).json()["data"]
+            metrics_ready = {
+                "agent_cost_USD",
+                "agent_end_state_total",
+                "agent_loop_detected_total",
+            } <= set(names)
+            prefix = "/api/datasources/proxy/uid/tempo"
+            found = (
+                request(
+                    grafana,
+                    "GET",
+                    f"{prefix}/api/search",
+                    params={
+                        "q": '{ name = "orchestrator.run_hour" && span.agent.run_id = "'
+                        + run_id
+                        + '" }',
+                    },
+                )
+                .json()
+                .get("traces", [])
+            )
+            if found:
+                assert len(found) == 1, found
+                trace_id = found[0]["traceID"]
+                data = request(grafana, "GET", f"{prefix}/api/traces/{trace_id}").json()
+                batches = data.get("batches", data.get("resourceSpans", []))
+                services = {
+                    attr["value"]["stringValue"]
+                    for batch in batches
+                    for attr in batch.get("resource", {}).get("attributes", [])
+                    if attr["key"] == "service.name"
+                }
+                spans = [
+                    span
+                    for batch in batches
+                    for scope in batch.get("scopeSpans", [])
+                    for span in scope["spans"]
+                ]
+                detail = f"trace={trace_id}, services={services}"
+                if expected <= services and metrics_ready:
+                    roots = [
+                        span
+                        for span in spans
+                        if span["name"] == "orchestrator.run_hour"
+                    ]
+                    assert len(roots) == 1, roots
+                    assert not roots[0].get("parentSpanId"), roots
+                    assert any(
+                        any(
+                            a["key"] == "gen_ai.usage.cost"
+                            for a in s.get("attributes", [])
+                        )
+                        for s in spans
+                    )
+                    print(
+                        f"OK S8 single Tempo trace {trace_id}: services={','.join(sorted(services))}",
+                        flush=True,
+                    )
+                    print("OK Grafana loaded 4 provisioned alert rules", flush=True)
+                    for rule in rules:
+                        if rule["uid"] in rule_uids:
+                            expression = rule["data"][0]["model"]["expr"]
+                            result = request(
+                                grafana,
+                                "GET",
+                                f"{metrics_prefix}/query",
+                                params={"query": expression},
+                            ).json()
+                            assert result["status"] == "success", result
+                    print(
+                        "OK Prometheus metric names and all 4 alert queries verified",
+                        flush=True,
+                    )
+                    return
+            time.sleep(2)
+    raise AssertionError(f"Telemetry ingestion timed out: {detail}")
+
+
 def request(
     client: httpx.Client, method: str, path: str, **kwargs: Any
 ) -> httpx.Response:
@@ -144,6 +241,7 @@ def run() -> None:
             f"segment={incident.entry.segment}, report={incident.title!r}",
             flush=True,
         )
+        investigation_run_id = f"hour-{DEFAULT_TENANT}-{status.sim_ts.isoformat()}"
         close_path = f"/api/incidents/{incident.id}/close"
         person = "local-operator"
         identity = {"X-Eye-Person": "spoofed-browser-identity"}
@@ -225,6 +323,7 @@ def run() -> None:
             for row in request(core, "GET", "/api/audit").json()
         ), "Human closure must be audited"
         print(f"OK S8 incident closed by {person}: {closed.id} (audited)", flush=True)
+        verify_telemetry(investigation_run_id)
         stats: dict[str, Any] = request(model, "GET", "/stats").json()
         assert not stats["errors"], stats
         for actor in (

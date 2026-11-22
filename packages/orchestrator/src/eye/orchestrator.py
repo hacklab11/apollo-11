@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from dbos import DBOS, DBOSConfiguredInstance, SetEnqueueOptions, SetWorkflowID
 from opentelemetry import trace
+from opentelemetry.context import Context
 from pydantic import BaseModel
 
 from agent_runtime.tracing import inject_trace_context
@@ -434,7 +435,9 @@ class Orchestrator(DBOSConfiguredInstance):
     @DBOS.workflow()
     async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
         with trace.get_tracer(__name__).start_as_current_span(
-            "orchestrator.run_hour", attributes={"agent.run_id": run_id}
+            "orchestrator.run_hour",
+            context=Context(),
+            attributes={"agent.run_id": run_id},
         ):
             carrier: dict[str, str] = {}
             inject_trace_context(carrier)
