@@ -3,7 +3,10 @@ import json
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from secrets import token_urlsafe
+from typing import Any
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -102,6 +105,32 @@ def test_feed_holds_revert_until_authorized(tmp_path: Path) -> None:
     assert feed.pending() == []
     allowed.add("queued")
     assert [action.kind for action in feed.pending()] == ["set_price"]
+
+
+def test_feed_uses_configured_core_port(
+    small_sim_settings: Settings, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    token = token_urlsafe()
+    monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", token)
+    monkeypatch.delenv("EYE_CORE_URL", raising=False)
+    urls = []
+
+    def verify(url: str, **kwargs: Any) -> httpx.Response:
+        urls.append(url)
+        assert kwargs["headers"]["Authorization"] == f"Bearer {token}"
+        return httpx.Response(204)
+
+    monkeypatch.setattr(httpx, "get", verify)
+    small_sim_settings.ports.core = 8911
+    with closing(Simulator(small_sim_settings, db_path=":memory:")) as sim:
+        write_records(
+            sim.selleros_export.path.with_name("actions.jsonl"),
+            journal_record(idempotency_key="queued"),
+        )
+        sim.step()
+    assert urls == [
+        "http://127.0.0.1:8911/api/approvals/seller-revert/queued/permission"
+    ]
 
 
 @pytest.mark.parametrize("price", [0, -1, float("inf"), float("nan")])

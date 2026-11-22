@@ -14,6 +14,7 @@ supply their own store to `create_app`.
 
 For a price-revert alert, SellerOS registers each eligible price change with
 the orchestrator at `EYE_CORE_URL` (default `http://127.0.0.1:8000`).
+Set that URL for SellerOS if Core uses a nondefault local port.
 Set distinct bearer credentials: `EYE_SELLER_REVERT_SERVICE_TOKEN` on Core,
 SellerOS and the demo simulator; `EYE_SELLER_REVERT_OPERATOR_TOKEN` on Core only.
 With Compose, export these in the launch environment, not the shared `.env`.

@@ -60,7 +60,8 @@ class Simulator:
         self.selleros_export = SellerOSExport(self.world, settings.sim.seed)
         self.seller_action_feed = seller_action_feed
         self._journal_feed = JournalSellerActionFeed(
-            self.selleros_export.path.with_name("actions.jsonl")
+            self.selleros_export.path.with_name("actions.jsonl"),
+            core_port=settings.ports.core,
         )
         self._seller_action_keys: set[str] = set()
         self.pre_demand_hooks: list[Hook] = []

@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from threading import Lock
 from typing import Literal, Protocol, Self
@@ -61,11 +62,13 @@ class _JournalRecord(BaseModel):
         return self
 
 
-def core_allows_revert(approval_id: str) -> bool:
+def core_allows_revert(approval_id: str, *, core_port: int) -> bool:
     token = os.environ.get("EYE_SELLER_REVERT_SERVICE_TOKEN")
     if not token:
         return False
-    core_url = os.environ.get("EYE_CORE_URL", "http://127.0.0.1:8000").rstrip("/")
+    core_url = os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{core_port}").rstrip(
+        "/"
+    )
     try:
         response = httpx.get(
             f"{core_url}/api/approvals/seller-revert/{quote(approval_id, safe='')}/permission",
@@ -83,10 +86,13 @@ class JournalSellerActionFeed:
         self,
         path: Path,
         *,
-        authorize_revert: Callable[[str], bool] = core_allows_revert,
+        authorize_revert: Callable[[str], bool] | None = None,
+        core_port: int = 8000,
     ) -> None:
         self.path = path
-        self._authorize_revert = authorize_revert
+        self._authorize_revert = authorize_revert or partial(
+            core_allows_revert, core_port=core_port
+        )
         self._acked: set[str] = set()
         self._lock = Lock()
 
