@@ -16,11 +16,11 @@ export function CausalGraph() {
     const layout = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
     layout.setGraph({ rankdir: "LR", ranksep: 100, nodesep: 30 });
     const nodes = (query.data?.nodes ?? []).filter(
-      (node) => typeof node.name === "string",
+      (node) => typeof node.id === "string",
     );
-    const names = new Set(nodes.map((node) => String(node.name)));
+    const names = new Set(nodes.map((node) => String(node.id)));
     nodes.forEach((node) =>
-      layout.setNode(String(node.name), { width: 190, height: 65 }),
+      layout.setNode(String(node.id), { width: 190, height: 65 }),
     );
     const edges = (query.data?.edges ?? []).filter(
       (edge) => names.has(edge.src) && names.has(edge.dst),
@@ -29,7 +29,7 @@ export function CausalGraph() {
     dagre.layout(layout);
     return {
       nodes: nodes.map((node) => {
-        const id = String(node.name),
+        const id = String(node.id),
           position = layout.node(id);
         return {
           id,
