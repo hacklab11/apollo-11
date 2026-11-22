@@ -35,7 +35,7 @@ from starlette.routing import BaseRoute, Route
 
 from agent_runtime import RunLimits, RunScope, end_state_outputs, run_agent
 from agent_runtime.configured_models import build_model, price_table
-from agent_runtime.tracing import instrument_app, setup_telemetry
+from agent_runtime.tracing import configure_logging, instrument_app
 from eye.config import Settings, load_settings
 from eye.contracts_v2 import SpecialistRequest, SpecialistResponse
 from eye.specialists import discovery, growth, marketplace
@@ -284,7 +284,7 @@ def create_app(
 
 
 def main() -> None:
-    setup_telemetry()
+    configure_logging()
     settings = load_settings()
     uvicorn.run(
         instrument_app(create_app(settings)),

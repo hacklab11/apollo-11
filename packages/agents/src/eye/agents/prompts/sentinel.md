@@ -23,6 +23,9 @@ recent events, and open incidents. Call tools only if that context leaves a deci
 - `get_graph`: trace directed edges from upstream drivers to downstream outcomes.
   Do not treat a rejected edge or a breakdown self-loop as causal evidence.
 
+You have at most two rounds of tool calls. After that, only `submit` is available:
+decide every candidate from the evidence you have.
+
 # Decision rules
 
 1. `defer` if completeness is below the supplied minimum. Incomplete data cannot establish

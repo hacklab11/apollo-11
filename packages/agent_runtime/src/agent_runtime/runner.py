@@ -1,6 +1,7 @@
 """The single entry point agents use to run a model: every cap, end state and guard applied."""
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,8 +36,11 @@ from agent_runtime.tracing import (
     cost_histogram,
     end_state_counter,
     loop_counter,
+    redact_text,
     tracer,
 )
+
+_LOG = logging.getLogger("agent_runtime.trace")
 
 
 def end_state_outputs[T](result_type: type[T] | ToolOutput[T]) -> OutputSpec[Any]:
@@ -94,6 +98,19 @@ async def run_agent[T](
         span.set_attribute("gen_ai.usage.cost", outcome.result.usage.cost_usd)
         if status in ("failed", "gave_up"):
             span.set_status(Status(StatusCode.ERROR, outcome.result.reason))
+        _LOG.log(
+            logging.WARNING if status in ("failed", "gave_up") else logging.INFO,
+            "agent run_end run=%s end_state=%s reason=%s requests=%d tool_calls=%d "
+            "tokens_in=%d tokens_out=%d cost_usd=%.4f",
+            scope.run_id,
+            status,
+            redact_text(str(outcome.result.reason or ""))[:500],
+            guard.requests,
+            guard.tool_calls,
+            guard.input_tokens,
+            guard.output_tokens,
+            outcome.result.usage.cost_usd,
+        )
         end_state_counter.add(1, {"status": status})
         cost_histogram.record(outcome.result.usage.cost_usd)
         return outcome

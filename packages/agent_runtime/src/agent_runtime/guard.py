@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
 
@@ -20,6 +22,31 @@ from agent_runtime.idempotency import (
 from agent_runtime.kill_switch import KillSwitch, RunScope
 from agent_runtime.limits import PriceTable
 from agent_runtime.models import serving_model
+from agent_runtime.tracing import redact_text
+
+_LOG = logging.getLogger("agent_runtime.trace")
+
+
+def _short(value: Any, limit: int = 400) -> str:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    return redact_text(" ".join(text.split()))[:limit]
+
+
+def _parts(response: ModelResponse) -> list[str]:
+    """One short line per response part: reasoning, text or tool call."""
+    parts = []
+    for part in response.parts:
+        if isinstance(part, ThinkingPart):
+            parts.append(
+                f"reasoning[{len(part.content)} chars]: {_short(part.content)}"
+            )
+        elif isinstance(part, TextPart):
+            parts.append(f"text: {_short(part.content)}")
+        elif isinstance(part, ToolCallPart):
+            parts.append(f"call {part.tool_name}({_short(part.args_as_dict())})")
+    return parts
 
 
 @dataclass
@@ -68,6 +95,17 @@ class RunGuard(AbstractCapability[Any]):
             response.usage,
             requested=serving_model(request_context.model, response),
         )
+        if _LOG.isEnabledFor(logging.INFO):
+            _LOG.info(
+                "agent model_response run=%s request=%d model=%s tokens_in=%d "
+                "tokens_out=%d parts=%s",
+                self.scope.run_id,
+                self.requests,
+                response.model_name,
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                json.dumps(_parts(response)),
+            )
         if self.cost_usd > self.max_cost_usd:
             raise CostLimitExceeded(
                 f"cost ${self.cost_usd:.6f} exceeds cap ${self.max_cost_usd:.6f}"
@@ -86,6 +124,30 @@ class RunGuard(AbstractCapability[Any]):
         await self._check_kill()
         self.tool_calls += 1
         self._track_repeats(call)
+        try:
+            result = await self._execute(call, tool_def, args, handler)
+        except Exception as exc:
+            _LOG.warning(
+                "agent tool_error run=%s tool=%s args=%s error=%s: %s",
+                self.scope.run_id,
+                call.tool_name,
+                _short(call.args_as_dict()),
+                type(exc).__name__,
+                _short(str(exc)),
+            )
+            raise
+        _LOG.info(
+            "agent tool_result run=%s tool=%s args=%s result=%s",
+            self.scope.run_id,
+            call.tool_name,
+            _short(call.args_as_dict()),
+            _short(result),
+        )
+        return result
+
+    async def _execute(
+        self, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+    ) -> Any:
         if not (tool_def.metadata or {}).get(IDEMPOTENT_METADATA_KEY):
             return await handler(args)
         if self.idempotency is None:

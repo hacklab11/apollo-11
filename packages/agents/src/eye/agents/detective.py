@@ -546,13 +546,6 @@ class Detective:
                             output_summary=f"{type(exc).__name__}: tool {name} failed",
                         )
                     )
-                    _LOG.warning(
-                        "detective tool_failed investigation=%s tool=%s args=%s error=%s",
-                        ctx.deps.investigation_id,
-                        name,
-                        redact_text(json.dumps(kwargs, default=str))[:500],
-                        redact_text(str(exc))[:500],
-                    )
                     raise ModelRetry(str(exc)) from exc
                 if name != "update_hypotheses":
                     reference = f"ref-{next(references)}"

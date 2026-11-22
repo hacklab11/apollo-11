@@ -1,7 +1,10 @@
 """W3C trace context propagation and run-level OTel spans and metrics."""
 
+import json
+import logging
 import os
 import re
+import sys
 from collections.abc import MutableMapping
 
 import logfire
@@ -48,6 +51,32 @@ def setup_telemetry() -> bool:
         loop_counter.add(0)
         _configured = True
     return True
+
+
+class JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(
+            {
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+        )
+
+
+def configure_logging() -> None:
+    """JSON logs on stdout and, with an OTLP endpoint, in Loki linked to the trace.
+
+    `EYE_LOG_LEVEL` is a Python level name (default WARNING; unknown names use WARNING).
+    """
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(JsonLogFormatter())
+    handlers: list[logging.Handler] = [handler]
+    if setup_telemetry():
+        handlers.append(logfire.LogfireLoggingHandler())
+    name = os.environ.get("EYE_LOG_LEVEL", "WARNING").upper()
+    level = logging.getLevelNamesMapping().get(name, logging.WARNING)
+    logging.basicConfig(level=level, handlers=handlers, force=True)
 
 
 def instrument_app(app: ASGIApp) -> ASGIApp:

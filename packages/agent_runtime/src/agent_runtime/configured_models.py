@@ -61,10 +61,11 @@ class _PassThrough(JsonSchemaTransformer):
         return schema
 
 
-def _without_property_names(profile: ModelProfile) -> ModelProfile:
-    """Move `propertyNames` into the description; some OpenAI-compatible backends reject it.
+def _compatible_profile(profile: ModelProfile) -> ModelProfile:
+    """Tool schemas that OpenAI-compatible backends accept.
 
-    Pydantic still validates the keys when the tool call arrives.
+    Some backends reject `propertyNames` (moved into the description; Pydantic still
+    validates the keys) or a mix of strict and non-strict tools (strict is turned off).
     """
     base = profile.get("json_schema_transformer") or _PassThrough
 
@@ -79,7 +80,11 @@ def _without_property_names(profile: ModelProfile) -> ModelProfile:
                 )
             return super().transform(schema)
 
-    return {**profile, "json_schema_transformer": Transformer}
+    return {
+        **profile,
+        "json_schema_transformer": Transformer,
+        "openai_supports_strict_tool_definition": False,
+    }
 
 
 def build_model(
@@ -105,7 +110,7 @@ def build_model(
             provider=OpenAIProvider(
                 base_url=settings.base_url, api_key=os.environ[settings.api_key_env]
             ),
-            profile=_without_property_names,
+            profile=_compatible_profile,
         )
 
     return model_chain(

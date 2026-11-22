@@ -130,9 +130,11 @@ def request(
 
 
 def step(client: httpx.Client, last_tick: int) -> Status:
-    status = Status.model_validate_json(
-        request(client, "POST", "/api/clock/step").content
-    )
+    response = client.post("/api/clock/step")
+    if response.status_code == 409:  # the running clock or the UI is mid-step
+        time.sleep(1)
+        response = client.get("/api/status")
+    status = Status.model_validate_json(response.raise_for_status().content)
     assert not status.llm_stop_reason, status
     if status.tick != last_tick:
         print(
@@ -143,10 +145,23 @@ def step(client: httpx.Client, last_tick: int) -> Status:
     return status
 
 
-def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
+def incident_ids(client: httpx.Client) -> set[str]:
+    return {
+        item.id
+        for item in INCIDENTS.validate_json(
+            request(client, "GET", "/api/incidents").content
+        )
+    }
+
+
+def reported(
+    client: httpx.Client, typo_ts: datetime, earlier: set[str]
+) -> Incident | None:
     for item in INCIDENTS.validate_json(
         request(client, "GET", "/api/incidents").content
     ):
+        if item.id in earlier:  # left by a previous run on the same stack
+            continue
         if item.entry.ts < typo_ts:
             raise AssertionError(f"Incident predates S8: {item.id}")
         if item.status not in {"open", "persisting"} or item.title != REPORT_TITLE:
@@ -186,6 +201,40 @@ def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
     return None
 
 
+OPEN = {"open", "persisting", "investigating", "mitigating"}
+
+
+def recover_earlier(client: httpx.Client, status: Status) -> Status:
+    """Let incidents left open by an interrupted run recover; the scripted
+    Sentinel opens no new investigation while one is open."""
+
+    def still_open() -> list[str]:
+        return [
+            item.id
+            for item in INCIDENTS.validate_json(
+                request(client, "GET", "/api/incidents").content
+            )
+            if item.status in OPEN
+        ]
+
+    stale = still_open()
+    if not stale:
+        return status
+    for row in request(client, "GET", "/api/approvals/seller-revert").json():
+        if row["status"] == "pending" and row["args"]["incident_id"] in stale:
+            request(
+                client, "POST", f"/api/approvals/{row['id']}", json={"approve": True}
+            )
+    deadline = time.monotonic() + 300
+    while stale := still_open():
+        assert time.monotonic() < deadline, (
+            f"Earlier incidents never recovered: {stale}"
+        )
+        status = step(client, status.tick)
+    print("OK incidents left by an earlier run recovered", flush=True)
+    return status
+
+
 def run() -> None:
     with (
         httpx.Client(base_url="http://web:8080", timeout=120) as core,
@@ -210,13 +259,20 @@ def run() -> None:
         assert "Eye of the System" in html and 'type="module"' in html
         assert request(core, "GET", "/api/ui/status").json()["data_complete_ts"]
         print("OK React UI and typed API served on the same nginx origin", flush=True)
-        status = Status.model_validate_json(request(core, "GET", "/api/status").content)
-        assert status.tick == 0 and status.paused, "Use a fresh stack and volumes"
-        assert request(core, "GET", "/api/incidents").json() == []
+        # Repeatable on the same stack: step the clock by hand, re-inject S8,
+        # and ignore incidents, approvals and model calls from earlier runs.
+        status = Status.model_validate_json(
+            request(core, "POST", "/api/clock/pause").content
+        )
+        earlier = incident_ids(core)
+        status = recover_earlier(core, status)
         sim_status = SimStatus.model_validate_json(
             request(sim, "GET", "/status").content
         )
-        assert not sim_status.active_scenarios, "Use a fresh simulator volume"
+        if any(s.id == "S8" for s in sim_status.active_scenarios):
+            request(sim, "DELETE", "/scenarios/s8")
+            print("OK cleared S8 from an earlier run", flush=True)
+        stats_before: dict[str, Any] = request(model, "GET", "/stats").json()
         timeline = SCENARIOS.validate_json(
             request(sim, "POST", "/scenarios/s8").content
         )
@@ -230,9 +286,13 @@ def run() -> None:
         model.post(
             "/scenario", json={"investigate_after": typo_ts.isoformat()}
         ).raise_for_status()
-        deadline = time.monotonic() + 90
-        while (incident := reported(core, typo_ts)) is None:
-            if time.monotonic() >= deadline:
+        # Core can trail the simulator by days on a reused stack; judge by simulated time.
+        deadline = time.monotonic() + 900
+        while (incident := reported(core, typo_ts, earlier)) is None:
+            if (
+                status.sim_ts > typo_ts + timedelta(hours=12)
+                or time.monotonic() >= deadline
+            ):
                 raise AssertionError(
                     "S8 never reached investigated/reported state; "
                     f"Core={request(core, 'GET', '/api/status').text}; "
@@ -278,6 +338,7 @@ def run() -> None:
         assert all(
             row["status"] == "approved" and row["decided_by"] == person
             for row in decided
+            if row["args"]["incident_id"] == incident.id
         )
         print(
             f"OK {len(pending)} exact SellerOS price reverts approved; nginx stripped spoofed identity",
@@ -330,7 +391,7 @@ def run() -> None:
         print(f"OK S8 incident closed by {person}: {closed.id} (audited)", flush=True)
         verify_telemetry(investigation_run_id)
         stats: dict[str, Any] = request(model, "GET", "/stats").json()
-        assert not stats["errors"], stats
+        assert stats["errors"] == stats_before["errors"], stats
         for actor in (
             "sentinel",
             "detective",
@@ -338,7 +399,8 @@ def run() -> None:
             "reporter",
             "openai/gpt-oss-20b",
         ):
-            assert stats["calls"].get(actor, 0) > 0, stats
+            calls = stats["calls"].get(actor, 0)
+            assert calls > stats_before["calls"].get(actor, 0), stats
         print(
             f"OK offline model calls: {stats['calls']}; unexpected requests: 0",
             flush=True,

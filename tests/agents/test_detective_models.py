@@ -78,3 +78,5 @@ def test_openai_compatible_tool_schema_drops_property_names(
     segment = params.function_tools[0].parameters_json_schema["properties"]["segment"]
     assert "propertyNames" not in segment
     assert "country" in segment["description"]
+    # Mixed strict and non-strict tools are rejected by some providers (Azure).
+    assert model.profile.get("openai_supports_strict_tool_definition") is False

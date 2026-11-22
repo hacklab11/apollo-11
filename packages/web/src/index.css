@@ -196,7 +196,8 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .tile-message {
-    @apply flex h-28 items-center justify-center text-sm text-muted-foreground;
+    /* Same height as a loaded tile (value line + chart) so tiles do not jump. */
+    @apply flex h-[8.5rem] items-center justify-center text-sm text-muted-foreground;
   }
   .tile-incident {
     @apply mt-3 flex w-full cursor-pointer items-center gap-2 rounded-md bg-amber-100 px-2 py-1 text-left text-[11px] font-semibold text-amber-900 hover:bg-amber-200;

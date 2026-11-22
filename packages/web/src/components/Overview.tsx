@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import {
   Area,
@@ -157,6 +157,8 @@ function MetricTile({
         `/api/metrics/${encodeURIComponent(name)}?${params}`,
       ),
     enabled: !!until,
+    // Keep the last chart while the next hour's window loads, so tiles do not flicker.
+    placeholderData: keepPreviousData,
     refetchInterval: 10_000,
   });
   const points = (query.data?.points ?? []).map((p) => ({
@@ -178,7 +180,7 @@ function MetricTile({
           {metric?.unit === "eur" ? "EUR" : metric?.unit}
         </span>
       </div>
-      {query.isError ? (
+      {query.isError && !query.data ? (
         <p role="alert" className="tile-message">
           Unavailable. Retrying…
         </p>
