@@ -39,7 +39,6 @@ from eye.config import Settings, load_settings
 from eye.contracts_v2 import SpecialistRequest, SpecialistResponse
 from eye.specialists import discovery, growth, marketplace
 from eye.specialists.tools import DataApiUnavailable, DataClient, DataResult, Evidence
-
 from eye_auth.client import sign_card
 from eye_auth.trust import A2AAuthMiddleware, SkillGuard, granted_scopes
 
@@ -95,6 +94,7 @@ def authorized_tools(
         )
 
     return [authorize(tool) for tool in tools]
+
 
 async def healthz(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})

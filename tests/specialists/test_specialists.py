@@ -7,7 +7,12 @@ from a2a.types.a2a_pb2 import TaskState
 from conftest import data_client, s1_request, s7_request, send, settings
 from google.protobuf.json_format import MessageToDict
 from pydantic_ai.exceptions import ModelAPIError
-from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelResponse,
+    RetryPromptPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import FunctionModel
 
 from eye.a2a_client import A2AClient
@@ -140,6 +145,49 @@ async def test_growth_answers_s1(specialists, monkeypatch) -> None:
     assert "ads/pacing" in response.data_used
     assert "ads_pacing" in {step["tool"] for step in steps}
     assert all(set(step) == {"tool", "summary"} for step in steps)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [{}, {"start": "invalid"}, {"country": "XX"}])
+async def test_invalid_tool_arguments_are_retried(
+    specialists, monkeypatch, invalid
+) -> None:
+    request = s1_request()
+    valid = {
+        "start": request.window_start_ts.isoformat(),
+        "end": request.window_end_ts.isoformat(),
+    }
+    calls = 0
+
+    def respond(messages, info):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            args = {} if not invalid else {**valid, **invalid}
+            return ModelResponse(parts=[ToolCallPart("marketing", args)])
+        if calls == 2:
+            assert any(isinstance(part, RetryPromptPart) for part in messages[-1].parts)
+            return ModelResponse(parts=[ToolCallPart("marketing", valid)])
+        assert any(isinstance(part, ToolReturnPart) for part in messages[-1].parts)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "submit", {"agent": "growth", "answered": False, "findings": []}
+                )
+            ]
+        )
+
+    monkeypatch.setattr(
+        "eye.specialists.app.build_model",
+        lambda *_, **__: FunctionModel(respond, model_name="claude-opus-5-5"),
+    )
+    _, http = specialists
+    task = await send(http, "growth", request)
+    assert task.status.state == TaskState.TASK_STATE_COMPLETED, MessageToDict(
+        task.status
+    )
+    assert calls == 3
+    assert MessageToDict(task.artifacts[0].metadata)["steps"][0]["tool"] == "marketing"
 
 
 @pytest.mark.asyncio

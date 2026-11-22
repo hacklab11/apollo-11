@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
-from pydantic import AwareDatetime, BaseModel, Field
-from pydantic_ai import RunContext, Tool
+from pydantic import AwareDatetime, BaseModel, Field, ValidationError
+from pydantic_ai import ModelRetry, RunContext, Tool
 
 from eye.contracts_v2 import Category, Channel, Country, Platform, SellerTier
 
@@ -158,14 +158,23 @@ def _tool(
     input_model: type[Window],
     handler: Callable[[BaseModel], Awaitable[DataResult]],
 ) -> Tool[Evidence]:
-    async def call(ctx: RunContext[Evidence], args: BaseModel) -> DataResult:
+    async def call(ctx: RunContext[Evidence], **kwargs: Any) -> DataResult:
+        try:
+            args = input_model.model_validate(kwargs)
+        except ValidationError as exc:
+            raise ModelRetry(str(exc)) from exc
         result = await handler(args)
         ctx.deps.steps.append({"tool": name, "summary": result.summary})
         ctx.deps.used.add(result.endpoint)
         return result
 
-    call.__annotations__["args"] = input_model
-    return Tool(call, name=name, description=description, takes_ctx=True)
+    return Tool.from_schema(
+        call,
+        name=name,
+        description=description,
+        json_schema=input_model.model_json_schema(),
+        takes_ctx=True,
+    )
 
 
 def data_tool(
