@@ -1,4 +1,4 @@
-"""Deterministic graph evidence; scenario hours are supplied by the orchestrator."""
+"""Deterministic graph evidence; excluded hours are supplied by the caller."""
 
 from datetime import datetime, timedelta
 from itertools import product
@@ -140,13 +140,13 @@ def validate_identity(
     start: datetime | None = None,
     end: datetime | None = None,
     segments: list[dict[str, str]] | None = None,
-    scenario_hours: list[datetime] | None = None,
+    excluded_hours: list[datetime] | None = None,
 ) -> ValidationResult:
     parsed = parse_identity(identity)
     names = {parsed.target, *(t.name for t in parsed.terms)}
     start, end = _window(engine, start, end, sorted(names))
     shared = set.intersection(*(set(engine._registry.get(n).dimensions) for n in names))
-    excluded = set(scenario_hours or [])
+    excluded = set(excluded_hours or [])
     selections = [{}]
     if segments is None:
         dims = sorted(shared)
@@ -217,11 +217,11 @@ def validate_breakdown(
     dim: str,
     start: datetime | None = None,
     end: datetime | None = None,
-    scenario_hours: list[datetime] | None = None,
+    excluded_hours: list[datetime] | None = None,
 ) -> ValidationResult:
     start, end = _window(engine, start, end, [metric])
     definition = engine._metric(metric, [dim])
-    excluded = set(scenario_hours or [])
+    excluded = set(excluded_hours or [])
     total = _points(engine, metric, start, end, {}, excluded)
     series = engine.query_metric(metric, start, end, group_by=[dim])
     valid = {p.ts for s in series for p in s.points if p.completeness < 0.9}
@@ -271,12 +271,12 @@ def lagged_correlation(
     start: datetime | None = None,
     end: datetime | None = None,
     segment: dict[str, str] | None = None,
-    scenario_hours: list[datetime] | None = None,
+    excluded_hours: list[datetime] | None = None,
 ) -> CorrelationResult:
     if max_lag < 0:
         raise ValueError("max_lag must be nonnegative")
     start, end = _window(engine, start, end, [src, dst])
-    excluded = set(scenario_hours or [])
+    excluded = set(excluded_hours or [])
 
     def differences(name: str) -> dict[datetime, float]:
         raw = _points(
@@ -323,7 +323,7 @@ def lagged_correlation(
         best_lag=best["lag"] if best else None,
         corr=best["corr"] if best else None,
         n=best["n"] if best else 0,
-        evidence={"lags": evidence, "scenario_hours": len(excluded)},
+        evidence={"lags": evidence, "excluded_hours": len(excluded)},
         summary=f"Best lag {best['lag']}h, corr {best['corr']:.6g}, n={best['n']}"
         if best
         else "0 usable correlations",

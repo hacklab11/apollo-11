@@ -2,7 +2,6 @@
 
 import json
 import os
-from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Annotated, Any
 
@@ -11,7 +10,7 @@ import uvicorn
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
-from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -26,8 +25,6 @@ from eye.contracts import (
     GraphView,
     Incident,
     IncidentStatus,
-    ScenarioId,
-    ScenarioState,
     Series,
     TrailStep,
     Verdict,
@@ -39,7 +36,6 @@ INSTRUCTIONS = (
     "Monitoring system for the marketplace. Start with system_status and "
     "list_incidents. Incidents contain evidence trails."
 )
-SCENARIO_TOOLS = frozenset({"list_scenarios", "inject_scenario", "clear_scenario"})
 MAX_INCIDENTS = 50
 MAX_TRAIL_STEPS = 60
 MAX_GRAPH_DEPTH = 3
@@ -51,7 +47,6 @@ TIMEOUT = httpx.Timeout(30.0, read=90.0)
 
 _INCIDENTS = TypeAdapter(list[Incident])
 _TRAIL = TypeAdapter(list[TrailStep])
-_SCENARIOS = TypeAdapter(list[ScenarioState])
 
 READ_ONLY = ToolAnnotations(read_only_hint=True, open_world_hint=False)
 WRITES = ToolAnnotations(read_only_hint=False, open_world_hint=False)
@@ -108,20 +103,6 @@ def _error_message(response: httpx.Response) -> str:
     return detail if isinstance(detail, str) else json.dumps(detail)
 
 
-class _MonitoringServer(MCPServer):
-    """Lists the scenario tools only while core reports a scenario source."""
-
-    def __init__(self, has_scenarios: Callable[[], Awaitable[bool]]) -> None:
-        super().__init__(NAME, instructions=INSTRUCTIONS, log_level="WARNING")
-        self._has_scenarios = has_scenarios
-
-    async def list_tools(self) -> list[Tool]:
-        tools = await super().list_tools()
-        if await self._has_scenarios():
-            return tools
-        return [tool for tool in tools if tool.name not in SCENARIO_TOOLS]
-
-
 def create_server(
     core_url: str, transport: httpx.AsyncBaseTransport | None = None
 ) -> MCPServer:
@@ -145,13 +126,7 @@ def create_server(
             )
         return response.json()
 
-    async def has_scenarios() -> bool:
-        try:
-            return bool(_SCENARIOS.validate_python(await call("GET", "/api/scenarios")))
-        except (ToolError, ValidationError):
-            return False
-
-    server = _MonitoringServer(has_scenarios)
+    server = MCPServer(NAME, instructions=INSTRUCTIONS, log_level="WARNING")
 
     @server.custom_route("/healthz", methods=["GET"])
     async def healthz(_: Request) -> JSONResponse:
@@ -162,15 +137,14 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def system_status() -> CallToolResult:
-        """Return the data clock and tick, agent health, active scenarios and
+        """Return the data clock and tick, agent health and
         LLM mode. Use it first to see whether the system is running."""
         state = await status()
         healthy = sum(agent.ok for agent in state.agents.values())
-        active = ", ".join(state.active_scenarios) or "none"
         return _result(
             f"Data as of {state.sim_ts.isoformat()} (tick {state.tick}, "
             f"{'paused' if state.paused else 'running'}); {healthy}/{len(state.agents)} "
-            f"agents healthy; active scenarios: {active}; LLM mode {state.llm_mode}; "
+            f"agents healthy; LLM mode {state.llm_mode}; "
             f"{state.investigations_running} investigations running.",
             state,
         )
@@ -360,47 +334,6 @@ def create_server(
             f"{len(result.ambiguous)} ambiguous, {len(result.rejected)} rejected edges.",
             result,
         )
-
-    @server.tool(annotations=READ_ONLY)
-    async def list_scenarios() -> CallToolResult:
-        """Return the demo scenarios with id, title, whether each is active and when
-        it was injected or cleared. Use it before inject_scenario or clear_scenario."""
-        states = _SCENARIOS.validate_python(await call("GET", "/api/scenarios"))
-        active = [state.id for state in states if state.active]
-        return _result(
-            f"{len(states)} scenarios, {len(active)} active"
-            f"{': ' + ', '.join(active) if active else ''}.",
-            states,
-        )
-
-    async def change_scenario(id: ScenarioId, action: str) -> CallToolResult:
-        state = ScenarioState.model_validate(
-            await call("POST", f"/api/scenarios/{id}/{action}")
-        )
-        return _result(
-            f"{state.id} ({state.title}) is now {'active' if state.active else 'inactive'}.",
-            state,
-        )
-
-    @server.tool(annotations=WRITES)
-    async def inject_scenario(
-        id: Annotated[
-            ScenarioId, Field(description="Scenario id from list_scenarios.")
-        ],
-    ) -> CallToolResult:
-        """Start a demo scenario in the data source and return its new state. Use it
-        only when the user asks for a demo."""
-        return await change_scenario(id, "inject")
-
-    @server.tool(annotations=WRITES)
-    async def clear_scenario(
-        id: Annotated[
-            ScenarioId, Field(description="Scenario id from list_scenarios.")
-        ],
-    ) -> CallToolResult:
-        """Stop a demo scenario in the data source and return its new state. Use it
-        to end a demo the user started."""
-        return await change_scenario(id, "clear")
 
     return server
 

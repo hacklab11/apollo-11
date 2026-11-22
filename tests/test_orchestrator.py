@@ -18,8 +18,6 @@ from eye.contracts import (
     Event,
     Incident,
     InvestigationResult,
-    ScenarioId,
-    ScenarioState,
     SentinelDecision,
 )
 from eye.datasource import DuckDBSource
@@ -144,31 +142,6 @@ class Clock:
 
     def step(self) -> None:
         self.now += HOUR
-
-
-class Schedule:
-    def __init__(self, sim: Clock) -> None:
-        self.sim = sim
-        self.states: list[ScenarioState] = []
-
-    def inject(self, id: ScenarioId) -> ScenarioState:
-        state = ScenarioState(
-            id=id,
-            active=True,
-            title="Outage",
-            injected_ts=self.sim.now,
-            cleared_ts=None,
-        )
-        self.states.append(state)
-        return state
-
-    def clear(self, id: ScenarioId) -> None:
-        state = next(state for state in reversed(self.states) if state.id == id)
-        state.active = False
-        state.cleared_ts = self.sim.now
-
-    def timeline(self) -> list[ScenarioState]:
-        return [state.model_copy() for state in self.states]
 
 
 class Sentinel:
@@ -404,12 +377,12 @@ async def test_start_retries_interrupted_investigation_with_its_trail(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [False, True])
-async def test_step_investigates_upserts_and_resolves_after_clear(
+async def test_step_investigates_upserts_and_resolves_after_recovery(
     failure: bool,
 ) -> None:
     settings = Settings(sim={"autostart": False})
     clock = Clock(settings.sim.start_ts)
-    scenarios = Schedule(clock)
+    anomalous = True
     template = make_incident_s7()
 
     async def investigate(anomaly: Anomaly, on_step: StepSink) -> InvestigationResult:
@@ -437,17 +410,14 @@ async def test_step_investigates_upserts_and_resolves_after_clear(
         Sentinel(1),
         store,
         LLMClient(settings.llm),
-        lambda *_: 9 if any(state.active for state in scenarios.timeline()) else 0,
-        scenarios=scenarios,
-        scenario_titles={"S7": "Outage"},
+        lambda *_: 9 if anomalous else 0,
         investigate=investigate,
     )
     stream = orchestrator.events.stream()
     subscription = asyncio.create_task(anext(stream))
     try:
         await asyncio.sleep(0)
-        injected = await orchestrator.set_scenario("S7", active=True)
-        assert injected.active
+        first_anomalous_hour = clock.now
         status = await orchestrator.step_once()
         assert (
             status.tick == 1
@@ -461,12 +431,11 @@ async def test_step_investigates_upserts_and_resolves_after_clear(
             assert incident.summary == "investigation failed: RuntimeError"
         (investigation_id,) = incident.investigation_ids
         assert len(store.trail(investigation_id)) == 1
-        events = [await subscription] + [await anext(stream) for _ in range(8)]
+        events = [await subscription] + [await anext(stream) for _ in range(7)]
         assert [
             Event.model_validate_json(wire.split("data: ", 1)[1]).type
             for wire in events
         ] == [
-            "scenario_changed",
             "tick",
             "anomaly",
             "sentinel_decision",
@@ -476,15 +445,15 @@ async def test_step_investigates_upserts_and_resolves_after_clear(
             "investigation_finished",
             "incident_upserted",
         ]
-        cleared = await orchestrator.set_scenario("S7", active=False)
-        assert not cleared.active
+        anomalous = False
+        recovered_hour = clock.now
         for _ in range(settings.reporter.resolve_after_ticks):
             await orchestrator.step_once()
         (incident,) = store.all()
         assert incident.status == "resolved"
         assert incident.resolved_ts == orchestrator.sim_ts
-        assert injected.injected_ts not in orchestrator.clean_hours()
-        assert cleared.cleared_ts not in orchestrator.clean_hours()
+        assert first_anomalous_hour not in orchestrator.clean_hours()
+        assert recovered_hour not in orchestrator.clean_hours()
         assert incident.resolved_ts in orchestrator.clean_hours()
     finally:
         await stream.aclose()

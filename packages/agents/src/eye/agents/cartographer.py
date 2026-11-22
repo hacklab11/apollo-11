@@ -97,12 +97,12 @@ class Cartographer:
         graph: GraphStore,
         *,
         llm: LlmSettings | None = None,
-        scenario_hours: list[datetime] | None = None,
+        excluded_hours: list[datetime] | None = None,
     ) -> None:
         self.engine = engine
         self.graph = graph
         self.llm = llm or LlmSettings()
-        self.scenario_hours = scenario_hours
+        self.excluded_hours = excluded_hours
         self._allowed_tables = frozenset(
             table
             for name, tables in engine._registry.source_tables.items()
@@ -114,7 +114,7 @@ class Cartographer:
         self, engine: MetricEngine, text: str, *, end: datetime | None = None
     ) -> ValidationResult:
         return validate_identity(
-            engine, text, end=end, scenario_hours=self.scenario_hours
+            engine, text, end=end, excluded_hours=self.excluded_hours
         )
 
     def _breakdown(
@@ -126,7 +126,7 @@ class Cartographer:
         end: datetime | None = None,
     ) -> ValidationResult:
         return validate_breakdown(
-            engine, metric, dim, end=end, scenario_hours=self.scenario_hours
+            engine, metric, dim, end=end, excluded_hours=self.excluded_hours
         )
 
     def _correlation(
@@ -139,7 +139,7 @@ class Cartographer:
         end: datetime | None = None,
     ) -> CorrelationResult:
         return lagged_correlation(
-            engine, src, dst, lag, end=end, scenario_hours=self.scenario_hours
+            engine, src, dst, lag, end=end, excluded_hours=self.excluded_hours
         )
 
     def _spec(self, engine: MetricEngine, *, end: datetime | None = None) -> AgentSpec:
@@ -291,7 +291,7 @@ class Cartographer:
 
     def _identity_total_passes(self, engine: MetricEngine, identity: str) -> bool:
         return validate_identity(
-            engine, identity, segments=[], scenario_hours=self.scenario_hours
+            engine, identity, segments=[], excluded_hours=self.excluded_hours
         ).passed
 
     def _formula_path(self, src: str, dst: str) -> bool:
@@ -637,4 +637,4 @@ class Cartographer:
         _, end = _window(self.engine, None, end, list(self.engine._registry.metrics))
         clean = set(clean_hours)
         hours = (end - timedelta(hours=i + 1) for i in range(21 * 24))
-        self.scenario_hours = [hour for hour in hours if hour not in clean]
+        self.excluded_hours = [hour for hour in hours if hour not in clean]

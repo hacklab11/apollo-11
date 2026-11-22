@@ -181,7 +181,7 @@ def test_baseline_identities(baseline: tuple[Path, datetime], identity_id: str) 
         assert result.passed, (identity.id, result)
         assert result.evidence["median_residual"] < 0.005
         excluded = validate_identity(
-            engine, identity.text, start, end, segments=[], scenario_hours=[start]
+            engine, identity.text, start, end, segments=[], excluded_hours=[start]
         )
         assert excluded.evidence["n"] == 5
         assert excluded.evidence["skipped"] == 1
@@ -273,7 +273,7 @@ def test_shifted_correlation_and_empty() -> None:
         0,
         engine.start,
         engine.start + timedelta(hours=2),
-        scenario_hours=[engine.start],
+        excluded_hours=[engine.start],
     )
     assert excluded.n == 0
     assert excluded.best_lag is None
@@ -291,7 +291,7 @@ def test_identity_empty_mismatch_and_exclusion() -> None:
         "lhs = rhs",
         engine.start,
         end,
-        scenario_hours=[end - timedelta(hours=1)],
+        excluded_hours=[end - timedelta(hours=1)],
     )
     assert result.passed
     assert result.evidence["n"] == 2

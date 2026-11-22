@@ -88,7 +88,7 @@ async def test_compact_seed_context_and_series_on_wire_only(transport):
         "best_lag": 96,
         "corr": 0.96,
         "n": 240,
-        "evidence": {"lags": lags, "scenario_hours": 0},
+        "evidence": {"lags": lags, "excluded_hours": 0},
     }
     context = json.dumps({"seeds": [{"edge": {"lag_hours": 0}, "numbers": numbers}]})
     points = [
@@ -118,7 +118,7 @@ async def test_compact_seed_context_and_series_on_wire_only(transport):
     compact = json.loads(sent)["seeds"][0]["numbers"]
     assert compact["best_lag"] == numbers["best_lag"]
     assert compact["evidence"] == {
-        "scenario_hours": 0,
+        "excluded_hours": 0,
         "tested_lags": 97,
         "strongest_at_proposed_lag_plus_minus_6h": lags[6],
     }

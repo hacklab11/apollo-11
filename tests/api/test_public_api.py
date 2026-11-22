@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
-from eye.api.app import MetricDefinition, TruthRow, create_app
+from eye.api.app import MetricDefinition, create_app
 from eye.config import Settings
 from eye.contracts import (
     AddMetricRequest,
@@ -28,8 +28,6 @@ from eye.contracts import (
     GraphView,
     Incident,
     MetricDef,
-    ScenarioId,
-    ScenarioState,
     SentinelDecision,
     Series,
     Symptom,
@@ -48,7 +46,6 @@ class World:
         self.now = start
         self.live_start = start
         self.history_start = start - 28 * 24 * HOUR
-        self.states: list[ScenarioState] = []
 
     def step(self) -> None:
         self.now += HOUR
@@ -57,21 +54,6 @@ class World:
         self, ts: datetime, *, open_incidents: list[Incident], on_step: StepSink
     ) -> list[SentinelDecision]:
         return make_decisions()
-
-    def timeline(self) -> list[ScenarioState]:
-        return self.states.copy()
-
-    def inject(self, id: ScenarioId) -> ScenarioState:
-        state = ScenarioState(
-            id=id, title="Outage", active=True, injected_ts=self.now, cleared_ts=None
-        )
-        self.states.append(state)
-        return state
-
-    def clear(self, id: ScenarioId) -> None:
-        state = next(state for state in self.states if state.id == id)
-        state.active = False
-        state.cleared_ts = self.now
 
 
 class Graph:
@@ -128,13 +110,6 @@ def service(
             "INSERT INTO traffic_hourly VALUES (?, 'DE', 'web', 112, 50, 52, 10)",
             [sim.now],
         )
-        connection.execute(
-            """INSERT INTO scenario_log VALUES ('scn_s7', ?, 'S7', 'inject', '{"enabled":true}')""",
-            [sim.now],
-        )
-        mode = getattr(request, "param", None)
-        if mode:
-            connection.execute("DROP TABLE scenario_log")
         sample = make_incident_s7()
         incidents._save(sample)
         for step in make_trail_s7():
@@ -146,8 +121,6 @@ def service(
             incidents,
             LLMClient(settings.llm),
             lambda *_: 9,
-            scenarios=None if mode == "no_scenarios" else sim,
-            scenario_titles={} if mode == "no_scenarios" else {"S7": "Outage"},
             add_metric=add,
         )
         yield (
@@ -163,19 +136,17 @@ def service(
         )
 
 
-@pytest.mark.parametrize("service", ["no_scenarios", "no_truth_table"], indirect=True)
-def test_optional_scenario_apis(
+def test_scenario_controls_are_not_public(
     service: tuple[FastAPI, Settings, Orchestrator],
 ) -> None:
-    app, settings, orchestrator = service
+    app, settings, _orchestrator = service
     settings.demo.show_truth = True
     with TestClient(app) as client:
         assert client.get("/api/demo/truth").status_code == 404
-        if orchestrator.scenarios is None:
-            assert client.get("/api/scenarios").json() == []
-            assert client.get("/api/status").json()["active_scenarios"] == []
-            assert client.post("/api/scenarios/S7/inject").status_code == 404
-            assert client.post("/api/scenarios/S7/clear").status_code == 404
+        assert client.get("/api/scenarios").status_code == 404
+        assert "active_scenarios" not in client.get("/api/status").json()
+        assert client.post("/api/scenarios/S8/inject").status_code == 404
+        assert client.post("/api/scenarios/S8/clear").status_code == 404
 
 
 def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -> None:
@@ -238,16 +209,11 @@ def test_public_api_contracts(service: tuple[FastAPI, Settings, Orchestrator]) -
             TrailStep.model_validate(step)
             for step in get(f"/api/incidents/{sample.id}/trail")
         )
-        assert not ScenarioState.model_validate(get("/api/scenarios")[0]).active
-        assert post("/api/scenarios/S7/inject", ScenarioState).active
         assert post("/api/clock/pause", Status).paused
         assert post("/api/clock/resume", Status).running
-        assert not post("/api/scenarios/S7/clear", ScenarioState).active
         assert client.get("/api/demo/truth").status_code == 404
         settings.demo.show_truth = True
-        assert TruthRow.model_validate(get("/api/demo/truth")[0]).params == {
-            "enabled": True
-        }
+        assert client.get("/api/demo/truth").status_code == 404
         assert client.get("/").status_code == 200
         assert client.get("/web/app.js").status_code == 200
         assert client.get("/app.js").status_code == 200

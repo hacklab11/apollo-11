@@ -96,9 +96,6 @@ export const api = {
   getIncidents: (status) => request("/incidents", { query: { status } }),
   getIncident: (id) => request(incidentPath(id)),
   getTrail: (id) => request(`${incidentPath(id)}/trail`),
-  getScenarios: () => request("/scenarios"),
-  injectScenario: (id) => post(`/scenarios/${encodeURIComponent(id)}/inject`),
-  clearScenario: (id) => post(`/scenarios/${encodeURIComponent(id)}/clear`),
   pauseClock: () => post("/clock/pause"),
   resumeClock: () => post("/clock/resume"),
   stepClock: () => post("/clock/step?wait_for_analysis=false"),
@@ -167,29 +164,6 @@ function updateStatus(status, reset = false) {
   if (!reset && state.status && status.tick < state.status.tick) return;
   state.status = status;
   renderStatus();
-}
-
-function renderScenario(scenario) {
-  const button = $("#scenarios [data-scenario]");
-  const id = button.dataset.scenario;
-  if (!scenario) {
-    const label = `${id}: The €9 headphones (unavailable)`;
-    button.disabled = true;
-    button.title = label;
-    button.removeAttribute("aria-pressed");
-    button.setAttribute("aria-label", label);
-    button.textContent = id;
-    return;
-  }
-  if (scenario.id !== id) return;
-  button.disabled = false;
-  button.title = scenario.title;
-  button.setAttribute("aria-pressed", String(scenario.active));
-  button.setAttribute(
-    "aria-label",
-    `${scenario.active ? "Clear" : "Inject"} ${scenario.id}: ${scenario.title}`,
-  );
-  button.textContent = `${scenario.id}${scenario.active ? " ·" : ""}`;
 }
 
 function graphElements() {
@@ -721,7 +695,6 @@ function appendEvent(event) {
     ({
       tick: () => `Simulation tick ${payload.tick}`,
       graph_changed: () => "Metric relationships updated",
-      scenario_changed: () => `${payload.id} ${payload.active ? "active" : "inactive"}`,
       agent_status: () => `${payload.name} ${payload.ok ? "healthy" : "unavailable"}`,
     }[event.type]?.() ??
       (payload.metric
@@ -778,9 +751,6 @@ async function handleLiveEvent(event) {
     case "graph_changed":
       await refreshGraph();
       break;
-    case "scenario_changed":
-      renderScenario(payload);
-      break;
     case "agent_status":
       if (state.status) {
         state.status.agents[payload.name] = payload;
@@ -797,10 +767,6 @@ async function refreshLive(reconnect = false) {
     graph,
     refreshIncidents(reconnect),
     api.getAnomalies().then(rememberAttachments),
-    api.getScenarios().then((scenarios) => {
-      const id = $("#scenarios [data-scenario]").dataset.scenario;
-      renderScenario(scenarios.find((scenario) => scenario.id === id));
-    }),
     reconnect && graph.then(refreshChart),
   ]);
 }
@@ -811,7 +777,7 @@ function connectEvents(reconnect = false) {
   for (const type of [
     "tick", "anomaly", "sentinel_decision", "investigation_started",
     "trail_step", "investigation_finished", "incident_upserted",
-    "graph_changed", "scenario_changed", "agent_status",
+    "graph_changed", "agent_status",
   ]) stream.addEventListener(type, receive);
   stream.onopen = () => {
     streamConnected = true;
@@ -919,20 +885,6 @@ function bindControls() {
         stepButton.disabled = false;
         stepButton.textContent = "Step +1h";
       }
-    }),
-  );
-  $("#scenarios").addEventListener("click", (event) =>
-    attempt(async () => {
-      const button = event.target.closest("[data-scenario]");
-      if (!button || button.disabled) return;
-      const active = button.getAttribute("aria-pressed") === "true";
-      const scenario = await (active
-        ? api.clearScenario(button.dataset.scenario)
-        : api.injectScenario(button.dataset.scenario));
-      renderScenario(scenario);
-      notify(
-        `${scenario.id} ${scenario.active ? "injected" : "cleared"}.`,
-      );
     }),
   );
   $(".tabs").addEventListener("click", (event) => {

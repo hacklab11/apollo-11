@@ -1094,7 +1094,7 @@ async def test_t18_callbacks_use_shared_engine_and_clean_hours(
             )
         )
         assert result.metric.name == "new_ratio"
-        assert clean[-1] in cartographer.scenario_hours
+        assert clean[-1] in cartographer.excluded_hours
         assert engine.metric_window(
             "new_ratio", end.replace(day=1), end
         ) == pytest.approx(0.02)

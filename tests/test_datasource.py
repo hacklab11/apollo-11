@@ -66,10 +66,7 @@ def test_source_clock_and_readers(tmp_path: Path) -> None:
         assert source.live_start == TS + 3 * HOUR
         source.step()
         assert source.now == TS + 3 * HOUR
-        assert source.scenarios is None
-        assert source.scenario_titles == {}
-        with pytest.raises(RuntimeError, match="not supported"):
-            source.record_scenario("S1", TS, True)
+        assert not hasattr(source, "record_scenario")
         with source.cursor() as reader:
             assert (
                 reader.execute("SELECT count(*) FROM partition_status").fetchone()[0]
@@ -137,8 +134,8 @@ import sys
 from eye.config import Settings
 from eye.datasource import open_source
 with open_source(Settings.model_validate({'data': {'source': 'duckdb', 'path': sys.argv[1]}})) as source:
-    assert source.scenarios is None
-assert not any(name == 'eye.sim' or name.startswith('eye.sim.') for name in sys.modules)
+    assert not hasattr(source, 'record_scenario')
+    assert not any(name == 'eye.sim' or name.startswith('eye.sim.') for name in sys.modules)
 """,
             str(path),
         ],

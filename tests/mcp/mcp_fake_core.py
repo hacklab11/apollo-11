@@ -13,7 +13,7 @@ def mock(name: str) -> object:
 Calls = list[tuple[str, dict[str, str]]]
 
 
-def fake_core(calls: Calls, scenario_list: object = None) -> FastAPI:
+def fake_core(calls: Calls) -> FastAPI:
     """A tiny core API that serves the frozen tests/fixtures/web payloads."""
     app = FastAPI()
 
@@ -57,21 +57,5 @@ def fake_core(calls: Calls, scenario_list: object = None) -> FastAPI:
     @app.post("/api/metrics")
     async def add_metric() -> object:
         return mock("add_metric_result.json")
-
-    @app.get("/api/scenarios")
-    async def scenarios() -> object:
-        return mock("scenarios.json") if scenario_list is None else scenario_list
-
-    @app.post("/api/scenarios/{id}/{action}")
-    async def change(id: str, action: str) -> object:
-        active = action == "inject"
-        ts = "2026-11-27T14:00:00Z"
-        return {
-            "id": id,
-            "title": f"Scenario {id}",
-            "active": active,
-            "injected_ts": ts if active else None,
-            "cleared_ts": None if active else ts,
-        }
 
     return app

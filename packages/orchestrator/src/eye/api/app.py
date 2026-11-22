@@ -22,8 +22,6 @@ from eye.contracts import (
     Incident,
     IncidentStatus,
     MetricDef,
-    ScenarioId,
-    ScenarioState,
     SentinelDecision,
     Series,
     SeriesPoint,
@@ -55,14 +53,6 @@ class Graph(Protocol):
 class MetricDefinition(MetricDef):
     in_edges: list[Edge]
     out_edges: list[Edge]
-
-
-class TruthRow(BaseModel):
-    id: str
-    ts: datetime
-    scenario_id: ScenarioId
-    action: str
-    params: dict
 
 
 def create_app(
@@ -234,26 +224,6 @@ def create_app(
             for step in orchestrator.incidents.trail(investigation_id)
         ]
 
-    @app.get("/api/scenarios")
-    async def scenarios() -> list[ScenarioState]:
-        return orchestrator.scenario_states()
-
-    async def change_scenario(id: ScenarioId, active: bool) -> ScenarioState:
-        try:
-            return await orchestrator.set_scenario(id, active=active)
-        except LookupError as exc:
-            raise HTTPException(404, "scenario is not available") from exc
-        except ValueError as exc:
-            raise HTTPException(409, str(exc)) from exc
-
-    @app.post("/api/scenarios/{id}/inject")
-    async def inject(id: ScenarioId) -> ScenarioState:
-        return await change_scenario(id, True)
-
-    @app.post("/api/scenarios/{id}/clear")
-    async def clear(id: ScenarioId) -> ScenarioState:
-        return await change_scenario(id, False)
-
     @app.post("/api/clock/pause")
     async def pause() -> Status:
         orchestrator.pause()
@@ -278,35 +248,6 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
-
-    @app.get("/api/demo/truth")
-    def truth() -> list[TruthRow]:
-        if (
-            connection is None
-            or not orchestrator.settings.demo.show_truth
-            or orchestrator.scenarios is None
-        ):
-            raise HTTPException(404, "not found")
-        with connection.cursor() as cursor:
-            if not cursor.execute(
-                "SELECT 1 FROM information_schema.tables "
-                "WHERE table_catalog = current_database() AND table_schema = 'main' "
-                "AND table_name = 'scenario_log'"
-            ).fetchone():
-                raise HTTPException(404, "not found")
-            rows = cursor.execute(
-                "SELECT id, ts, scenario_id, action, CAST(params AS JSON) FROM scenario_log ORDER BY ts, id"
-            ).fetchall()
-        return [
-            TruthRow(
-                id=id,
-                ts=ts,
-                scenario_id=scenario_id,
-                action=action,
-                params=_PARAMS.validate_json(params),
-            )
-            for id, ts, scenario_id, action, params in rows
-        ]
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
