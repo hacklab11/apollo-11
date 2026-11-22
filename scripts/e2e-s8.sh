@@ -17,6 +17,13 @@ response = httpx.get("http://example.com", timeout=5)
 assert response.status_code == 403, response.status_code
 print("OK proxy refused non-allowlisted host (403)")
 try:
+    httpx.get("https://scripted-model:8400/healthz", timeout=5)
+except httpx.ProxyError as exc:
+    assert "403" in str(exc), str(exc)
+    print("OK proxy refused CONNECT to non-TLS port (403)")
+else:
+    raise AssertionError("Proxy allowed CONNECT to port 8400")
+try:
     httpx.get("http://1.1.1.1", trust_env=False, timeout=3)
 except httpx.TransportError:
     print("OK agent direct external request blocked")
