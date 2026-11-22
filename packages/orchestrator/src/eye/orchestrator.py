@@ -460,8 +460,22 @@ class Orchestrator(DBOSConfiguredInstance):
             self.incidents._save(incident)
             self.emit("incident_upserted", incident)
 
+    @DBOS.step()
+    def start_budget(self, metadata: TaskMetadata) -> TaskMetadata:
+        return metadata.model_copy(
+            update={
+                "budget": metadata.budget.model_copy(
+                    update={
+                        "deadline": datetime.now(UTC)
+                        + timedelta(seconds=self.settings.orchestrator.run_deadline_s)
+                    }
+                )
+            }
+        )
+
     @DBOS.workflow()
     async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
+        metadata = self.start_budget(metadata)
         with trace.get_tracer(__name__).start_as_current_span(
             "orchestrator.run_hour",
             context=Context(),
@@ -595,6 +609,7 @@ class Orchestrator(DBOSConfiguredInstance):
     async def map_metric(
         self, run_id: str, request: AddMetricRequest, metadata: TaskMetadata
     ) -> AddMetricResult:
+        metadata = self.start_budget(metadata)
         result, _ = await self.agent_call(
             run_id, "map", MapRequest(metric=request), metadata, AddMetricResult
         )

@@ -6,11 +6,21 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from dbos import DBOS, SetEnqueueOptions
-from factories import make_anomaly, make_incident_s7, make_trail_s7
+from factories import (
+    make_add_metric_result,
+    make_anomaly,
+    make_incident_s7,
+    make_trail_s7,
+)
 from scripted_agents import ScriptedAgents
 
 from eye.config import Settings
-from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision
+from eye.contracts import (
+    AddMetricRequest,
+    InvestigationResult,
+    SellerAlertAck,
+    SentinelDecision,
+)
 from eye.contracts_v2 import (
     AgentResult,
     DetectRequest,
@@ -100,6 +110,49 @@ async def test_tenant_concurrency_queues_without_blocking_other_tenants(
     finally:
         release.set()
         await asyncio.wait_for(asyncio.gather(*(h.get_result() for h in handles)), 15)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skill", ["detect", "map"])
+async def test_queued_workflow_gets_execution_deadline(workflow, skill: str) -> None:
+    core, scripted = workflow
+    await core.queue.set_partition_limiter_async({"limit": 1, "period": 2})
+    await core.step_once()
+    core.settings.orchestrator.run_deadline_s = 0.5
+    metadata = core._metadata("after-queue-wait")
+    seen = []
+    call = core.directory.call
+
+    async def capture(skill, payload, metadata, result_type):
+        seen.append(metadata)
+        assert metadata.budget.deadline > datetime.now(UTC)
+        return await call(skill, payload, metadata, result_type)
+
+    core.directory.call = capture
+    scripted.executors["map"].result = AgentResult(
+        status="done", result=make_add_metric_result()
+    )
+    with SetEnqueueOptions(queue_partition_key="default"):
+        if skill == "detect":
+            handle = await core.queue.enqueue_async(
+                core.run_hour, "after-queue-wait", core.sim.now, metadata
+            )
+        else:
+            handle = await core.queue.enqueue_async(
+                core.map_metric,
+                "after-queue-wait",
+                AddMetricRequest(
+                    name="orders_per_session",
+                    description="Orders per session",
+                    expression="orders / sessions",
+                ),
+                metadata,
+            )
+    await asyncio.wait_for(handle.get_result(), timeout=10)
+    assert metadata.budget.deadline < datetime.now(UTC)
+    assert len(seen) == 1
+    assert seen[0].budget.deadline > metadata.budget.deadline
+    assert len(scripted.requests) == 2
 
 
 @pytest.mark.asyncio
