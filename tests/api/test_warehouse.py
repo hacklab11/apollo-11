@@ -90,6 +90,14 @@ def test_reads_only_published_hours_and_refreshes(tmp_path: Path, monkeypatch) -
             )
             assert complete.json() is False
             assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(12.0,)]
+            publish_hour(writer, lake, TS + HOUR, 25)
+            now[0] += 2
+            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(12.0,)]
+            window = ops.PartitionWindow.model_validate(
+                client.get("/v1/partitions").json()
+            )
+            assert window.latest == TS + HOUR
+            assert reader.sql("SELECT ref_price FROM skus").fetchall() == [(25.0,)]
             publish_hour(writer, lake, TS + 2 * HOUR, 34)
             now[0] += 2
             window = ops.PartitionWindow.model_validate(

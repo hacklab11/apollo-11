@@ -24,25 +24,19 @@ class ParquetLanding:
     def __init__(self, root: Path, connection: duckdb.DuckDBPyConnection) -> None:
         self.root = root.resolve()
         self.connection = connection
-        self._hours: tuple[str, ...] = ()
+        self._manifests: dict[str, int] | None = None
         self._last_refresh = float("-inf")
-        self._initialized = False
 
     def refresh(self) -> bool:
         now = monotonic()
         if now - self._last_refresh < 1:
             return False
-        hours = tuple(
-            sorted(
-                path.parent.name
-                for path in (self.root / "partition_status").glob("hour=*/data.parquet")
-                if _is_hour(path.parent.name)
-            )
-        )
-        if self._initialized and hours == self._hours:
+        manifests = self._published_manifests()
+        if manifests == self._manifests:
             self._last_refresh = now
             return False
 
+        hours = tuple(sorted(manifests))
         # A manifest is the commit marker. Do not glob an individual fact table.
         self.connection.begin()
         try:
@@ -60,10 +54,19 @@ class ParquetLanding:
         except Exception:
             self.connection.rollback()
             raise
-        self._hours = hours
+        self._manifests = manifests
         self._last_refresh = now
-        self._initialized = True
         return True
+
+    def _published_manifests(self) -> dict[str, int]:
+        manifests = {}
+        for path in (self.root / "partition_status").glob("hour=*/data.parquet"):
+            if _is_hour(hour := path.parent.name):
+                try:
+                    manifests[hour] = path.stat().st_mtime_ns
+                except FileNotFoundError:
+                    continue
+        return manifests
 
     def _view(self, table: str, hours: tuple[str, ...]) -> None:
         if hours:
