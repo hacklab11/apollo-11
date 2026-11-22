@@ -1,4 +1,5 @@
 import asyncio
+import os
 from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
@@ -102,15 +103,29 @@ def test_lake_public_tables_and_atomic_manifest(
             / f"hour={hour:%Y-%m-%dT%H}"
             / "data.parquet"
         )
+        original_manifest = manifest.read_bytes()
+        replace = os.replace
+        replacements: list[Path] = []
+
+        def observe(source: Path, destination: Path) -> None:
+            assert manifest.exists()
+            assert manifest.read_bytes() == original_manifest
+            replacements.append(destination)
+            replace(source, destination)
+
+        monkeypatch.setattr("eye.sim.lake.os.replace", observe)
+        writer.land(sim.store, hour)
+        assert len(replacements) == len(SCHEMA)
+        assert replacements[-1] == manifest
 
         def fail(*args: object) -> None:
-            assert not manifest.exists()
+            assert manifest.exists()
             raise OSError("disk full")
 
         monkeypatch.setattr("eye.sim.lake.os.replace", fail)
         with pytest.raises(OSError, match="disk full"):
             writer.land(sim.store, hour)
-        assert not manifest.exists()
+        assert manifest.read_bytes() == original_manifest
         assert not list(writer.root.rglob("*.tmp"))
 
 

@@ -60,7 +60,8 @@ purchase-order delivery state and daily capacity updates.
 Each file is produced with DuckDB `COPY ... (FORMAT PARQUET)`, then atomically
 replaced. `partition_status` is published last; its presence is the hour's
 publication marker. Readers must still respect its completeness values. During
-republishing the old marker is removed first; failures leave no success marker.
+republishing the old marker remains available until its atomic replacement;
+a failed re-land retains the previously published marker.
 The preceding hour is republished after each step to expose repaired late orders.
 Restart republishes history, recovering an interrupted landing. Files ending in
 `.tmp` are not public data.

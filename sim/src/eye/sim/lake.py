@@ -16,10 +16,6 @@ class LakeWriter:
         self.last_hour: datetime | None = None
 
     def land(self, store: Store, hour: datetime) -> None:
-        manifest = (
-            self.root / "partition_status" / f"hour={hour:%Y-%m-%dT%H}" / "data.parquet"
-        )
-        manifest.unlink(missing_ok=True)
         with store.cursor() as con:
             for table in [t for t in SCHEMA if t != "partition_status"] + [
                 "partition_status"
