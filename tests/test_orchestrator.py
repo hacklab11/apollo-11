@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import os
 import subprocess
@@ -12,6 +13,13 @@ import httpx
 import pytest
 import pytest_asyncio
 from dbos import DBOS, SetEnqueueOptions
+from dbos._serialization import (
+    DefaultSerializer,
+    deserialize_args,
+    deserialize_value,
+    serialize_args,
+    serialize_value,
+)
 from factories import (
     make_add_metric_result,
     make_anomaly,
@@ -163,9 +171,39 @@ finally:
     assert restarted.returncode == 0, restarted.stdout + restarted.stderr
     after = json.loads(restarted.stdout.strip().splitlines()[-1])
     assert before["hash"] != after["hash"]
-    assert before["version"] == after["version"] == (version or "eye-orchestrator-v1")
+    assert before["version"] == after["version"] == (version or "eye-orchestrator-v2")
     assert after["status"] == "SUCCESS"
     assert after["result"] == "after-rebuild"
+
+
+@pytest.mark.parametrize("boundary", ["workflow-input", "step-output"])
+def test_dbos_checkpoint_requires_original_contract_module(
+    monkeypatch, boundary
+) -> None:
+    serializer = DefaultSerializer()
+    if boundary == "workflow-input":
+        value = AddMetricRequest(
+            name="orders_per_session",
+            description="Orders per session",
+            expression="orders / sessions",
+        )
+        serialized, encoding = serialize_args(("map-run", value), {}, None, serializer)
+
+        def restore():
+            return deserialize_args(serialized, encoding, serializer)["args"][1]
+    else:
+        value = make_incident_s7()
+        serialized, encoding = serialize_value(value, None, serializer)
+
+        def restore():
+            return deserialize_value(serialized, encoding, serializer)
+
+    assert encoding == "py_pickle"
+    assert type(value).__module__.encode() in base64.b64decode(serialized)
+    assert restore() == value
+    monkeypatch.setitem(sys.modules, type(value).__module__, None)
+    with pytest.raises(ModuleNotFoundError):
+        restore()
 
 
 @pytest.mark.asyncio

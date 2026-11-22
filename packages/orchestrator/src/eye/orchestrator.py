@@ -129,7 +129,7 @@ class Orchestrator(DBOSConfiguredInstance):
                 "name": "eye-orchestrator",
                 "system_database_url": self.database_url,
                 "application_version": os.environ.get("EYE_DBOS_APPLICATION_VERSION")
-                or "eye-orchestrator-v1",
+                or "eye-orchestrator-v2",
             }
         )
         super().__init__(
