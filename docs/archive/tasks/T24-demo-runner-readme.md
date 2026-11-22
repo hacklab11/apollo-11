@@ -11,7 +11,7 @@ Owner: Dev 2 · Depends on: T18, T27, T17 · Blocks: rehearsals
 A script that plays the demo timeline automatically, and a README that explains the system to judges.
 
 ## Read first
-`docs/specs/15-demo-and-pitch.md`, `docs/specs/16-deployment.md` §6.
+`docs/specs/demo.md`, `docs/specs/deployment.md` §6.
 
 ## Files you own
 Legacy runner (removed), `README.md`, `docs/assets/` (screenshots).

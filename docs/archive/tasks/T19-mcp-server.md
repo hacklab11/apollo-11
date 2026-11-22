@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T00 (API contract); T18 for the live test · Blocks:
 Any MCP client can read incidents, the graph, metrics, add a metric, and drive the demo scenarios.
 
 ## Read first
-`docs/specs/12-mcp-server.md`, `docs/specs/13-api-and-ui.md` §1. Official `mcp` 2.3.0 Python SDK docs (server, streamable HTTP).
+`docs/specs/mcp.md`, `docs/specs/web.md` §1. Official `mcp` 2.3.0 Python SDK docs (server, streamable HTTP).
 
 ## Files you own
 `src/eye/mcp_server.py`, `tests/mcp/`.

@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T01 · Blocks: T04
 The engineering and growth data sources: ad auction with pacing, marketing spend, PSP behaviour, client errors by app version, the change log with baseline noise, and partition status.
 
 ## Read first
-`docs/specs/03-simulator.md` §3.5, §5, §7, §8 (tables `ads_hourly`, `marketing_hourly`, `payments_hourly`, `client_errors_hourly`, `app_components`, `external_status`, `change_log`, `partition_status`).
+`docs/specs/simulator.md` §3.5, §5, §7, §8 (tables `ads_hourly`, `marketing_hourly`, `payments_hourly`, `client_errors_hourly`, `app_components`, `external_status`, `change_log`, `partition_status`).
 
 ## Files you own
 `src/eye/sim/ads.py`, `src/eye/sim/apps.py`, `src/eye/sim/pipeline.py`, `src/eye/sim/changelog.py`, `tests/sim/test_ads.py`, `tests/sim/test_apps_pipeline.py`.

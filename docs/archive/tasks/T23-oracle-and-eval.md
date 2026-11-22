@@ -6,7 +6,7 @@ Depends on: T04 (data), T27 (S8/I3 data), T18 (step mode) · Blocks: Checkpoint 
 A machine-checkable definition of "the system got it right" for every scenario, and a script that runs it.
 
 ## Read first
-`docs/specs/04-scenarios.md`, `docs/specs/14-testing-and-evals.md`.
+`docs/specs/simulator.md`, `docs/specs/testing.md`.
 
 ## Part A — P3: `tests/oracle/scenarios.yaml`
 1. One entry per scenario S1–S8, I1–I3 and per combined run D1–D6, in the format of 14 §2. D6 is the live demo run: write it first (`I3@0,S8@10`). Include an I3-alone entry: `INNOCENT`, no alert; mention `coupon-day-electronics` and `planned`.

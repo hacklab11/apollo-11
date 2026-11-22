@@ -6,7 +6,7 @@ Owner: P3 (coding agent session) + Dev 2 review · Depends on: T18, T21 (T20 for
 The same UI on the real API and SSE stream.
 
 ## Read first
-`docs/specs/13-api-and-ui.md` §1, §3.4.
+`docs/specs/web.md` §1, §3.4.
 
 ## Files you own
 `web/app.js`, `web/index.html`, `web/styles.css`.

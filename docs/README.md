@@ -10,6 +10,7 @@ Start with the [project README](../README.md) and [coding instructions](../AGENT
 - [Data service, registry and graph](specs/data.md), [deterministic algorithms](specs/tools.md)
 - [DBOS orchestrator and incident control](specs/orchestrator.md)
 - [Agent runtime](specs/agent-runtime.md), [core agents](specs/core-agents.md), [Cartographer](specs/cartographer.md)
+- [Prompts and specialist LLM compatibility](specs/llm.md)
 - [Specialists and A2A](specs/specialists.md), [SellerOS](specs/selleros.md)
 - [MCP](specs/mcp.md), [web/API](specs/web.md)
 - [Observability and alerts](specs/observability.md), [testing/evals](specs/testing.md)

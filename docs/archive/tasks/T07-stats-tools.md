@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T06 · Blocks: T13, T14
 The deterministic tools that the Sentinel and the Detective use to measure, scan, locate, and get context.
 
 ## Read first
-`docs/specs/07-tools.md` §1, §2, §3.1, §3.2, §3.5–3.8, §5. `docs/specs/02-contracts.md` §4.
+`docs/specs/tools.md` §1, §2, §3.1, §3.2, §3.5–3.8, §5. `docs/specs/contracts.md` §4.
 
 ## Files you own
 `src/eye/tools/stats.py`, `src/eye/tools/drill.py` (drill_down, compare_segments, first_change only), `src/eye/tools/context.py`, `src/eye/tools/models.py` (input/output models with `summary`), `tests/tools/test_stats.py`, `tests/tools/test_context.py`.

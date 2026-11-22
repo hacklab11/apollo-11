@@ -1,6 +1,6 @@
 # Implementation plan (24 hours, 3 people, Devin)
 
-Specs: `../README.md`. Task cards: `../tasks/README.md`.
+Specs: `../../README.md`. Task cards: `../tasks/README.md`.
 
 ## 1. Team
 
@@ -10,7 +10,7 @@ Specs: `../README.md`. Task cards: `../tasks/README.md`.
 | Dev 2 | Agents & Interfaces | T00, T11–T20, T24 | start Devin sessions for the lane, review PRs, merge, own `main` and the integration |
 | P3 | Product & Demo (non-technical) | T21, T22, T23 (oracle part), T25 | scenario truth, domain notes for prompts, UI with an AI tool on mocks, acceptance testing, pitch, video |
 
-P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude Code) that P3 starts and checks in the browser. P3 reviews the result against the visual rules in `../specs/13-api-and-ui.md`, not the code.
+P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude Code) that P3 starts and checks in the browser. P3 reviews the result against the visual rules in `../../specs/web.md`, not the code.
 
 ## 2. How we use Devin
 
@@ -18,7 +18,7 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
 2. **One task card = one Devin session = one PR.** Start a session with this prompt:
 
    ```
-   Read AGENTS.md. Then implement docs/tasks/<card>.md exactly.
+   Read AGENTS.md. Then implement docs/archive/tasks/<card>.md exactly.
    Work on branch task/<card-id>-<slug>. Change only the files listed under "Files you own".
    Run every command under "Done when" and paste the output in the PR description.
    If the spec is unclear, choose the reversible option, write it under "Assumptions" in the PR, and continue.
@@ -42,7 +42,7 @@ P3 does not need to code by hand. T21/T22 are done by a Devin session (or Claude
 | 12 | | | | **Checkpoint 2**: S3 and S7 end to end live; trail in UI; I1 innocent |
 | 12–15 | **T10**, **T27**, **T23 harness** | **T20**, **T24** | acceptance run of S1–S4, S7 with the harness; log failures as GitHub issues | |
 | 15–17 | **T26** deployment; fix data issues | fix agent issues (prompts, stop rules) | T25 part B: slides | |
-| 17 | | | | **Checkpoint 3**: all acceptance criteria (`../specs/00-overview.md` §8) pass once; `eval_scenarios.py --all` table; D6 (live demo) passes |
+| 17 | | | | **Checkpoint 3**: all acceptance criteria (`../../specs/architecture.md` §8) pass once; `eval_scenarios.py --all` table; D6 (live demo) passes |
 | 17–20 | tune scenario sizes; record replay fixtures; deploy on demo laptop + Codespaces | prompt tuning; README | slides, demo script rehearsal 1 | |
 | 20–22 | **All**: rehearsals 2 and 3, record backup video, freeze `main` (tag `demo-v1`) | | | demo frozen |
 | 22–24 | buffer / sleep | buffer / sleep | buffer / sleep | |
@@ -87,7 +87,7 @@ uv run python scripts/eval_scenarios.py --scenario D6 --mode live
 
 ## 6. Cut order (cut from the top when late)
 
-1. MCP resources (`12-mcp-server.md` §3).
+1. MCP resources (`mcp.md` §3).
 2. Optional ambiguous metric `delivery_delay_hours`.
 3. Hijacker in S6 (keep the price loop, stockouts, CPC).
 4. Chart expected band in the UI.

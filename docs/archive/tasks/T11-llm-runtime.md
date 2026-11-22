@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T00 · Blocks: T10, T13, T14, T16, T17, T20
 One reusable, tested agent loop on the Claude Messages API with tool calling, trail steps, budgets, and record/replay.
 
 ## Read first
-`docs/specs/08-agent-runtime.md`, `docs/specs/01-architecture.md` §4.1, the official `anthropic` Python SDK docs for version 2.12.0 (messages, tool use, errors, prompt caching, structured outputs).
+`docs/specs/agent-runtime.md`, `docs/specs/architecture.md` §4.1, the official `anthropic` Python SDK docs for version 2.12.0 (messages, tool use, errors, prompt caching, structured outputs).
 
 ## Files you own
 `src/eye/llm/runtime.py`, `src/eye/llm/client.py` (thin wrapper: live/record/replay), `src/eye/llm/prompts/README.md`, `tests/llm/`.

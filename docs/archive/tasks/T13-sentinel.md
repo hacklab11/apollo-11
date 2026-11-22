@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T07, T11, T12 (T09 optional) · Blocks: T18
 Each tick, decide what to investigate, watch, defer, ignore, or attach, with reasons.
 
 ## Read first
-`docs/specs/09-core-agents.md` §1, §2, §7 (T13). `docs/specs/07-tools.md` §3.1–3.2.
+`docs/specs/core-agents.md` §1, §2, §7 (T13). `docs/specs/tools.md` §3.1–3.2.
 
 ## Files you own
 `src/eye/agents/sentinel.py`, `src/eye/llm/prompts/sentinel.md`, `tests/agents/test_sentinel.py`, `tests/fixtures/llm/sentinel_*.jsonl`.

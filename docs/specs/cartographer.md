@@ -10,6 +10,12 @@ require the corresponding evidence. Rejected candidates retain reasons rather th
 Missing source data can leave a metric pending rather than manufacturing values.
 
 Identity/rollup numeric tolerances and completeness rules are in [tools](tools.md).
+Validation defaults to the previous 14 days, excluding supplied incident hours.
+A failed formula proposal with median residual above 5% is rejected; otherwise it can remain
+ambiguous. A passing one-term identity is a possible duplicate, not automatic placement.
+Causal proposals accept lags 0–96h and become hypotheses when absolute correlation reaches
+0.3 within ±6h of the proposed lag, or a cited formula path actually exists.
+Causal proposals never become validated algebraic facts.
 Causal edges require evidence beyond correlation and cannot silently create an invalid graph.
 The service's cartography adapter reads the public Parquet lake into a private local DuckDB snapshot
 for SQL validation; graph reads/writes go through the warehouse boundary. This is an explicit exception

@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T06 · Blocks: T09, T14
 Exact contribution math along formula edges and the validators the Cartographer uses.
 
 ## Read first
-`docs/specs/07-tools.md` §3.3, §3.4. `docs/specs/06-graph-and-cartographer.md` §3. `docs/specs/05-metric-registry.md` §5.
+`docs/specs/tools.md` §3.3, §3.4. `docs/specs/cartographer.md` §3. `docs/specs/data.md` §5.
 
 ## Files you own
 `src/eye/tools/drill.py` (add `decompose`, `mix_rate_split` only), `src/eye/tools/validate.py`, `src/eye/tools/identity.py` (parser for identity strings), `tests/tools/test_decompose.py`, `tests/tools/test_validate.py`.

@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T06 (tables from T01–T03) · Blocks: T14, T16
 Read-only domain endpoints for the specialists, and the core-side A2A client with health checks and safe failures.
 
 ## Read first
-`docs/specs/07-tools.md` §4, `docs/specs/10-a2a-and-specialists.md` §1, §3, §5, §6 (T15). Official `a2a-sdk` 1.3.1 docs (client side).
+`docs/specs/tools.md` §4, `docs/specs/specialists.md` §1, §3, §5, §6 (T15). Official `a2a-sdk` 1.3.1 docs (client side).
 
 ## Files you own
 `src/eye/api/data_api.py`, `src/eye/a2a_client.py`, `tests/api/test_data_api.py`, `tests/a2a/test_client.py`, `tests/a2a/stub_server.py`.

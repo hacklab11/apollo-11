@@ -1,5 +1,9 @@
 # Metric descriptions
 
+These are the seeded definitions in [config/metrics.yaml](../../config/metrics.yaml).
+The warehouse computes values; agents cite them and must distinguish relative percentages
+from percentage-point changes. Additional metrics require a validated Cartographer request.
+
 - `gmv`: Total value of merchandise sold, in euros.
 - `orders`: Total units ordered.
 - `aov`: Merchandise value in euros per unit ordered, calculated as GMV divided by orders.
@@ -48,6 +52,3 @@
 - `avg_cpc`: Advertising spend in euros divided by ad clicks.
 - `ad_ctr`: Ad clicks divided by ad impressions.
 - `budget_pace_ratio`: Cumulative daily advertiser spend divided by daily budget times the planned cumulative spending share, using each advertiser's latest hour.
-- `fee_per_order`: Marketplace fee revenue in euros divided by units ordered (live demo metric, added through `add_metric`).
-- `refund_rate`: Refund count divided by units ordered.
-- `delivery_delay_hours`: Delivery delay in hours from purchase orders, comparing actual delivery with the expected arrival time.

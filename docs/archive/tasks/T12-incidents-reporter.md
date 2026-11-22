@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T00 · Blocks: T13, T18
 Incidents with fingerprints, matching, merging, lifecycle, trail storage, and the Reporter's narrative.
 
 ## Read first
-`docs/specs/09-core-agents.md` §5, §7 (T12). `docs/specs/02-contracts.md` §5–6.
+`docs/specs/core-agents.md` §5, §7 (T12). `docs/specs/contracts.md` §5–6.
 
 ## Files you own
 `src/eye/incidents/store.py`, `src/eye/agents/reporter.py`, `src/eye/llm/prompts/reporter.md`, `tests/incidents/`.

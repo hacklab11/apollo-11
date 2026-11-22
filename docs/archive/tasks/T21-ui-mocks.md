@@ -6,7 +6,7 @@ Owner: P3 (runs a Devin or Claude Code session; checks the result in the browser
 The full one-page UI, working in mock mode, before the backend exists.
 
 ## Read first
-`docs/specs/13-api-and-ui.md` §3 (layout, visual rules, mock mode). `docs/specs/02-contracts.md` (shapes of the mock JSON). `web/mock/*.json`.
+`docs/specs/web.md` §3 (layout, visual rules, mock mode). `docs/specs/contracts.md` (shapes of the mock JSON). `web/mock/*.json`.
 
 ## Files you own
 `web/index.html`, `web/app.js`, `web/styles.css`, `web/README.md`.

@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T01 (T02/T03 for the metrics on their tables) · Blo
 All seed metrics as YAML with the num/den SQL contract, identities, causal seeds, and `query_metric`.
 
 ## Read first
-`docs/specs/05-metric-registry.md`, `docs/specs/03-simulator.md` §8, `docs/specs/02-contracts.md` §2–3.
+`docs/specs/data.md`, `docs/specs/simulator.md` §8, `docs/specs/contracts.md` §2–3.
 
 ## Files you own
 `config/metrics.yaml`, `config/identities.yaml`, `config/causal_seeds.yaml`, `src/eye/registry/loader.py`, `src/eye/registry/engine.py`, `tests/registry/`.

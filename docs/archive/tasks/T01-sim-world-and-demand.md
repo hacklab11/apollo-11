@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T00 · Blocks: T02, T03, T06
 A seeded simulator that builds the static world and generates traffic, search, feed, and the checkout funnel hour by hour into DuckDB, with a CLI to generate, export, and show stats.
 
 ## Read first
-`docs/specs/03-simulator.md` §1, §2, §3, §8, §10. `docs/specs/01-architecture.md` §2.
+`docs/specs/simulator.md` §1, §2, §3, §8, §10. `docs/specs/architecture.md` §2.
 
 ## Files you own
 `src/eye/sim/world.py`, `src/eye/sim/demand.py`, `src/eye/sim/engine.py`, `src/eye/sim/store.py`, `src/eye/sim/cli.py`, `tests/sim/test_world.py`, `tests/sim/test_demand.py`, `tests/sim/conftest.py`.

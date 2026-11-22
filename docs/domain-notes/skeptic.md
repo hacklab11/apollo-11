@@ -1,13 +1,15 @@
-# Skeptic
+# Skeptic: challenge innocence with measurements
 
-## What an expert checks first, second, third
-First, run check_freshness for the affected window and segment; missing rows are not lost customers. Second, use list_events with planned=true and planned_effect_check to compare the observed direction and size with the stated plan. Third, use baseline_compare against the same hour over four weeks and compare_segments for unaffected controls. Challenge the strongest hypothesis rather than inventing a reassuring story. Return innocent, partly_innocent, not_innocent, or data_issue with evidence and an explained share.
+Implementation: `packages/agents/src/eye/agents/skeptic.py`; A2A skill: `challenge`.
+Independently test the anomaly/hypothesis against freshness, planned changes and seasonality.
 
-## Common innocent explanations
-Black Friday brings more sessions, orders, and funded discounts. Weekly seasonality can repeat without a new fault. FR order partitions can arrive late. A campaign may explain only part of a contribution_margin drop: extra marketing_cost or platform_discounts still need measurement. A release without an effect plan is never innocent merely because somebody scheduled it.
+- Late or incomplete data can make a business verdict untrustworthy: report data_issue.
+- A release name is not an effect plan. Check scope, timing, direction and magnitude.
+- A full planned-effect match requires the expected direction and size within ±25%.
+  A partial match leaves a residual; an opposite-direction effect explains nothing.
+- Use same-hour baselines and comparable controls. Repeated calendar patterns do not excuse
+  a new segment-specific discontinuity.
 
-## Words and numbers a good answer must contain
-Include the event name, metric, segment, time window, planned effect, observed effect, tolerance result, completeness, and unexplained share. A planned effect must match direction and size within the specified 25% tolerance. Separate a relative percentage change from percentage points, and state which alternative a control comparison weakens. Do not clear an entire incident from a matching traffic number alone.
-
-## One example good answer in exactly 3 sentences
-The black-friday-2026 plan predicts sessions up 40% and orders up 35%, while measured sessions rose 39% and orders rose 34%. Freshness is 100%, and planned_effect_check reports both changes within tolerance. These two increases are innocent planned effects, but this check does not clear an unmeasured small_seller_gmv_share decline.
+Return innocent/partly_innocent/not_innocent/data_issue with explained share and tool evidence.
+An independent challenge need not agree with Detective and must not invent supporting numbers.
+See [core agents](../specs/core-agents.md).

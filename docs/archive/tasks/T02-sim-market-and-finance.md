@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T01 · Blocks: T04, T05, T17
 Marketplace dynamics between big and small players, money accounting, and the seller-private data file for SellerOS.
 
 ## Read first
-`docs/specs/03-simulator.md` §2.2–2.3, §4, §6, §9. `docs/specs/11-selleros-external.md` §3.
+`docs/specs/simulator.md` §2.2–2.3, §4, §6, §9. `docs/specs/selleros.md` §3.
 
 ## Files you own
 `src/eye/sim/market.py`, `src/eye/sim/finance.py`, `src/eye/sim/selleros_export.py`, `tests/sim/test_market.py`, `tests/sim/test_finance.py`. Small edits in `src/eye/sim/demand.py` to use the Buy Box (explain in the PR).

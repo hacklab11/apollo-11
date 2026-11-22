@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T07, T08, T09, T11, T15 (T16 for live runs) · Block
 Autonomous investigation: hypothesis board, graph walk, specialists over A2A, Skeptic checks, loop handling, code-checked stop rules.
 
 ## Read first
-`docs/specs/09-core-agents.md` §1, §3, §4, §7 (T14). `docs/specs/07-tools.md` §2–3. `docs/specs/10-a2a-and-specialists.md` §3. `docs/specs/04-scenarios.md`.
+`docs/specs/core-agents.md` §1, §3, §4, §7 (T14). `docs/specs/tools.md` §2–3. `docs/specs/specialists.md` §3. `docs/specs/simulator.md`.
 
 ## Files you own
 `src/eye/agents/detective.py`, `src/eye/agents/skeptic.py`, `src/eye/llm/prompts/detective.md`, `src/eye/llm/prompts/skeptic.md`, `tests/agents/test_detective.py`, `tests/agents/test_skeptic.py`, `tests/fixtures/llm/detective_*.jsonl`, `tests/fixtures/llm/skeptic_*.jsonl`.

@@ -24,6 +24,13 @@ A causal candidate is not an algebraic identity, and a breakdown self-loop is no
 [Cartographer](cartographer.md) proposes and validates graph refinements.
 See [tools](tools.md) for implemented numerical algorithms.
 
+Impact weights in `graph/store.py` seed contribution margin at 1.0 and ecosystem metrics
+(`small_seller_gmv_share`, `active_small_sellers`, `seller_hhi`) at a 0.3 floor: short-term
+margin alone misses long-term seller-health risk. Non-rejected, non-self edges propagate
+the maximum upstream weight for at most ten passes. Sum components receive mean share ×
+target weight; product/division identity terms share their largest weight; causal hypotheses
+pass `confidence × 0.5 × target weight`. Persisted weights round to six decimal places.
+
 ## Integration boundary
 
 In Compose, Core and agents use `EYE_DATA_URL` and never open simulator world state.

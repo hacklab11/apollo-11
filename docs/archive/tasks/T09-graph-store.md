@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T08 · Blocks: T10, T13, T14, T18
 The typed metric graph, built deterministically from the registry, persisted, with cycle detection and impact weights.
 
 ## Read first
-`docs/specs/06-graph-and-cartographer.md` §1–4, §7 (T09 tests). `docs/specs/02-contracts.md` §2.
+`docs/specs/cartographer.md` §1–4, §7 (T09 tests). `docs/specs/contracts.md` §2.
 
 ## Files you own
 `src/eye/graph/store.py`, `src/eye/graph/bootstrap.py`, `tests/graph/`.

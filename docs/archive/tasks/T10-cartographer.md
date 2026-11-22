@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T09, T11 · Blocks: demo step "add metric"
 An agent that places a new metric in the graph from its name, description, and SQL only, validates the edges, and handles ambiguity; plus LLM refinement of causal seeds at bootstrap.
 
 ## Read first
-`docs/specs/06-graph-and-cartographer.md` §2 (LLM part), §5, §6, §7 (T10 tests). `docs/specs/08-agent-runtime.md`. `docs/specs/01-architecture.md` §6 (SQL guard).
+`docs/specs/cartographer.md` §2 (LLM part), §5, §6, §7 (T10 tests). `docs/specs/agent-runtime.md`. `docs/specs/architecture.md` §6 (SQL guard).
 
 ## Files you own
 `src/eye/agents/cartographer.py`, `src/eye/tools/sqlguard.py`, `src/eye/llm/prompts/cartographer.md`, `tests/agents/test_cartographer.py`, `tests/fixtures/llm/cartographer_*.jsonl`.

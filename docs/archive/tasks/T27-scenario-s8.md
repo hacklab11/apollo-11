@@ -6,10 +6,10 @@ Owner: Dev 1 · Depends on: T04 (scenario manager, I1, I2 late-partition hook), 
 Implement I3 "Electronics coupon day" and inject and clear S8 "The €9 headphones" so the data matches the scenario bible. This is the scenario of the 3-minute live demo.
 
 ## Read first
-`docs/specs/04-scenarios.md` S8, I3, I1, I2 and run D6; `docs/specs/15-demo-and-pitch.md` §1; `docs/specs/03-simulator.md` §3.4, §4.2, §7; `docs/specs/11-selleros-external.md` §3.
+`docs/specs/simulator.md` S8, I3, I1, I2 and run D6; `docs/specs/demo.md` §1; `docs/specs/simulator.md` §3.4, §4.2, §7; `docs/specs/selleros.md` §3.
 
 ## Before you start
-`ScenarioId` in `src/eye/contracts.py` must contain `"S8"` and `"I3"` (`docs/specs/02-contracts.md` §10). Per `docs/plan/implementation-plan.md` §2 item 5, a developer makes this change by hand on `main`. If either is missing, stop and report it. Do not change `contracts.py` in this PR.
+`ScenarioId` in `src/eye/contracts.py` must contain `"S8"` and `"I3"` (`docs/specs/contracts.md` §10). Per `docs/archive/plan/implementation-plan.md` §2 item 5, a developer makes this change by hand on `main`. If either is missing, stop and report it. Do not change `contracts.py` in this PR.
 
 ## Files you own
 `src/eye/sim/scenarios.py` (S8 and I3 parts only), `config/scenarios.yaml` (S8 and I3 sections), `tests/sim/test_scenario_s8.py`, `tests/sim/test_scenario_i3.py`. The code that writes `external/selleros/data/sellers.json` may get the `source` field (list the file in the PR).

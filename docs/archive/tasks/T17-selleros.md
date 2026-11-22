@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T02 (sellers.json), T11 (runtime to copy) · Blocks:
 A separate project that acts as another company's agent: answers seller-side questions over A2A and acts on alerts.
 
 ## Read first
-`docs/specs/11-selleros-external.md`, `docs/specs/10-a2a-and-specialists.md` §1, `docs/specs/02-contracts.md` §8.
+`docs/specs/selleros.md`, `docs/specs/specialists.md` §1, `docs/specs/contracts.md` §8.
 
 ## Files you own
 Everything under `external/selleros/` (own `pyproject.toml`, package `selleros`, prompts, tests), except `external/selleros/data/` (generated).

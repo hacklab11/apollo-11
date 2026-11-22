@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T06, T09, T12, T13 (T14 for full flow) · Blocks: T2
 The running system: tick loop, investigations in parallel, public API, live events, and one command to start everything.
 
 ## Read first
-`docs/specs/01-architecture.md` §1, §3, §5, §7. `docs/specs/09-core-agents.md` §6. `docs/specs/13-api-and-ui.md` §1, §4 (T18).
+`docs/specs/architecture.md` §1, §3, §5, §7. `docs/specs/core-agents.md` §6. `docs/specs/web.md` §1, §4 (T18).
 
 ## Files you own
 `src/eye/orchestrator.py`, `src/eye/api/app.py`, `src/eye/api/events.py`, `src/eye/main.py` (`eye-core`), `scripts/dev.sh`, `scripts/reset.sh`, `tests/api/test_public_api.py`, `tests/test_orchestrator.py`.

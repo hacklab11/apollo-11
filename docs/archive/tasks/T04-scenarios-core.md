@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T02, T03 · Blocks: T05, T23
 Inject and clear each scenario with its change-log rows, effects, and decoys, so the data matches the scenario bible.
 
 ## Read first
-`docs/specs/04-scenarios.md` (all except S6 details), `docs/specs/03-simulator.md` hooks.
+`docs/specs/simulator.md` (all except S6 details), `docs/specs/simulator.md` hooks.
 
 ## Files you own
 `src/eye/sim/scenarios.py`, `config/scenarios.yaml`, `tests/sim/test_scenarios.py`.

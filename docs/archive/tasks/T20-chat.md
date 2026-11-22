@@ -6,7 +6,7 @@ Owner: Dev 2 · Depends on: T11, T19, T18 · Blocks: T22 (chat panel)
 `POST /api/chat` answers questions about the system by calling our own MCP server, proving that any agent can use it.
 
 ## Read first
-`docs/specs/13-api-and-ui.md` §2. `docs/specs/08-agent-runtime.md`. Official `mcp` 2.3.0 client docs.
+`docs/specs/web.md` §2. `docs/specs/agent-runtime.md`. Official `mcp` 2.3.0 client docs.
 
 ## Files you own
 `src/eye/api/chat.py`, `src/eye/llm/prompts/chat.md`, `tests/api/test_chat.py`.

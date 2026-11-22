@@ -6,7 +6,7 @@ Owner: Dev 1 · Depends on: T16, T17, T18, T19 · Blocks: demo on a public URL
 One image that runs the whole platform with one public, password-protected URL, on the demo laptop and in Codespaces.
 
 ## Read first
-`docs/specs/16-deployment.md` (all).
+`docs/specs/deployment.md` (all).
 
 ## Files you own
 `Dockerfile`, `docker-compose.yml`, `Caddyfile`, `scripts/run_all.sh`, `scripts/tunnel.sh`, `.env.example`, `.devcontainer/devcontainer.json`, `.dockerignore`.
