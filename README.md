@@ -371,4 +371,30 @@ The [S8 and D6 evals](https://github.com/hacklab11/apollo-11/pull/46) used `nvid
 
 ## Limitations
 
+### Agent egress and tenant limits
+
+Compose LLM agents (including specialists) have only internal networks. Model
+HTTP/HTTPS traffic uses `egress-proxy` (Squid); add an exact provider hostname to
+`config/squid/allowlist.txt` and restart the proxy to allow a new provider. All
+other destinations are denied before DNS lookup. Internal A2A/data hosts bypass
+the proxy via `NO_PROXY`. Specialists are not published on the host in Compose;
+use `docker compose exec eye-specialists` for local health checks. The offline
+override replaces the allowlist with `tests/e2e/proxy-allowlist.txt`, permitting
+`scripted-model`, which agents cannot reach directly. PydanticAI's OpenAI and
+Anthropic providers create HTTPX2 clients with environment proxy support enabled;
+the legacy HTTPX model client also honors these variables.
+
+The `orchestrator` settings in `config/settings.yaml` (local) and
+`config/compose.yaml` (Compose) configure the DBOS `data-hours` queue:
+`tenant_concurrency` (1), `tenant_rate_limit` (60 starts per rolling
+`tenant_rate_period_s`, default 60 seconds), and `max_queued_per_tenant` (100).
+DBOS enforces concurrency and rate limits per tenant partition across workers,
+in addition to `max_concurrent_investigations` across the whole queue.
+Excess work stays ENQUEUED; a full backlog refuses metric registrations with
+HTTP 429 and defers clock advancement. Backlog admission is serialized in the
+single Core process; it is not an atomic cross-Core quota. Keep one Core replica
+when relying on this backlog cap. `max_depth` (2) and `max_fan_out` (3) set the
+delegation Budget for each run. Tenant concurrency must not exceed the queue's
+global concurrency.
+
 The marketplace is synthetic: the five headphones and the €99 → €9 prices are narrative examples. The live run uses the affected electronics SKUs and their observed prices. Causal links are hypotheses until corroborated; the demo's SellerOS intervention changes only the simulated world. See the [documentation index](docs/README.md) for the implementation plan and specs.

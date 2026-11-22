@@ -14,7 +14,7 @@ check() {
 core=$(url web 8080)
 check "$core/api/status"
 check "$(url sim 8100)/health"
-check "$(url eye-specialists 8200)/healthz"
+docker compose exec -T eye-specialists python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8200/healthz', timeout=10); print('OK eye-specialists /healthz')"
 check "$(url selleros 8300)/healthz"
 check "$(url eye-mcp 8100)/healthz"
 check "$core/api/metrics"

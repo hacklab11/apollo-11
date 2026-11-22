@@ -1,13 +1,26 @@
+import asyncio
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
-from factories import make_anomaly, make_incident_s7, make_trail_s7
+from dbos import DBOS, SetEnqueueOptions
+from factories import (
+    make_add_metric_result,
+    make_anomaly,
+    make_incident_s7,
+    make_trail_s7,
+)
 from scripted_agents import ScriptedAgents
 
 from eye.config import Settings
-from eye.contracts import InvestigationResult, SellerAlertAck, SentinelDecision
+from eye.contracts import (
+    AddMetricRequest,
+    InvestigationResult,
+    SellerAlertAck,
+    SentinelDecision,
+)
 from eye.contracts_v2 import (
     AgentResult,
     DetectRequest,
@@ -20,7 +33,7 @@ from eye.contracts_v2 import (
 )
 from eye.control import audit_hash
 from eye.incidents.store import IncidentStore
-from eye.orchestrator import HOUR, Orchestrator
+from eye.orchestrator import HOUR, Orchestrator, TenantBackpressure
 from eye.warehouse.client import DataUnavailable
 
 
@@ -31,6 +44,125 @@ class Clock:
 
     def step(self) -> None:
         self.now += HOUR
+
+
+@pytest.mark.asyncio
+async def test_tenant_limits_and_backpressure(workflow) -> None:
+    core, scripted = workflow
+    await core.queue.set_partition_limiter_async({"limit": 1, "period": 3600})
+    core.settings.orchestrator.max_queued_per_tenant = 1
+    await core.step_once()
+    with SetEnqueueOptions(queue_partition_key="default"):
+        handle = await core.queue.enqueue_async(
+            core.run_hour, "limited", core.sim.now, core._metadata("limited")
+        )
+    try:
+        await asyncio.sleep(1.2)
+        status = await DBOS.get_workflow_status_async(handle.workflow_id)
+        assert status.status == "ENQUEUED"
+        assert len(scripted.requests) == 1
+        with pytest.raises(TenantBackpressure, match="default.*backlog is full"):
+            await core.register_metric(None)
+        now, tick = core.sim.now, core.tick
+        await core.step_once()
+        assert (core.sim.now, core.tick) == (now, tick)
+        await core._check_backlog("other-tenant")
+    finally:
+        await DBOS.cancel_workflow_async(handle.workflow_id)
+
+
+@pytest.mark.asyncio
+async def test_tenant_concurrency_queues_without_blocking_other_tenants(
+    workflow,
+) -> None:
+    core, _ = workflow
+    entered, release = threading.Event(), threading.Event()
+    call = core.directory.call
+
+    async def hold(skill, payload, metadata, result_type):
+        if metadata.context_id == "first":
+            entered.set()
+            await asyncio.to_thread(release.wait, 15)
+        return await call(skill, payload, metadata, result_type)
+
+    core.directory.call = hold
+    handles = []
+    try:
+        for name, tenant in (
+            ("first", "default"),
+            ("second", "default"),
+            ("other", "other"),
+        ):
+            with SetEnqueueOptions(queue_partition_key=tenant):
+                handles.append(
+                    await core.queue.enqueue_async(
+                        core.run_hour,
+                        name,
+                        core.sim.now,
+                        core._metadata(name).model_copy(update={"tenant_id": tenant}),
+                    )
+                )
+            if name == "first":
+                assert await asyncio.to_thread(entered.wait, 10)
+        await asyncio.wait_for(handles[2].get_result(), timeout=10)
+        status = await DBOS.get_workflow_status_async(handles[1].workflow_id)
+        assert status.status == "ENQUEUED"
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(*(h.get_result() for h in handles)), 15)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skill", ["detect", "map"])
+async def test_queued_workflow_gets_execution_deadline(workflow, skill: str) -> None:
+    core, scripted = workflow
+    await core.queue.set_partition_limiter_async({"limit": 1, "period": 2})
+    await core.step_once()
+    core.settings.orchestrator.run_deadline_s = 0.5
+    metadata = core._metadata("after-queue-wait")
+    seen = []
+    call = core.directory.call
+
+    async def capture(skill, payload, metadata, result_type):
+        seen.append(metadata)
+        assert metadata.budget.deadline > datetime.now(UTC)
+        return await call(skill, payload, metadata, result_type)
+
+    core.directory.call = capture
+    scripted.executors["map"].result = AgentResult(
+        status="done", result=make_add_metric_result()
+    )
+    with SetEnqueueOptions(queue_partition_key="default"):
+        if skill == "detect":
+            handle = await core.queue.enqueue_async(
+                core.run_hour, "after-queue-wait", core.sim.now, metadata
+            )
+        else:
+            handle = await core.queue.enqueue_async(
+                core.map_metric,
+                "after-queue-wait",
+                AddMetricRequest(
+                    name="orders_per_session",
+                    description="Orders per session",
+                    expression="orders / sessions",
+                ),
+                metadata,
+            )
+    await asyncio.wait_for(handle.get_result(), timeout=10)
+    assert metadata.budget.deadline < datetime.now(UTC)
+    assert len(seen) == 1
+    assert seen[0].budget.deadline > metadata.budget.deadline
+    assert len(scripted.requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_configured_delegation_budget(workflow) -> None:
+    core, _ = workflow
+    core.settings.orchestrator.max_depth = 0
+    core.settings.orchestrator.max_fan_out = 7
+    budget = core._metadata("configured").budget
+    assert budget.max_depth == 0
+    assert budget.max_fan_out == 7
 
 
 @pytest.mark.asyncio

@@ -33,7 +33,7 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
     core = services["eye-core"]
     assert core["environment"]["EYE_DATA_URL"] == "http://eye-data:8150"
     assert core["depends_on"]["eye-data"] == {"condition": "service_healthy"}
-    assert core["networks"] == ["eye", "warehouse"]
+    assert core["networks"] == ["eye", "warehouse", "agents"]
     assert "eye-data:/app/data" in core["volumes"]
     assert not any(v.startswith("sim-lake:") for v in core["volumes"])
     assert "seller-data:/app/packages/selleros/data" in sim["volumes"]
@@ -41,3 +41,24 @@ def test_continuous_simulator_compose_boundary(repo_root: Path) -> None:
         "seller-data:/app/packages/selleros/data" not in services["eye-core"]["volumes"]
     )
     assert services["eye-mcp"]["ports"] == ["127.0.0.1:${MCP_PORT:-8110-8119}:8100"]
+
+
+def test_agents_have_only_internal_networks(repo_root: Path) -> None:
+    compose = yaml.safe_load((repo_root / "compose.yaml").read_text())
+    for name in (
+        "sentinel",
+        "detective",
+        "skeptic",
+        "reporter",
+        "cartographer",
+        "eye-specialists",
+    ):
+        service = compose["services"][name]
+        assert all(compose["networks"][n]["internal"] for n in service["networks"])
+        assert "ports" not in service
+        assert service["environment"]["EYE_CORE_URL"] == "http://eye-core:8000"
+        assert service["environment"]["EYE_MCP_URL"] == "http://eye-mcp:8100/mcp"
+        for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+            assert service["environment"][key] == "http://egress-proxy:3128"
+        assert "scripted-model" not in service["environment"]["NO_PROXY"]
+    assert compose["services"]["egress-proxy"]["networks"] == ["agents", "eye"]

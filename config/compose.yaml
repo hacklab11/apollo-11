@@ -1,6 +1,13 @@
 # Use the normal live LLM defaults; CI supplies no credentials.
 sim:
   autostart: false
+orchestrator:
+  tenant_concurrency: 1
+  tenant_rate_limit: 60
+  tenant_rate_period_s: 60
+  max_queued_per_tenant: 100
+  max_depth: 2
+  max_fan_out: 3
 a2a:
   sentinel_url: http://sentinel:8210/
   detective_url: http://detective:8220/

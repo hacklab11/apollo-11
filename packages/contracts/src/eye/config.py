@@ -86,6 +86,12 @@ class OrchestratorSettings(_Section):
     run_tokens: int = Field(100000, gt=0)
     run_deadline_s: float = Field(600, gt=0)
     max_concurrent_investigations: int = Field(2, ge=1, le=4)
+    tenant_concurrency: int = Field(1, ge=1)
+    tenant_rate_limit: int = Field(60, ge=1)
+    tenant_rate_period_s: float = Field(60, gt=0)
+    max_queued_per_tenant: int = Field(100, ge=1)
+    max_depth: int = Field(2, ge=0)
+    max_fan_out: int = Field(3, ge=1)
     pause_sim_during_investigation: bool = True
 
 
