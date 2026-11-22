@@ -1,11 +1,13 @@
 """Growth specialist: ads pacing, auctions, marketing traffic, and discounts."""
 
-from eye.llm.runtime import ToolSpec
+from pydantic_ai import Tool
+
 from eye.specialists.tools import (
     AdsPacingInput,
     CategoryInput,
     CountryInput,
     DataClient,
+    Evidence,
     changes_tool,
     data_tool,
     metric_tool,
@@ -22,7 +24,7 @@ SKILLS = {
 }
 
 
-def tools(client: DataClient) -> list[ToolSpec]:
+def tools(client: DataClient) -> list[Tool[Evidence]]:
     return [
         data_tool(
             client,

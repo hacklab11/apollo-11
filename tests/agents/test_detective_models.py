@@ -23,7 +23,7 @@ def test_anthropic_effort_and_explicit_fallbacks(
         )
 
     constructor = Mock(side_effect=model)
-    monkeypatch.setattr("eye.agents.models.AnthropicModel", constructor)
+    monkeypatch.setattr("agent_runtime.configured_models.AnthropicModel", constructor)
     settings = LlmSettings(
         effort={"detective": effort}, fallback_models={"detective": ["backup"]}
     )

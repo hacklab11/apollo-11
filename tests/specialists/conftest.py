@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncIterator, Iterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from uuid import uuid4
 
 import duckdb
@@ -15,6 +14,7 @@ from a2a.types.a2a_pb2 import Message, Part, Role, SendMessageRequest, Task
 from fastapi import FastAPI
 from google.protobuf.json_format import ParseDict
 from google.protobuf.struct_pb2 import Value
+from pydantic_ai import models
 from starlette.applications import Starlette
 
 from eye.config import A2aSettings, Settings
@@ -26,13 +26,17 @@ from eye.warehouse.domain import create_router
 from eye_auth.client import oauth_client
 from eye_auth.trust import verify_card
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "llm"
 DAY = datetime(2026, 11, 27, tzinfo=UTC)
 BASELINE_DAY = DAY - timedelta(days=7)
 S7_TS = DAY + timedelta(hours=3)
 SCHEDULE = [0.02, 0.04, 0.07, 0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42]
 # Cumulative spend at each hourly row; the 10:00 row exhausts the daily budget.
 ADV3_SPENT = [60, 140, 230, 330, 440, 560, 680, 790, 880, 950, 1000, 1000]
+
+
+@pytest.fixture(autouse=True)
+def no_model_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)
 
 
 def _ts(value: datetime) -> str:

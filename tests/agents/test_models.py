@@ -153,7 +153,9 @@ async def test_cost_of_routed_response(
                 )
             )
 
-        monkeypatch.setattr("eye.agents.models.OpenAIProvider", offline_provider)
+        monkeypatch.setattr(
+            "agent_runtime.configured_models.OpenAIProvider", offline_provider
+        )
         agent = Agent(build_model(settings, "cartographer"))
         with models.override_allow_model_requests(True):
             outcome = await run_agent(

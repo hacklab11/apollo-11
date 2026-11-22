@@ -181,7 +181,7 @@ async def test_provider_error_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> 
         "scripted": fallback,
     }
     monkeypatch.setattr(
-        "eye.agents.models.AnthropicModel", lambda name, **_: models[name]
+        "agent_runtime.configured_models.AnthropicModel", lambda name, **_: models[name]
     )
     monkeypatch.setattr("eye.agents.sentinel.build_model", build_model)
     agent._llm = LlmSettings(

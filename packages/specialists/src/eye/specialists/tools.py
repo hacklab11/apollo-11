@@ -1,13 +1,15 @@
 """Specialist domain tools: read-only HTTP calls to the core data API."""
 
 import json
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import httpx
 from pydantic import AwareDatetime, BaseModel, Field
+from pydantic_ai import RunContext, Tool
 
 from eye.contracts import Category, Channel, Country, Platform, SellerTier
-from eye.llm.runtime import ToolSpec
 
 # The data API returns up to 5 000 rows; the model only needs enough to reason.
 MAX_ROWS = 200
@@ -144,20 +146,42 @@ def _params(args: BaseModel) -> dict[str, Any]:
     return args.model_dump(mode="json", exclude_none=True)
 
 
+@dataclass
+class Evidence:
+    steps: list[dict[str, str]] = field(default_factory=list)
+    used: set[str] = field(default_factory=set)
+
+
+def _tool(
+    name: str,
+    description: str,
+    input_model: type[Window],
+    handler: Callable[[BaseModel], Awaitable[DataResult]],
+) -> Tool[Evidence]:
+    async def call(ctx: RunContext[Evidence], args: BaseModel) -> DataResult:
+        result = await handler(args)
+        ctx.deps.steps.append({"tool": name, "summary": result.summary})
+        ctx.deps.used.add(result.endpoint)
+        return result
+
+    call.__annotations__["args"] = input_model
+    return Tool(call, name=name, description=description, takes_ctx=True)
+
+
 def data_tool(
     client: DataClient,
     name: str,
     endpoint: str,
     input_model: type[Window],
     description: str,
-) -> ToolSpec:
+) -> Tool[Evidence]:
     async def call(args: BaseModel) -> DataResult:
         return await client.get(endpoint, _params(args))
 
-    return ToolSpec(name, description, input_model, call)
+    return _tool(name, description, input_model, call)
 
 
-def metric_tool(client: DataClient) -> ToolSpec:
+def metric_tool(client: DataClient) -> Tool[Evidence]:
     async def call(args: BaseModel) -> DataResult:
         params = _params(args)
         segment = {
@@ -176,7 +200,7 @@ def metric_tool(client: DataClient) -> ToolSpec:
         params["segment"] = json.dumps(segment, sort_keys=True)
         return await client.get("metric", params)
 
-    return ToolSpec(
+    return _tool(
         "metric",
         "Hourly actual vs expected values and z-scores for one registry metric in "
         "one segment. Use it to quantify the metric the question is about and a "
@@ -186,7 +210,7 @@ def metric_tool(client: DataClient) -> ToolSpec:
     )
 
 
-def changes_tool(client: DataClient) -> ToolSpec:
+def changes_tool(client: DataClient) -> Tool[Evidence]:
     return data_tool(
         client,
         "changes",
