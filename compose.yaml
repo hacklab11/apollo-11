@@ -169,6 +169,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      sentinel:
+        condition: service_healthy
+      detective:
+        condition: service_healthy
+      skeptic:
+        condition: service_healthy
+      reporter:
+        condition: service_healthy
+      cartographer:
+        condition: service_healthy
       eye-data:
         condition: service_healthy
       eye-specialists:
