@@ -29,6 +29,7 @@ from eye.contracts import (
 )
 from eye.incidents.store import IncidentStore
 from eye.llm.client import LLMClient, LLMUnavailable, RunCallLimitExceeded
+from eye.warehouse.client import DataUnavailable
 
 HOUR = timedelta(hours=1)
 log = logging.getLogger(__name__)
@@ -169,6 +170,7 @@ class Orchestrator:
         self._upsert_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
         self._pending: deque[Incident] = deque()
+        self._lifecycle_retry: datetime | None = None
         self._closing = False
         self._stop = asyncio.Event()
 
@@ -379,6 +381,8 @@ class Orchestrator:
             ts = self.sim.now
             await asyncio.to_thread(self.sim.step)
             if self.sim.now == ts:
+                if self._lifecycle_retry is not None:
+                    self._update_incidents(self.sim_ts)
                 return self.status()
             self.invalidate()
             self.sim_ts = ts
@@ -409,9 +413,23 @@ class Orchestrator:
             if manual:
                 while self._tasks:
                     await asyncio.gather(*self._tasks, return_exceptions=True)
-            for incident in self.incidents.lifecycle(ts, self.z_lookup):
-                self.emit("incident_upserted", incident)
+            self._update_incidents(ts)
             return self.status()
+
+    def _update_incidents(self, ts: datetime) -> None:
+        hour = self._lifecycle_retry or ts
+        # Replay at most one extra hour per poll; the store skips completed updates.
+        for _ in range(2):
+            if hour > ts:
+                break
+            try:
+                for incident in self.incidents.lifecycle(hour, self.z_lookup):
+                    self.emit("incident_upserted", incident, hour)
+            except DataUnavailable as exc:
+                _log_error("incident_lifecycle_unavailable", exc)
+                break
+            hour += HOUR
+        self._lifecycle_retry = hour if hour <= ts else None
 
     def _open_incidents(self) -> list[Incident]:
         return [

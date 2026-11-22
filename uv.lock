@@ -544,20 +544,26 @@ source = { editable = "packages/data" }
 dependencies = [
     { name = "duckdb" },
     { name = "eye-contracts" },
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "networkx" },
     { name = "numpy" },
     { name = "pydantic" },
     { name = "pyyaml" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "duckdb", specifier = "==2.0.1" },
     { name = "eye-contracts", editable = "packages/contracts" },
+    { name = "fastapi", specifier = "==0.165.0" },
+    { name = "httpx", specifier = "==0.28.1" },
     { name = "networkx", specifier = "==3.7" },
     { name = "numpy", specifier = "==2.5.5" },
     { name = "pydantic", specifier = "==2.14.4" },
     { name = "pyyaml", specifier = "==6.0.4" },
+    { name = "uvicorn", specifier = "==0.54.0" },
 ]
 
 [[package]]

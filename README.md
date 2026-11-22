@@ -21,7 +21,9 @@ docker compose down
 
 Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
 its own container and HTTP health check; `sim-generate` exits successfully after
-initializing the shared DuckDB/SellerOS volumes. Host ports can be changed in
+initializing the DuckDB/SellerOS volumes. `eye-data` reads that DuckDB snapshot
+from a read-only mount and serves it to Core on a private network; no warehouse
+port is published. Host ports can be changed in
 `.env`. Compose uses the normal live Anthropic LLM defaults, matching
 `config/settings.yaml`. Set `ANTHROPIC_API_KEY` in `.env` to run real agents;
 Compose does not override credentials. For OpenRouter, add the same `llm`
@@ -32,8 +34,9 @@ too. Never commit keys.
 CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
 model requests. Missing credentials produce the existing `refinement_unavailable`
 warning without preventing startup; this is not an agent-quality eval.
-`config/compose.yaml` keeps simulation paused for smoke checks and rehearsals;
-resume it through the UI/API when ready. Containers bind
+This Compose setup reads the initial snapshot; the Core clock only advances
+when the warehouse has another complete hour. Use the local stack below for a
+rehearsal that drives the simulator directly. Containers bind
 `EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
 `EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
 `EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
@@ -112,6 +115,18 @@ To save LLM responses to `data/llm_cache.jsonl`, set `llm.mode: record` in your 
 ### Docker
 
 Once [the deployment card](docs/tasks/T26-deployment.md) lands, use Docker Compose. Populate `.env` from `.env.example` with the API key and demo credentials, then run `docker compose up --build -d` and open `http://localhost:8080/`. See the [deployment guide](docs/specs/16-deployment.md#5-steps-to-deploy-for-the-team) for the password-protected tunnel and Codespaces backup.
+
+### Separate read-only data service
+
+With a running Parquet producer, start `uv run eye-data` with the same `SIM_LAKE_DIR`
+(default `data/lake`). To use an existing warehouse instead, set `EYE_WAREHOUSE_PATH`
+on the data service. Check readiness at `http://127.0.0.1:8150/healthz`; it returns
+the completed time range once at least one hour is ready.
+
+Run `EYE_DATA_URL=http://127.0.0.1:8150 uv run eye-core` to read metrics, the causal
+graph, and partition status over HTTP. The Core clock consumes completed hours
+without advancing the producer. Scenario controls and adding metrics from SQL
+remain available only in the legacy local mode.
 
 ## Workspace layout
 

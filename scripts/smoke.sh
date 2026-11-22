@@ -17,6 +17,8 @@ check "$(url eye-specialists 8200)/healthz"
 check "$(url selleros 8300)/healthz"
 check "$(url eye-mcp 8100)/healthz"
 check "$core/api/metrics"
+check "$core/api/metrics/sessions"
+check "$core/api/graph"
 check "$core/"
 docker compose exec -T eye-core python - <<'PY'
 import asyncio
@@ -34,4 +36,4 @@ async def main():
 
 asyncio.run(main())
 PY
-printf 'Compose smoke passed (health, public metrics API, web UI).\n'
+printf 'Compose smoke passed (health, Core warehouse reads, web UI).\n'
