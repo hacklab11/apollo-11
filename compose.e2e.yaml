@@ -43,6 +43,21 @@ services:
   eye-specialists:
     <<: *offline
 
+  sentinel:
+    <<: *offline
+
+  detective:
+    <<: *offline
+
+  skeptic:
+    <<: *offline
+
+  reporter:
+    <<: *offline
+
+  cartographer:
+    <<: *offline
+
   eye-mcp:
     <<: *offline
 

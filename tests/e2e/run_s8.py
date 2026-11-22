@@ -41,17 +41,27 @@ def reported(client: httpx.Client, typo_ts: datetime) -> Incident | None:
         trail = TRAIL.validate_json(
             request(client, "GET", f"/api/incidents/{item.id}/trail").content
         )
-        for actor in ("detective", "skeptic", "reporter"):
+        for actor in ("detective", "skeptic"):
             assert any(s.actor == actor and s.action == "llm_call" for s in trail), (
                 actor
             )
         for actor in ("detective", "skeptic"):
             for name in ("baseline_compare", "check_freshness", "submit"):
                 assert any(
-                    s.actor == actor and s.tool == name and s.output is not None
+                    s.actor == actor
+                    and s.tool == name
+                    and s.output_summary
+                    and s.output is None
+                    and s.input == {}
                     for s in trail
                 ), (actor, name)
         assert all(e.step_id for e in detail.root_cause.evidence_for), detail
+        assert any(
+            row["agent"] == "report"
+            and row["action"] == "agent_done"
+            and row["incident_id"] == item.id
+            for row in request(client, "GET", "/api/audit").json()
+        ), "Reporter skill must complete for this incident"
         return detail
     return None
 
