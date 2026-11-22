@@ -6,7 +6,15 @@ import httpx
 from a2a.client.card_resolver import A2ACardResolver
 from a2a.client.errors import AgentCardResolutionError
 from a2a.client.transports.jsonrpc import JsonRpcTransport
-from a2a.types.a2a_pb2 import AgentCard, Message, Part, Role, SendMessageRequest
+from a2a.types.a2a_pb2 import (
+    AgentCard,
+    Message,
+    Part,
+    Role,
+    SendMessageRequest,
+    TaskState,
+)
+from a2a.utils.errors import A2AError
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.struct_pb2 import Struct, Value
 from opentelemetry import propagate, trace
@@ -14,6 +22,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from pydantic import BaseModel
 
 from eye.config import A2aSettings
+from eye.contracts import SellerAlert, SellerAlertAck
 from eye.contracts_v2 import AgentResult, TaskMetadata
 
 
@@ -106,3 +115,50 @@ class AgentDirectory:
             return AgentResult[result_type].model_validate(
                 MessageToDict(task.artifacts[0].parts[0].data)
             )
+
+    async def notify_seller_os(self, alert: SellerAlert) -> SellerAlertAck:
+        try:
+            with self.tracer.start_as_current_span("agent.selleros"):
+                headers = {"A2A-Version": "1.0"}
+                propagate.inject(headers)
+                async with httpx.AsyncClient(
+                    transport=self.transport,
+                    timeout=self.settings.timeout_s,
+                    headers=headers,
+                ) as client:
+                    url = self.settings.selleros_url
+                    card = await A2ACardResolver(client, url).get_agent_card()
+                    response = await JsonRpcTransport(
+                        client, card, url, is_shared_httpx=True
+                    ).send_message(
+                        SendMessageRequest(
+                            message=Message(
+                                message_id=uuid4().hex,
+                                role=Role.ROLE_USER,
+                                parts=[
+                                    Part(
+                                        data=ParseDict(
+                                            alert.model_dump(mode="json"), Value()
+                                        )
+                                    ),
+                                    Part(text=alert.summary),
+                                ],
+                            )
+                        )
+                    )
+                task = response.task
+                if (
+                    not response.HasField("task")
+                    or task.status.state != TaskState.TASK_STATE_COMPLETED
+                    or len(task.artifacts) != 1
+                    or len(task.artifacts[0].parts) != 1
+                    or not task.artifacts[0].parts[0].HasField("data")
+                ):
+                    raise ValueError(
+                        "expected a completed SellerOS task with one DataPart"
+                    )
+                return SellerAlertAck.model_validate(
+                    MessageToDict(task.artifacts[0].parts[0].data)
+                )
+        except (A2AError, httpx.HTTPError, ValueError):
+            return SellerAlertAck(received=False, actions_taken=[])

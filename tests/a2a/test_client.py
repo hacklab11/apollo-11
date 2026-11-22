@@ -8,6 +8,7 @@ from stub_server import EchoExecutor, stub_server
 from eye.a2a_client import A2AClient
 from eye.config import A2aSettings
 from eye.contracts import SellerAlert, SpecialistRequest
+from eye.directory import AgentDirectory
 
 
 def request() -> SpecialistRequest:
@@ -130,3 +131,20 @@ async def test_owned_http_client_closed() -> None:
     client = A2AClient(settings())
     await client.aclose()
     assert client._http.is_closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failed", [False, True])
+async def test_directory_delivers_seller_alerts(failed: bool) -> None:
+    app, executor = stub_server(EchoExecutor(failed=failed))
+    directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
+    alert = SellerAlert(
+        incident_id="inc_1",
+        seller_ids=["S-01"],
+        skus=[],
+        summary="Price loop",
+        recommended_action="Review",
+    )
+    ack = await directory.notify_seller_os(alert)
+    assert ack.received == (not failed)
+    assert executor.requests == [alert]
