@@ -1,6 +1,7 @@
 x-offline-environment: &offline-environment
   ANTHROPIC_API_KEY: ""
   OPENROUTER_API_KEY: ""
+  EYE_MODEL_API_KEY: ""
   EYE_E2E_TOKEN: offline-test-only
 
 x-offline-auth: &offline-auth

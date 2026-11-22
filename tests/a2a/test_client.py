@@ -167,15 +167,29 @@ async def test_directory_skips_invalid_card_and_keeps_healthy_agent(caplog) -> N
     async def handle(req: httpx.Request) -> httpx.Response:
         if req.url.host not in apps:
             return httpx.Response(404)
-        response = await httpx.ASGITransport(app=apps[req.url.host]).handle_async_request(req)
+        response = await httpx.ASGITransport(
+            app=apps[req.url.host]
+        ).handle_async_request(req)
         if req.url.host == "detective":
+            await response.aread()
             body = response.json()
             body.pop("signatures", None)
             return httpx.Response(200, json=body)
         return response
 
     directory = AgentDirectory(
-        A2aSettings(**{f"{name}_url": f"http://{name}" for name in ("sentinel", "detective", "skeptic", "reporter", "cartographer")}),
+        A2aSettings(
+            **{
+                f"{name}_url": f"http://{name}"
+                for name in (
+                    "sentinel",
+                    "detective",
+                    "skeptic",
+                    "reporter",
+                    "cartographer",
+                )
+            }
+        ),
         transport=httpx.MockTransport(handle),
     )
     await directory.resolve()
@@ -186,7 +200,9 @@ async def test_directory_skips_invalid_card_and_keeps_healthy_agent(caplog) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["missing", "rejected"])
-async def test_seller_delivery_returns_failure_on_oauth_error(failure, monkeypatch) -> None:
+async def test_seller_delivery_returns_failure_on_oauth_error(
+    failure, monkeypatch
+) -> None:
     app, executor = stub_server(name="selleros")
     if failure == "missing":
         monkeypatch.delenv("EYE_AUTH_EYE_CORE_SECRET", raising=False)
@@ -194,8 +210,14 @@ async def test_seller_delivery_returns_failure_on_oauth_error(failure, monkeypat
     else:
         monkeypatch.setenv("EYE_AUTH_EYE_CORE_SECRET", "invalid-test-only")
     directory = AgentDirectory(settings(), transport=httpx.ASGITransport(app=app))
-    ack = await directory.notify_seller_os(SellerAlert(
-        incident_id="inc_1", seller_ids=[], skus=[], summary="Check", recommended_action="Review",
-    ))
+    ack = await directory.notify_seller_os(
+        SellerAlert(
+            incident_id="inc_1",
+            seller_ids=[],
+            skus=[],
+            summary="Check",
+            recommended_action="Review",
+        )
+    )
     assert not ack.received and not ack.actions_taken
     assert not executor.requests

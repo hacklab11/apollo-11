@@ -9,9 +9,30 @@ def test_compose_retains_service_specific_environment(repo_root: Path) -> None:
     for suffix in ("PROVIDER", "BASE_URL", "MODEL", "API_KEY_ENV"):
         key = f"SELLEROS_{suffix}"
         assert key in seller
-        assert all(key not in service.get("environment", {}) for name, service in services.items() if name != "selleros")
+        assert all(
+            key not in service.get("environment", {})
+            for name, service in services.items()
+            if name != "selleros"
+        )
     assert "SIM_SECONDS_PER_SIM_HOUR" in services["sim"]["environment"]
     assert "EYE_AUTH_CONFIG" in services["auth"]["environment"]
+
+
+def test_only_model_callers_receive_model_credentials(repo_root: Path) -> None:
+    services = yaml.safe_load((repo_root / "compose.yaml").read_text())["services"]
+    callers = {
+        "sentinel",
+        "detective",
+        "skeptic",
+        "reporter",
+        "cartographer",
+        "eye-specialists",
+        "selleros",
+    }
+    keys = {"ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "EYE_MODEL_API_KEY"}
+    for name, service in services.items():
+        present = keys.intersection(service.get("environment", {}))
+        assert present == (keys if name in callers else set())
 
 
 def test_compose_auth_credentials_are_isolated(repo_root: Path) -> None:

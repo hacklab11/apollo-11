@@ -8,6 +8,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+import httpx
 import pytest
 import pytest_asyncio
 from dbos import DBOS, SetEnqueueOptions
@@ -435,6 +436,7 @@ async def test_directory_refreshes_rejected_cached_card_once(fresh_valid: bool) 
         if request.method == "GET":
             gets.append(request.url.host)
             if not fresh_valid:
+                await response.aread()
                 body = response.json()
                 body.pop("signatures", None)
                 return httpx.Response(200, json=body)
@@ -442,16 +444,21 @@ async def test_directory_refreshes_rejected_cached_card_once(fresh_valid: bool) 
 
     directory.transport = httpx.MockTransport(handle)
     metadata = TaskMetadata(
-        tenant_id="default", context_id="refresh",
+        tenant_id="default",
+        context_id="refresh",
         traceparent="00-" + "1" * 32 + "-" + "2" * 16 + "-01",
         budget={"tokens": 100, "cost_usd": 0.5, "deadline": "2099-01-01T00:00:00Z"},
     )
     if fresh_valid:
-        await directory.call("detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult)
+        await directory.call(
+            "detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult
+        )
         assert len(scripted.requests) == 1
     else:
         with pytest.raises(ValueError, match="Untrusted agent card"):
-            await directory.call("detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult)
+            await directory.call(
+                "detect", DetectRequest(ts=datetime.now(UTC)), metadata, DetectResult
+            )
         assert not scripted.requests
     assert gets == ["sentinel"]
 

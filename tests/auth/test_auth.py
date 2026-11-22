@@ -58,12 +58,16 @@ async def test_oauth_preserves_caller_timeout(authority, override: int | None) -
         timeouts.append(request.extensions["timeout"])
         return httpx.Response(200)
 
-    async with httpx.AsyncClient(timeout=60, transport=httpx.MockTransport(handle)) as raw:
+    async with httpx.AsyncClient(
+        timeout=60, transport=httpx.MockTransport(handle)
+    ) as raw:
         options = {} if override is None else {"timeout": override}
         async with oauth_client({"sentinel:detect"}, http=raw, **options) as client:
             await client.get("http://agent/")
         assert not raw.is_closed
-    assert timeouts == [dict.fromkeys(("connect", "read", "write", "pool"), override or 60)]
+    assert timeouts == [
+        dict.fromkeys(("connect", "read", "write", "pool"), override or 60)
+    ]
 
 
 @pytest.fixture
