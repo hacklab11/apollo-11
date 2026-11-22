@@ -24,6 +24,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from agent_runtime import Budget, RunScope, RunUsageSummary
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.agents.a2a_service import Run, Skill, SkillExecutor, agent_card, send_skill
 from eye.config import Settings, load_settings
 from eye.contracts import AddMetricResult, Anomaly, Hypothesis, TrailStep
@@ -343,6 +344,7 @@ def create_app(
 
 
 def main() -> None:
+    setup_telemetry()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("agent", choices=PORTS)
     name = parser.parse_args().agent
@@ -353,8 +355,12 @@ def main() -> None:
     settings = load_settings()
     configure_client(LLMClient(settings.llm))
     uvicorn.run(
-        create_app(
-            name, os.environ.get("EYE_AGENT_URL", f"http://127.0.0.1:{port}/"), settings
+        instrument_app(
+            create_app(
+                name,
+                os.environ.get("EYE_AGENT_URL", f"http://127.0.0.1:{port}/"),
+                settings,
+            )
         ),
         host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=port,

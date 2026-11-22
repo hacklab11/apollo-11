@@ -12,6 +12,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import SentinelSettings, load_settings
 from eye.contracts import GraphView, MetricDef
 from eye.graph.bootstrap import load_or_bootstrap
@@ -179,13 +180,14 @@ def create_app(warehouse: Warehouse) -> FastAPI:
 
 
 def main() -> None:
+    setup_telemetry()
     path = os.environ.get("EYE_WAREHOUSE_PATH")
     lake = None if path else Path(os.environ.get("SIM_LAKE_DIR", "data/lake"))
     settings = load_settings()
     with duckdb.connect(path or ":memory:", read_only=bool(path)) as connection:
         app = create_app(Warehouse(connection, settings.sentinel, lake=lake))
         uvicorn.run(
-            app,
+            instrument_app(app),
             host=os.environ.get("EYE_DATA_HOST", "127.0.0.1"),
             port=int(os.environ.get("EYE_DATA_PORT", "8150")),
             access_log=False,

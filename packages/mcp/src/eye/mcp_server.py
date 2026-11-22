@@ -15,6 +15,7 @@ from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter, ValidationErr
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.api.app import MetricDefinition
 from eye.config import load_settings
 from eye.contracts import (
@@ -353,12 +354,15 @@ def transport_security() -> TransportSecuritySettings | None:
 
 
 def main() -> None:
+    setup_telemetry()
     settings = load_settings()
     server = create_server(
         os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{settings.ports.core}")
     )
     uvicorn.run(
-        server.streamable_http_app(transport_security=transport_security()),
+        instrument_app(
+            server.streamable_http_app(transport_security=transport_security())
+        ),
         host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=settings.ports.mcp,
         access_log=False,

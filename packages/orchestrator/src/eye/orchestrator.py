@@ -12,8 +12,11 @@ from typing import Literal, Protocol
 from uuid import uuid4
 
 from dbos import DBOS, DBOSConfiguredInstance, SetEnqueueOptions, SetWorkflowID
+from opentelemetry import trace
+from opentelemetry.context import Context
 from pydantic import BaseModel
 
+from agent_runtime.tracing import inject_trace_context
 from eye.api.events import EventBus
 from eye.config import Settings
 from eye.contracts import (
@@ -431,6 +434,22 @@ class Orchestrator(DBOSConfiguredInstance):
 
     @DBOS.workflow()
     async def run_hour(self, run_id: str, ts: datetime, metadata: TaskMetadata) -> None:
+        with trace.get_tracer(__name__).start_as_current_span(
+            "orchestrator.run_hour",
+            context=Context(),
+            attributes={"agent.run_id": run_id},
+        ):
+            carrier: dict[str, str] = {}
+            inject_trace_context(carrier)
+            if "traceparent" in carrier:
+                metadata = metadata.model_copy(
+                    update={"traceparent": carrier["traceparent"]}
+                )
+            await self._run_hour(run_id, ts, metadata)
+
+    async def _run_hour(
+        self, run_id: str, ts: datetime, metadata: TaskMetadata
+    ) -> None:
         try:
             detected, metadata = await self.agent_call(
                 run_id,

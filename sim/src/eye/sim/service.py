@@ -9,10 +9,12 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 
+import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from agent_runtime.tracing import instrument_app, setup_telemetry
 from eye.config import Settings, load_settings
 from eye.sim.lake import HOUR, LakeWriter
 from eye.sim.scenarios import ScenarioState
@@ -172,9 +174,11 @@ def create_app(
 
 
 def serve() -> None:
-    import uvicorn
+    setup_telemetry()
 
     settings = ServiceSettings()
     uvicorn.run(
-        create_app(service_settings=settings), host=settings.host, port=settings.port
+        instrument_app(create_app(service_settings=settings)),
+        host=settings.host,
+        port=settings.port,
     )

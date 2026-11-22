@@ -1,5 +1,15 @@
 # Eye of the System
 
+## Local observability
+
+With Docker Compose running, open http://localhost:3000 (default login
+`admin` / `admin`). In **Explore → Tempo**, search for service `eye-core` and
+open an `orchestrator.run_hour` trace to follow the run through the agents.
+**Alerting → Alert rules → Eye** contains four provisioned rules for cost,
+loops, failures and human escalation. Thresholds are local-demo defaults.
+Telemetry is exported only to the local LGTM stack, not the Logfire service;
+without `OTEL_EXPORTER_OTLP_ENDPOINT`, service telemetry setup is inert.
+
 Eye of the System monitors a graph of metrics without waiting for someone to ask a question. It ranks unusual changes by business impact, investigates possible causes, and publishes incidents with evidence and suggested actions. The platform is not tied to one use case: in [“The €9 headphones”](docs/specs/15-demo-and-pitch.md#1-demo-script-3-min-the-9-headphones), a simulated marketplace investigates one seller's unplanned price drop during a planned electronics coupon day.
 
 ## Observatory
