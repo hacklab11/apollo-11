@@ -21,7 +21,9 @@ docker compose down
 
 Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
 its own container and HTTP health check; `sim-generate` exits successfully after
-initializing the shared DuckDB/SellerOS volumes. Host ports can be changed in
+initializing the DuckDB/SellerOS volumes. `eye-data` reads that DuckDB snapshot
+from a read-only mount and serves it to Core on a private network; no warehouse
+port is published. Host ports can be changed in
 `.env`. Compose uses the normal live Anthropic LLM defaults, matching
 `config/settings.yaml`. Set `ANTHROPIC_API_KEY` in `.env` to run real agents;
 Compose does not override credentials. For OpenRouter, add the same `llm`
@@ -32,8 +34,9 @@ too. Never commit keys.
 CI copies `.env.example`, whose keys are empty, so the startup/API gate makes no
 model requests. Missing credentials produce the existing `refinement_unavailable`
 warning without preventing startup; this is not an agent-quality eval.
-`config/compose.yaml` keeps simulation paused for smoke checks and rehearsals;
-resume it through the UI/API when ready. Containers bind
+This Compose setup reads the initial snapshot; the Core clock only advances
+when the warehouse has another complete hour. Use the local stack below for a
+rehearsal that drives the simulator directly. Containers bind
 `EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
 `EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
 `EYE_MCP_ALLOWED_HOSTS` adds comma-separated Host headers to MCP's loopback
