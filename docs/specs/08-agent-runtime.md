@@ -1,7 +1,42 @@
 # 08 Agent runtime
 
 Code: `packages/llm/src/eye/llm/runtime.py`, prompts in `packages/llm/src/eye/llm/prompts/`. Task: T11.
-All LLM agents in core, the specialists, SellerOS, and the chat use this runtime (SellerOS has its own copy, because it must not import `eye`; T17 copies the file).
+This is the interim custom runtime, still used by agents not yet migrated
+(SellerOS has its own independent copy).
+
+Cartographer instead uses PydanticAI `Agent` with `end_state_outputs` and typed
+dependency-injected tools, run exclusively through `agent_runtime.run_agent`.
+It applies `RunLimits`, pinned `PriceTable` pricing, `RunScope`, kill switch,
+and the A2A request budget. Provider construction lives in `eye.agents.models`;
+`build_model(settings, agent)` uses explicit `llm.fallback_models[agent]` in order.
+`price_table(settings)` uses `llm.prices`, including explicit zero prices for free
+models; unpriced models fail closed.
+The Opus default is pinned at $5/$25 per million input/output tokens.
+Seed submission model validation retries incomplete/duplicate decisions before
+any graph mutation. All non-done outcomes raise execution errors; the existing
+A2A executor reports failed tasks. Startup no longer invokes refinement in v2;
+direct refinement callers still receive failures without caching partial work.
+
+### Wave 4: Detective
+
+The Detective instead uses a PydanticAI `Agent`, with the existing prompt and tools,
+through `agent_runtime.run_agent`. Its schema-validated output is
+`end_state_outputs(_Submission)`; PydanticAI names the result tool
+`final_result__Submission`. There is no forced-submit final turn or custom message
+loop. `RunLimits` caps requests at `detective.max_steps` and tightens token, cost
+and wall-clock caps to the incoming A2A budget. `RunGuard` checks repeated tool
+calls and an optional kill switch. `gave_up` maps to a HYPOTHESIS/budget stop;
+`needs_input` and `failed` map to HYPOTHESIS/error, retaining the hypothesis board.
+Deterministic evidence checks still downgrade unsupported verdicts.
+
+`eye.agents.models.build_model` constructs the configured Anthropic or OpenAI-compatible
+model and uses `model_chain` with the agent's explicit `llm.fallback_models` list.
+Anthropic effort comes from `llm.effort.detective`. `price_table(settings)` reads
+`llm.prices` in USD per million tokens; unknown response model names fail closed.
+OpenRouter free routes and any routed response IDs need explicit zero-cost prices.
+The offline gate configures the `detective` model name at zero cost.
+Legacy record/replay and process-local `LLMClient` counters do not apply to the
+Detective. Offline tests inject PydanticAI `FunctionModel` rather than credentials.
 
 ## 1. API
 

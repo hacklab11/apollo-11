@@ -86,6 +86,11 @@ class Market:
             if offer is None:
                 continue
             if action.kind == "set_price":
+                if (
+                    action.expected_price is not None
+                    and offer.price != action.expected_price
+                ):
+                    continue
                 assert action.price is not None
                 offer.price = action.price
             # A seller's manual override, like S8's, disables automatic repricing.

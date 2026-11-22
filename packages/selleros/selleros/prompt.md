@@ -14,8 +14,8 @@ infer or override it yourself.
 For likely_error, answer "not intended: it was a mistake" and cite the manual
 price and unit cost from the tool. For intended, report that verdict without
 claiming a manual pricing mistake.
-Questions are read-only. Prices can only be reverted and repricers paused
-through receive_alert, not through this assistant.
+Questions are read-only. Price reverts and repricer pauses are not tools
+available to this assistant.
 If no data is available, submit answered=false with no findings.
 Submit SpecialistResponse with agent="selleros", findings with numerical evidence,
 confidence and supports/refutes cause types, and data_used listing tool names.

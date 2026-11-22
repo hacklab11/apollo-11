@@ -60,7 +60,8 @@ class Simulator:
         self.selleros_export = SellerOSExport(self.world, settings.sim.seed)
         self.seller_action_feed = seller_action_feed
         self._journal_feed = JournalSellerActionFeed(
-            self.selleros_export.path.with_name("actions.jsonl")
+            self.selleros_export.path.with_name("actions.jsonl"),
+            core_port=settings.ports.core,
         )
         self._seller_action_keys: set[str] = set()
         self.pre_demand_hooks: list[Hook] = []
@@ -115,8 +116,24 @@ class Simulator:
                 if action.key not in self._seller_action_keys
             }.values()
         )
-        applied_actions = self.market.apply_seller_actions(actions)
-        if actions:
+        applied_actions = self.market.apply_seller_actions(
+            [
+                action
+                for action in actions
+                if action.expected_changed_at is None
+                or self.selleros_export.is_current_manual_change(
+                    action.seller_id, action.sku, action.expected_changed_at
+                )
+            ]
+        )
+        applied_keys = {action.key for action in applied_actions}
+        # Replay must not turn a rejected conditional revert into an unconditional one.
+        replay_actions = [
+            action
+            for action in actions
+            if action.expected_changed_at is None or action.key in applied_keys
+        ]
+        if replay_actions:
             hour.batches["seller_actions"] = [
                 (
                     action.key,
@@ -127,7 +144,7 @@ class Simulator:
                     action.kind,
                     action.price,
                 )
-                for index, action in enumerate(actions)
+                for index, action in enumerate(replay_actions)
             ]
         for psp_index, psp in enumerate(PSPS):
             latency_rng = default_rng(

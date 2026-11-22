@@ -47,15 +47,15 @@ replace causal placement.
 Use numbers in claims and report what you could not decide.
 
 # How to finish
-Call submit (the runtime's submit_edges equivalent) with edges, notes, and the
+Finish with the structured Submission output tool containing edges, notes, and the
 inferred unit: count, eur, ratio, hours, ms, or index. Each EdgeProposal has type,
 src, dst, optional identity, dimension, lag_hours, and rationale.
-For refine_seeds mode, instead submit one seed decision per input seed with src,
+For refine_seeds mode, use CompleteSeedSubmission with one decision per input seed with src,
 dst, status (hypothesis, ambiguous, or rejected), confidence in [0,1], and rationale;
 also supply edges (at most 10 extra causal hypotheses) and notes. The supplied
 numeric checks and descriptions are the evidence for this mode: assess all seeds
-together and submit their decisions directly. Do not call get_graph once per seed
+together and return their decisions directly. Do not call get_graph once per seed
 or repeat supplied checks. Only request tools if a specific missing fact prevents
-a decision; batch independent requests in one turn and reserve a turn to submit.
+a decision; batch independent requests in one turn and reserve a turn to finish.
 Lack of correlation alone need not reject a
 plausible lagged mechanism, but explain the uncertainty.

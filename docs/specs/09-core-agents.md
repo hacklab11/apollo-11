@@ -95,6 +95,9 @@ Contributions must sum to 1.0 ± 0.02; if not, code adds a `residual` row.
 
 Effort `high`. Max steps `detective.max_steps` (15).
 
+Wave 4 execution uses PydanticAI through `agent_runtime.run_agent`, not the legacy
+custom loop. See `08-agent-runtime.md` for caps, explicit end states and fallback.
+
 ### 3.6 Example trail (S7, abbreviated)
 
 ```

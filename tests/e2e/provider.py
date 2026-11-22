@@ -85,9 +85,13 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
     if any("error" in output for output in outputs):
         raise ValueError("A runtime tool failed")
 
-    if request.model == "cartographer" and payload.get("mode") == "refine_seeds":
+    if request.model == "cartographer:free" and payload.get("mode") == "refine_seeds":
         return tool(
-            "submit",
+            next(
+                item["function"]["name"]
+                for item in request.tools
+                if "CompleteSeedSubmission" in item["function"]["name"]
+            ),
             {
                 "seeds": [
                     {
@@ -101,6 +105,20 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
                 ],
                 "edges": [],
                 "notes": "Scripted bootstrap; no new causal claims.",
+            },
+        )
+
+    if request.model == "cartographer:free" and "metric" in payload:
+        return tool(
+            next(
+                item["function"]["name"]
+                for item in request.tools
+                if item["function"]["name"].endswith("_Submission")
+            ),
+            {
+                "edges": [],
+                "notes": "Scripted placement; no causal claims.",
+                "unit": payload["metric"]["unit"],
             },
         )
 
@@ -159,7 +177,7 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             return tool("ask_skeptic", {"hypothesis_id": root["id"]})
         if len(outputs) == 4:
             return tool(
-                "submit",
+                "final_result__Submission",
                 {
                     "verdict": "CONFIRMED",
                     "summary": "Scripted price-change investigation completed after deterministic tools and Skeptic review.",
@@ -172,13 +190,26 @@ def scripted_response(request: CompletionRequest) -> dict[str, Any]:
             )
 
     if request.model == "reporter":
-        return tool(
-            "final_result_Narrative",
-            {
-                "title": "Electronics price-change investigation",
-                "summary": "Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.",
-            },
-        )
+        if any(
+            item["function"]["name"] == "final_result_Narrative"
+            for item in request.tools
+        ):
+            return tool(
+                "final_result_Narrative",
+                {
+                    "title": "Electronics price-change investigation",
+                    "summary": "Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.",
+                },
+            )
+        return {
+            "role": "assistant",
+            "content": json.dumps(
+                {
+                    "title": "Electronics price-change investigation",
+                    "summary": "Offline integration report: price-change signal investigated with baseline, freshness and Skeptic review.",
+                }
+            ),
+        }
     raise ValueError(f"Unexpected scripted model or turn: {request.model}")
 
 

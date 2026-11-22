@@ -1,8 +1,12 @@
 import asyncio
+import json
+import shutil
 import threading
 from collections.abc import Iterator
 from contextlib import aclosing, closing
 from datetime import datetime
+from pathlib import Path
+from secrets import token_urlsafe
 from typing import Any
 
 import httpx
@@ -28,17 +32,21 @@ from eye.contracts import (
     GraphView,
     Incident,
     MetricDef,
+    SellerAlert,
     SentinelDecision,
     Series,
     Symptom,
     TrailStep,
 )
 from eye.contracts_v2 import AgentResult
+from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.sim.store import Store
+from selleros.data import FileSellerStore
+from selleros.server import create_app as create_selleros_app
 
 
 class World:
@@ -125,6 +133,141 @@ def service(
             settings,
             orchestrator,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale", [False, True])
+async def test_seller_revert_requires_exact_human_approval(
+    service: tuple[FastAPI, Settings, Orchestrator],
+    repo_root: Path,
+    tmp_path: Path,
+    stale: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service_token, operator_token = token_urlsafe(), token_urlsafe()
+    monkeypatch.setenv("EYE_SELLER_REVERT_SERVICE_TOKEN", service_token)
+    monkeypatch.setenv("EYE_SELLER_REVERT_OPERATOR_TOKEN", operator_token)
+    monkeypatch.delenv("EYE_TRUST_PROXY_PERSON_HEADER", raising=False)
+    seller_client = {"Authorization": f"Bearer {service_token}"}
+    operator = {"Authorization": f"Bearer {operator_token}"}
+    api, settings, core = service
+    snapshot_path = tmp_path / "sellers.json"
+    shutil.copyfile(
+        repo_root / "packages/selleros/tests/fixtures/s8.json", snapshot_path
+    )
+    store = FileSellerStore(tmp_path)
+    transport = httpx.ASGITransport(app=api)
+    core.directory = AgentDirectory(
+        settings.a2a,
+        transport=httpx.ASGITransport(
+            app=create_selleros_app(
+                store,
+                approvals_url="http://orchestrator",
+                approvals_transport=transport,
+            )
+        ),
+    )
+    alert = SellerAlert(
+        incident_id=core.incidents.all()[0].id,
+        seller_ids=["S-14"],
+        skus=["E02", "E04"],
+        summary="S8 manual price change",
+        recommended_action="revert manual price",
+    )
+    journal = tmp_path / "actions.jsonl"
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://orchestrator"
+    ) as client:
+        for _ in range(2):
+            ack = await core.directory.notify_seller_os(alert)
+            assert ack.received and ack.actions_taken == []
+        assert not journal.exists()
+        assert (await client.get("/api/approvals", headers=seller_client)).json() == []
+        approvals = (await client.get("/api/approvals", headers=operator)).json()
+        assert len(approvals) == 2
+        assert all(row["status"] == "pending" for row in approvals)
+        by_sku = {row["args"]["sku"]: row["id"] for row in approvals}
+        approve_url = f"/api/approvals/{by_sku['E02']}"
+        permission_url = f"/api/approvals/seller-revert/{by_sku['E02']}/permission"
+        bogus = dict(approvals[0]["args"], incident_id="not-the-approved-incident")
+        for untrusted in ({}, {"X-Eye-Person": "reviewer"}, operator):
+            assert (
+                await client.put(
+                    "/api/approvals/seller-revert", json=bogus, headers=untrusted
+                )
+            ).status_code == 401
+        for untrusted in ({}, {"X-Eye-Person": "reviewer"}, seller_client):
+            assert (
+                await client.post(
+                    approve_url, json={"approve": True}, headers=untrusted
+                )
+            ).status_code == 401
+        assert len((await client.get("/api/approvals", headers=operator)).json()) == 2
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 409
+        assert not journal.exists()
+        (
+            await client.post(
+                f"/api/approvals/{by_sku['E04']}",
+                json={"approve": False},
+                headers=operator,
+            )
+        ).raise_for_status()
+        for stop_url in (
+            "/api/kill",
+            "/api/tenants/default/kill",
+            f"/api/runs/selleros:{alert.incident_id}/kill",
+        ):
+            spoofed = {"X-Eye-Person": "reviewer"}
+            assert (await client.post(stop_url, headers=spoofed)).status_code == 401
+            (await client.post(stop_url, headers=operator)).raise_for_status()
+            assert (await client.delete(stop_url, headers=spoofed)).status_code == 401
+            assert (
+                await client.post(approve_url, json={"approve": True}, headers=operator)
+            ).status_code == 409
+            assert core.control.approval(by_sku["E02"])["status"] == "pending"
+            assert not (await core.directory.notify_seller_os(alert)).received
+            assert not journal.exists()
+            (await client.delete(stop_url, headers=operator)).raise_for_status()
+        if stale:
+            snapshot = store.read()
+            latest = next(
+                p
+                for p in snapshot.sellers[0].price_history
+                if p.sku == "E02" and p.source == "manual"
+            )
+            latest.price += 1
+            snapshot_path.write_text(snapshot.model_dump_json())
+        (
+            await client.post(approve_url, json={"approve": True}, headers=operator)
+        ).raise_for_status()
+        assert (await client.get(permission_url, headers=operator)).status_code == 401
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 204
+        (await client.post("/api/kill", headers=operator)).raise_for_status()
+        assert (
+            await client.get(permission_url, headers=seller_client)
+        ).status_code == 409
+        (await client.delete("/api/kill", headers=operator)).raise_for_status()
+        with monkeypatch.context() as env:
+            env.setenv("EYE_TRUST_PROXY_PERSON_HEADER", "1")
+            proxy = {"X-Eye-Person": "proxy-verified-reviewer"}
+            (await client.post("/api/kill", headers=proxy)).raise_for_status()
+            (await client.delete("/api/kill", headers=proxy)).raise_for_status()
+        if stale:
+            assert not journal.exists()
+        else:
+            records = journal.read_text().splitlines()
+            assert len(records) == 1
+            assert json.loads(records[0])["idempotency_key"] == by_sku["E02"]
+            assert json.loads(records[0])["restore_price"] == 99
+        assert (await core.directory.notify_seller_os(alert)).actions_taken == []
+        if not stale:
+            assert journal.read_text().splitlines() == records
+        else:
+            assert not journal.exists()
 
 
 def test_scenario_controls_are_not_public(

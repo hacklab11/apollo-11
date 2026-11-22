@@ -3,15 +3,12 @@
 import fcntl
 import json
 import os
-import re
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel, Field
-
-from selleros.models import SellerAlert, SellerAlertAck
+from pydantic import BaseModel, ConfigDict, Field
 
 DATA_DIR = Path(
     os.environ.get("SELLEROS_DATA_DIR", Path(__file__).resolve().parents[1] / "data")
@@ -63,6 +60,8 @@ class Snapshot(BaseModel):
 
 
 class Selection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     seller_ids: list[str] = Field(default_factory=list)
     skus: list[str] = Field(default_factory=list)
 
@@ -121,7 +120,13 @@ class SellerStore(Protocol):
     def pause_repricer(self, incident_id: str, seller_id: str, sku: str) -> bool: ...
 
     def revert_manual_price(
-        self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
+        self,
+        incident_id: str,
+        seller_id: str,
+        sku: str,
+        intent: PriceIntent,
+        *,
+        idempotency_key: str,
     ) -> bool: ...
 
 
@@ -185,16 +190,21 @@ class FileSellerStore:
             fcntl.flock(log, fcntl.LOCK_EX)
             log.seek(0)
             records, end = self._complete_records(log.read())
+            key = record.get("idempotency_key")
             if any(
-                r["status"] == record["status"]
-                and r["seller_id"] == record["seller_id"]
-                and r["sku"] == record["sku"]
-                and (
-                    record["status"] == "paused"
-                    or (
-                        datetime.fromisoformat(r["ts"])
-                        == datetime.fromisoformat(record["ts"])
-                        and r["price"] == record["price"]
+                (key is not None and r.get("idempotency_key") == key)
+                or (
+                    r["status"] == record["status"]
+                    and r["seller_id"] == record["seller_id"]
+                    and r["sku"] == record["sku"]
+                    and (
+                        record["status"] == "paused"
+                        or (
+                            r.get("idempotency_key")
+                            and datetime.fromisoformat(r["ts"])
+                            == datetime.fromisoformat(record["ts"])
+                            and r["price"] == record["price"]
+                        )
                     )
                 )
                 for r in records
@@ -219,7 +229,13 @@ class FileSellerStore:
             )
 
     def revert_manual_price(
-        self, incident_id: str, seller_id: str, sku: str, intent: PriceIntent
+        self,
+        incident_id: str,
+        seller_id: str,
+        sku: str,
+        intent: PriceIntent,
+        *,
+        idempotency_key: str,
     ) -> bool:
         if intent.old is None:
             raise ValueError("cannot revert a manual price without a previous price")
@@ -232,55 +248,11 @@ class FileSellerStore:
                     "ts": intent.ts.isoformat(),
                     "price": intent.new,
                     "restore_price": intent.old,
+                    "idempotency_key": idempotency_key,
                     "status": "reverted",
                     "action": f"reverted manual price for {seller_id} on {sku}",
                 }
             )
-
-
-def receive_alert(store: SellerStore, alert: SellerAlert) -> SellerAlertAck:
-    snapshot = store.read()
-    revert = re.search(
-        r"\brevert\b.*\bmanual\b.*\bprices?\b",
-        alert.recommended_action,
-        re.IGNORECASE | re.DOTALL,
-    )
-    actions = []
-    for seller in snapshot.sellers:
-        if not seller.customer_of_selleros or seller.seller_id not in alert.seller_ids:
-            continue
-        reverted = []
-        for sku in seller.skus:
-            if alert.skus and sku.sku not in alert.skus:
-                continue
-            if revert:
-                intent = price_intent(seller, sku)
-                if (
-                    intent is None
-                    or intent.verdict != "likely_error"
-                    or (seller.seller_id, sku.sku, intent.ts, intent.new)
-                    in store.reverted_prices()
-                ):
-                    continue
-                if store.revert_manual_price(
-                    alert.incident_id, seller.seller_id, sku.sku, intent
-                ):
-                    reverted.append(sku.sku)
-            else:
-                if (
-                    seller.repricer_for(sku).floor is not None
-                    or (seller.seller_id, sku.sku) in store.paused_repricers()
-                ):
-                    continue
-                if store.pause_repricer(alert.incident_id, seller.seller_id, sku.sku):
-                    actions.append(
-                        f"paused repricer for {seller.seller_id} on {sku.sku}"
-                    )
-        if reverted:
-            actions.append(
-                f"reverted manual price for {seller.seller_id} on {', '.join(sorted(reverted))}"
-            )
-    return SellerAlertAck(received=True, actions_taken=actions)
 
 
 class ScopedData:

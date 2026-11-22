@@ -2,7 +2,17 @@
 name = "selleros"
 version = "0.1.0"
 requires-python = ">=3.13"
-dependencies = ["anthropic==2.12.0", "a2a-sdk[http-server]==1.3.1", "httpx==0.28.1", "pydantic==2.14.4", "uvicorn==0.54.0", "protobuf==7.36.2", "starlette==1.10.0"]
+dependencies = [
+    "a2a-sdk[http-server]==1.3.1",
+    "agent-runtime",
+    "eye-contracts",
+    "httpx==0.28.1",
+    "protobuf==7.36.2",
+    "pydantic==2.14.4",
+    "pydantic-ai-slim[anthropic,openai]==2.66.0",
+    "starlette==1.10.0",
+    "uvicorn==0.54.0",
+]
 
 [project.scripts]
 selleros = "selleros.server:main"
@@ -13,6 +23,10 @@ dev = ["pytest==9.2.0", "pytest-asyncio==1.5.0", "ruff==0.17.6"]
 [build-system]
 requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+agent-runtime = { workspace = true }
+eye-contracts = { workspace = true }
 
 [tool.pytest.ini_options]
 markers = ["live: calls the real Anthropic API"]
