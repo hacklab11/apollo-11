@@ -3,7 +3,9 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -333,6 +335,9 @@ def main() -> None:
     parser.add_argument("agent", choices=PORTS)
     name = parser.parse_args().agent
     port = PORTS[name]
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(_JsonLogFormatter())
+    logging.basicConfig(level=logging.WARNING, handlers=[handler], force=True)
     settings = load_settings()
     configure_client(LLMClient(settings.llm))
     uvicorn.run(
@@ -342,4 +347,16 @@ def main() -> None:
         host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=port,
         access_log=False,
+        log_config=None,
     )
+
+
+class _JsonLogFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return json.dumps(
+            {
+                "level": record.levelname,
+                "logger": record.name,
+                "message": record.getMessage(),
+            }
+        )
