@@ -1,6 +1,7 @@
 import ast
 import importlib.util
 import json
+import socket
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -111,8 +112,6 @@ def test_configured_fallbacks_are_in_matrix(tmp_path: Path) -> None:
 async def test_offline_suite_never_opens_network(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import socket
-
     def denied(*args, **kwargs):
         raise AssertionError("Offline eval attempted network access")
 
@@ -161,7 +160,10 @@ def test_recorded_submissions_match_s8_finite_provider(
     monkeypatch.setattr(
         provider, "investigate_after", datetime.fromisoformat("2026-11-27T12:00:00Z")
     )
-    for case in evals.load_cases().cases:
+    baseline = evals.Dataset[evals.Inputs, dict, dict].from_file(
+        evals.CASES / "s8.yaml"
+    )
+    for case in baseline.cases:
         inputs = case.inputs
         outputs = []
         if inputs.agent in {"detective", "skeptic"}:
