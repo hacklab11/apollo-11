@@ -14,7 +14,7 @@ from pydantic_ai.exceptions import (
     UsageLimitExceeded,
 )
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.output import OutputSpec
+from pydantic_ai.output import OutputSpec, ToolOutput
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
 from pydantic_ai.usage import RunUsage
 
@@ -39,7 +39,7 @@ from agent_runtime.tracing import (
 )
 
 
-def end_state_outputs[T](result_type: type[T]) -> OutputSpec[Any]:
+def end_state_outputs[T](result_type: type[T] | ToolOutput[T]) -> OutputSpec[Any]:
     """Output types an agent must offer the model so it can end in any explicit state."""
     return [result_type, NeedsInput, GaveUp, DeferredToolRequests]
 

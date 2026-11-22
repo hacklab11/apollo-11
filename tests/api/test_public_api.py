@@ -1,8 +1,11 @@
 import asyncio
+import json
+import shutil
 import threading
 from collections.abc import Iterator
 from contextlib import aclosing, closing
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,17 +31,21 @@ from eye.contracts import (
     GraphView,
     Incident,
     MetricDef,
+    SellerAlert,
     SentinelDecision,
     Series,
     Symptom,
     TrailStep,
 )
 from eye.contracts_v2 import AgentResult
+from eye.directory import AgentDirectory
 from eye.incidents.store import IncidentStore
 from eye.orchestrator import HOUR, Orchestrator, Status
 from eye.registry.engine import MetricEngine
 from eye.registry.loader import Registry
 from eye.sim.store import Store
+from selleros.data import FileSellerStore
+from selleros.server import create_app as create_selleros_app
 
 
 class World:
@@ -125,6 +132,89 @@ def service(
             settings,
             orchestrator,
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale", [False, True])
+async def test_seller_revert_requires_exact_human_approval(
+    service: tuple[FastAPI, Settings, Orchestrator],
+    repo_root: Path,
+    tmp_path: Path,
+    stale: bool,
+) -> None:
+    api, settings, core = service
+    snapshot_path = tmp_path / "sellers.json"
+    shutil.copyfile(
+        repo_root / "packages/selleros/tests/fixtures/s8.json", snapshot_path
+    )
+    store = FileSellerStore(tmp_path)
+    transport = httpx.ASGITransport(app=api)
+    core.directory = AgentDirectory(
+        settings.a2a,
+        transport=httpx.ASGITransport(
+            app=create_selleros_app(
+                store,
+                approvals_url="http://orchestrator",
+                approvals_transport=transport,
+            )
+        ),
+    )
+    alert = SellerAlert(
+        incident_id=core.incidents.all()[0].id,
+        seller_ids=["S-14"],
+        skus=["E02", "E04"],
+        summary="S8 manual price change",
+        recommended_action="revert manual price",
+    )
+    journal = tmp_path / "actions.jsonl"
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://orchestrator"
+    ) as client:
+        for _ in range(2):
+            ack = await core.directory.notify_seller_os(alert)
+            assert ack.received and ack.actions_taken == []
+        assert not journal.exists()
+        approvals = (await client.get("/api/approvals")).json()
+        assert len(approvals) == 2
+        assert all(row["status"] == "pending" for row in approvals)
+        by_sku = {row["args"]["sku"]: row["id"] for row in approvals}
+        approve_url = f"/api/approvals/{by_sku['E02']}"
+        assert (
+            await client.post(approve_url, json={"approve": True})
+        ).status_code == 401
+        assert not journal.exists()
+        operator = {"X-Eye-Person": "reviewer"}
+        (
+            await client.post(
+                f"/api/approvals/{by_sku['E04']}",
+                json={"approve": False},
+                headers=operator,
+            )
+        ).raise_for_status()
+        if stale:
+            snapshot = store.read()
+            latest = next(
+                p
+                for p in snapshot.sellers[0].price_history
+                if p.sku == "E02" and p.source == "manual"
+            )
+            latest.price += 1
+            snapshot_path.write_text(snapshot.model_dump_json())
+        (
+            await client.post(approve_url, json={"approve": True}, headers=operator)
+        ).raise_for_status()
+        if stale:
+            assert not journal.exists()
+        else:
+            records = journal.read_text().splitlines()
+            assert len(records) == 1
+            assert json.loads(records[0])["idempotency_key"] == by_sku["E02"]
+            assert json.loads(records[0])["restore_price"] == 99
+        assert (await core.directory.notify_seller_os(alert)).actions_taken == []
+        if not stale:
+            assert journal.read_text().splitlines() == records
+        else:
+            assert not journal.exists()
 
 
 def test_scenario_controls_are_not_public(

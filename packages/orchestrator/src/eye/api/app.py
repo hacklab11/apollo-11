@@ -22,6 +22,7 @@ from eye.contracts import (
     Incident,
     IncidentStatus,
     MetricDef,
+    SellerAlert,
     SentinelDecision,
     Series,
     SeriesPoint,
@@ -29,9 +30,12 @@ from eye.contracts import (
 )
 from eye.contracts_v2 import (
     DEFAULT_TENANT,
+    SELLER_REVERT_TOOL,
     IncidentCloseRequest,
     IncidentClosure,
     IncidentV2,
+    SellerPriceRevert,
+    SellerRevertApproval,
 )
 from eye.orchestrator import Orchestrator, Status, StepInProgress
 from eye.registry.engine import MetricEngine
@@ -268,6 +272,27 @@ def create_app(
     async def approvals() -> list[dict]:
         return orchestrator.control.approval_rows()
 
+    @app.put("/api/approvals/seller-revert")
+    async def request_seller_revert(action: SellerPriceRevert) -> SellerRevertApproval:
+        key = action.idempotency_key()
+        try:
+            row = orchestrator.control.ensure_pending(
+                key,
+                f"selleros:{action.incident_id}",
+                action.incident_id,
+                SELLER_REVERT_TOOL,
+                action.model_dump(mode="json"),
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return SellerRevertApproval(
+            id=row["id"],
+            tool_name=row["tool_name"],
+            args=row["args"],
+            status=row["status"],
+            decided_by=row["decided_by"],
+        )
+
     @app.post("/api/approvals/{id}")
     async def decide_approval(
         id: str, decision: ApprovalDecision, actor: str = Depends(human_actor)
@@ -276,6 +301,21 @@ def create_app(
             orchestrator.control.decide(id, decision.approve, actor)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
+        row = orchestrator.control.approval(id)
+        if decision.approve and row and row["tool_name"] == SELLER_REVERT_TOOL:
+            action = SellerPriceRevert.model_validate(row["args"])
+            ack = await orchestrator.directory.notify_seller_os(
+                SellerAlert(
+                    incident_id=action.incident_id,
+                    seller_ids=[action.seller_id],
+                    skus=[action.sku],
+                    summary="Human-approved SellerOS price revert.",
+                    recommended_action="revert manual price",
+                ),
+                approval_id=id,
+            )
+            if not ack.received:
+                raise HTTPException(502, "Approval recorded; SellerOS delivery failed.")
         return {"id": id, "approved": decision.approve}
 
     @app.post("/api/runs/{id}/kill")

@@ -193,7 +193,11 @@ def test_file_store_revert_reaches_marketplace(
         )
         assert intent is not None and intent.verdict == "likely_error"
         assert store.revert_manual_price(
-            "integration", seller.seller_id, offer.sku, intent
+            "integration",
+            seller.seller_id,
+            offer.sku,
+            intent,
+            idempotency_key="integration",
         )
         sim.step()
         assert offer.price == old

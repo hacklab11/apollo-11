@@ -241,9 +241,19 @@ source_modules = ["eye.orchestrator", "eye.api", "eye.main", "eye.incidents", "e
 forbidden_modules = ["eye.agents", "eye.specialists"]
 
 [[tool.importlinter.contracts]]
-name = "SellerOS is independent"
-type = "independence"
-modules = [
-    "selleros",
-    "eye",
+name = "SellerOS only shares leaf contracts and agent runtime"
+type = "forbidden"
+source_modules = ["selleros"]
+forbidden_modules = ["eye"]
+ignore_imports = [
+    "selleros.actions -> eye.contracts_v2",
+    "selleros.server -> eye.contracts_v2",
+    "agent_runtime.budget -> eye.contracts_v2",
+    "agent_runtime.results -> eye.contracts_v2",
 ]
+
+[[tool.importlinter.contracts]]
+name = "Eye does not import SellerOS"
+type = "forbidden"
+source_modules = ["eye"]
+forbidden_modules = ["selleros"]

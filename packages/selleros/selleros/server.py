@@ -1,8 +1,8 @@
 """Standalone A2A JSON-RPC service."""
 
-import asyncio
 import os
 
+import httpx
 import uvicorn
 from a2a.helpers.proto_helpers import (
     new_data_part,
@@ -17,13 +17,18 @@ from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.protobuf.json_format import MessageToDict
+from pydantic_ai.models import Model
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from agent_runtime import PriceTable
+from eye.contracts_v2 import SELLER_REVERT_APPROVAL_METADATA_KEY
+from selleros.actions import receive_alert
 from selleros.agent import answer
-from selleros.data import FileSellerStore, SellerStore, receive_alert
+from selleros.client import PRICES
+from selleros.data import FileSellerStore, SellerStore
 from selleros.models import SellerAlert, SpecialistRequest
 
 SKILLS = {
@@ -36,8 +41,20 @@ SKILLS = {
 
 
 class Executor(AgentExecutor):
-    def __init__(self, store: SellerStore) -> None:
+    def __init__(
+        self,
+        store: SellerStore,
+        *,
+        model: Model | None,
+        prices: PriceTable,
+        approvals_url: str,
+        approvals_transport: httpx.AsyncBaseTransport | None,
+    ) -> None:
         self.store = store
+        self.model = model
+        self.prices = prices
+        self.approvals_url = approvals_url
+        self.approvals_transport = approvals_transport
 
     async def execute(self, context: RequestContext, event_queue: EventQueue) -> None:
         updater = TaskUpdater(event_queue, context.task_id, context.context_id)
@@ -50,10 +67,21 @@ class Executor(AgentExecutor):
             payload = MessageToDict(parts[0].data)
             if "incident_id" in payload:
                 alert = SellerAlert.model_validate(payload, extra="forbid")
-                output = await asyncio.to_thread(receive_alert, self.store, alert)
+                approval_id = context.metadata.get(SELLER_REVERT_APPROVAL_METADATA_KEY)
+                if approval_id is not None and not isinstance(approval_id, str):
+                    raise ValueError("invalid approval reference")
+                output = await receive_alert(
+                    self.store,
+                    alert,
+                    approvals_url=self.approvals_url,
+                    approval_id=approval_id,
+                    transport=self.approvals_transport,
+                )
             else:
                 request = SpecialistRequest.model_validate(payload, extra="forbid")
-                output = await answer(self.store, request)
+                output = await answer(
+                    self.store, request, model=self.model, prices=self.prices
+                )
             await updater.add_artifact([new_data_part(output.model_dump(mode="json"))])
             await updater.complete()
         except Exception as exc:  # noqa: BLE001 -- failures must terminate the A2A task
@@ -69,7 +97,14 @@ async def healthz(_: Request) -> JSONResponse:
     return JSONResponse({"status": "ok"})
 
 
-def create_app(store: SellerStore | None = None) -> Starlette:
+def create_app(
+    store: SellerStore | None = None,
+    *,
+    model: Model | None = None,
+    prices: PriceTable = PRICES,
+    approvals_url: str | None = None,
+    approvals_transport: httpx.AsyncBaseTransport | None = None,
+) -> Starlette:
     card = AgentCard(
         name="SellerOS Partner Agent",
         description="Third-party repricing and inventory assistant for small marketplace sellers",
@@ -90,7 +125,14 @@ def create_app(store: SellerStore | None = None) -> Starlette:
         ],
     )
     handler = DefaultRequestHandler(
-        Executor(store if store is not None else FileSellerStore()),
+        Executor(
+            store if store is not None else FileSellerStore(),
+            model=model,
+            prices=prices,
+            approvals_url=approvals_url
+            or os.environ.get("EYE_CORE_URL", "http://127.0.0.1:8000"),
+            approvals_transport=approvals_transport,
+        ),
         InMemoryTaskStore(),
         card,
     )
