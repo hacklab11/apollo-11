@@ -200,7 +200,8 @@ class FileSellerStore:
                     and (
                         record["status"] == "paused"
                         or (
-                            datetime.fromisoformat(r["ts"])
+                            r.get("idempotency_key")
+                            and datetime.fromisoformat(r["ts"])
                             == datetime.fromisoformat(record["ts"])
                             and r["price"] == record["price"]
                         )

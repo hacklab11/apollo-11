@@ -26,6 +26,7 @@ verifies the recorded human decision and current price at the tool boundary.
 Pending, rejected, unavailable or stale approvals cannot change prices.
 The simulator rechecks permission when consuming a queued revert, so a stop
 holds the action and resuming only applies it if the price change is still current.
+Legacy journal entries without approval keys stay as history and are not applied.
 If delivery fails after the decision was saved, retry the original A2A alert;
 the journal deduplicates by approval key across retries and restarts.
 

@@ -120,18 +120,15 @@ class JournalSellerActionFeed:
                         break
                     raise
                 record = _JournalRecord.model_validate(payload)
-                # Historical revert records cannot restore an unknown price.
-                if record.status == "reverted" and record.restore_price is None:
-                    continue
                 key = hashlib.sha256(
                     json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest()
                 if key in self._acked:
                     continue
-                if (
-                    record.status == "reverted"
-                    and record.idempotency_key is not None
-                    and not self._authorize_revert(record.idempotency_key)
+                if record.status == "reverted" and (
+                    record.restore_price is None
+                    or not record.idempotency_key
+                    or not self._authorize_revert(record.idempotency_key)
                 ):
                     continue
                 actions.append(
