@@ -8,6 +8,37 @@ The [live observatory](web/README.md) is served by Core. [Earlier API preview](d
 
 ## Run it
 
+### Docker Compose (credential-free wave gate)
+
+```sh
+cp .env.example .env
+docker compose up -d --build --wait
+./scripts/smoke.sh
+docker compose ps
+# Stop, preserving data (add -v to reset the world):
+docker compose down
+```
+
+Open http://127.0.0.1:8000 for the UI served by Core. Each Python service has
+its own container and HTTP health check; `sim-generate` exits successfully after
+initializing the shared DuckDB/SellerOS volumes. Host ports can be changed in
+`.env`. No credentials are needed or passed through to the containers. The
+internal network has no external egress. This is a startup/API gate, not an
+agent-quality eval: `config/compose.yaml` pauses simulation and selects replay
+with an empty provider key. Replay misses normally fall back to live calls;
+here missing credentials produce the existing `refinement_unavailable` warning
+without making a model request. Cartographer refinement is already a background
+job and does not prevent startup. CI uses this same configuration, never secrets.
+
+For a funded live rehearsal use the local stack below. Containers bind
+`EYE_BIND_HOST=0.0.0.0`; local commands still default to `127.0.0.1`.
+`EYE_CORE_URL`, `EYE_MCP_URL`, and `SELLEROS_URL` configure network addresses;
+the A2A URLs live in settings. SellerOS uses `SELLEROS_DATA_DIR` for its shared
+export directory. Compose does not set container names, so services can be
+replicated with `--scale` and distinct host port mappings in an override file.
+Core and SellerOS currently retain process-local state/file-backed storage;
+multiple replicas are not a distributed-state or multi-writer deployment.
+
 ### Local stack and rehearsal
 
 From a fresh checkout of `main` with [uv](https://docs.astral.sh/uv/getting-started/installation/) and Bash 4.3 or later (required by the stack launcher):

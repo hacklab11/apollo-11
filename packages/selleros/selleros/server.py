@@ -1,6 +1,7 @@
 """Standalone A2A JSON-RPC service."""
 
 import asyncio
+import os
 
 import uvicorn
 from a2a.helpers.proto_helpers import (
@@ -17,6 +18,9 @@ from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from selleros.agent import answer
 from selleros.data import FileSellerStore, SellerStore, receive_alert
@@ -61,6 +65,10 @@ class Executor(AgentExecutor):
         await TaskUpdater(event_queue, context.task_id, context.context_id).cancel()
 
 
+async def healthz(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
 def create_app(store: SellerStore | None = None) -> Starlette:
     card = AgentCard(
         name="SellerOS Partner Agent",
@@ -69,7 +77,7 @@ def create_app(store: SellerStore | None = None) -> Starlette:
         capabilities=AgentCapabilities(),
         supported_interfaces=[
             AgentInterface(
-                url="http://127.0.0.1:8300/",
+                url=os.environ.get("SELLEROS_URL", "http://127.0.0.1:8300/"),
                 protocol_binding="JSONRPC",
                 protocol_version="1.0",
             )
@@ -88,6 +96,7 @@ def create_app(store: SellerStore | None = None) -> Starlette:
     )
     return Starlette(
         routes=[
+            Route("/healthz", healthz),
             *create_agent_card_routes(card),
             *create_jsonrpc_routes(handler, "/", enable_v0_3_compat=True),
         ]
@@ -96,5 +105,9 @@ def create_app(store: SellerStore | None = None) -> Starlette:
 
 def main() -> None:
     uvicorn.run(
-        create_app(), host="127.0.0.1", port=8300, access_log=False, log_config=None
+        create_app(),
+        host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
+        port=8300,
+        access_log=False,
+        log_config=None,
     )

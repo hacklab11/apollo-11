@@ -1,0 +1,12 @@
+# Credential-free wave gate. Replay misses report model unavailability, not fake output.
+sim:
+  autostart: false
+llm:
+  mode: replay
+  provider: openai_compatible
+  api_key_env: EYE_MODEL_API_KEY
+a2a:
+  growth_url: http://eye-specialists:8200/growth
+  marketplace_url: http://eye-specialists:8200/marketplace
+  discovery_url: http://eye-specialists:8200/discovery
+  selleros_url: http://selleros:8300

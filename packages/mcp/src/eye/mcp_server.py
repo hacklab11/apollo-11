@@ -1,6 +1,7 @@
 """MCP server: a stateless adapter over the core public API."""
 
 import json
+import os
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Annotated, Any
@@ -11,6 +12,8 @@ from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import CallToolResult, TextContent, Tool, ToolAnnotations
 from pydantic import AwareDatetime, BaseModel, Field, TypeAdapter, ValidationError
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from eye.api.app import MetricDefinition
 from eye.config import load_settings
@@ -148,6 +151,10 @@ def create_server(
             return False
 
     server = _MonitoringServer(has_scenarios)
+
+    @server.custom_route("/healthz", methods=["GET"])
+    async def healthz(_: Request) -> JSONResponse:
+        return JSONResponse({"status": "ok"})
 
     async def status() -> Status:
         return Status.model_validate(await call("GET", "/api/status"))
@@ -399,10 +406,12 @@ def create_server(
 
 def main() -> None:
     settings = load_settings()
-    server = create_server(f"http://127.0.0.1:{settings.ports.core}")
+    server = create_server(
+        os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{settings.ports.core}")
+    )
     uvicorn.run(
         server.streamable_http_app(),
-        host="127.0.0.1",
+        host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=settings.ports.mcp,
         access_log=False,
         log_config=None,

@@ -1,6 +1,7 @@
 """One ASGI app serving the Growth, Marketplace, and Discovery A2A specialists."""
 
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.resources import files
@@ -24,7 +25,9 @@ from a2a.types import AgentCapabilities, AgentCard, AgentInterface, AgentSkill
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
-from starlette.routing import BaseRoute
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import BaseRoute, Route
 
 from eye.config import Settings, load_settings
 from eye.contracts import SpecialistRequest, SpecialistResponse, TrailStep
@@ -33,6 +36,12 @@ from eye.specialists import discovery, growth, marketplace
 from eye.specialists.tools import DataApiUnavailable, DataClient
 
 SPECIALISTS: tuple[ModuleType, ...] = (growth, marketplace, discovery)
+
+
+async def healthz(_: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
+
+
 PROMPTS = files("eye.llm").joinpath("prompts")
 MAX_STEPS = 8
 
@@ -165,7 +174,8 @@ def create_app(
     if client is None:
         client = DataClient(
             httpx.AsyncClient(timeout=15.0),
-            f"http://127.0.0.1:{settings.ports.core}/data",
+            os.environ.get("EYE_CORE_URL", f"http://127.0.0.1:{settings.ports.core}")
+            + "/data",
         )
 
     @asynccontextmanager
@@ -175,7 +185,8 @@ def create_app(
             await client.http.aclose()
 
     return Starlette(
-        routes=[
+        routes=[Route("/healthz", healthz)]
+        + [
             route
             for specialist in SPECIALISTS
             for route in specialist_routes(specialist, client, settings)
@@ -188,7 +199,7 @@ def main() -> None:
     settings = load_settings()
     uvicorn.run(
         create_app(settings),
-        host="127.0.0.1",
+        host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
         port=settings.ports.specialists,
         access_log=False,
         log_config=None,

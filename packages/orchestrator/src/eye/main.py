@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -278,7 +279,7 @@ def main() -> None:
         stack.callback(graph.save)
         uvicorn.run(
             create_app(orchestrator, connection, registry, graph, engine),
-            host="127.0.0.1",
+            host=os.environ.get("EYE_BIND_HOST", "127.0.0.1"),
             port=settings.ports.core,
             access_log=False,
             log_config=None,

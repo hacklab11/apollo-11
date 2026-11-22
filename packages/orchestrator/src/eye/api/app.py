@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 from typing import Annotated, Protocol
 
@@ -82,7 +83,10 @@ def create_app(
     app.include_router(
         chat.create_router(
             orchestrator.settings.llm,
-            f"http://127.0.0.1:{orchestrator.settings.ports.mcp}/mcp",
+            os.environ.get(
+                "EYE_MCP_URL",
+                f"http://127.0.0.1:{orchestrator.settings.ports.mcp}/mcp",
+            ),
         )
     )
 
