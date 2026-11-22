@@ -1,4 +1,6 @@
 import pytest
+from pydantic_ai.exceptions import ModelAPIError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.openai import OpenAIChatModel
@@ -41,13 +43,15 @@ def test_openai_compatible_uses_explicit_fallback_chain(
     )
 
 
-def test_missing_openai_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.asyncio
+async def test_missing_openai_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("TEST_MODEL_KEY", raising=False)
-    with pytest.raises(KeyError, match="TEST_MODEL_KEY"):
-        build_model(
-            LlmSettings(provider="openai_compatible", api_key_env="TEST_MODEL_KEY"),
-            "cartographer",
-        )
+    model = build_model(
+        LlmSettings(provider="openai_compatible", api_key_env="TEST_MODEL_KEY"),
+        "cartographer",
+    )
+    with pytest.raises(ModelAPIError, match="Missing credential: TEST_MODEL_KEY"):
+        await model.request([], None, ModelRequestParameters())
 
 
 def test_prices_fail_closed_for_unknown_paid_model() -> None:
